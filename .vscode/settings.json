@@ -1,0 +1,5 @@
+{
+  "json.schemaDownload.trustedDomains": {
+    "https://turbo.build/schema.json": true
+  }
+}

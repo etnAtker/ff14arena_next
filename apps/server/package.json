@@ -1,0 +1,18 @@
+{
+  "name": "@ff14arena/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "TMPDIR=/tmp tsx watch src/index.ts",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ff14arena/content": "workspace:*",
+    "@ff14arena/core": "workspace:*",
+    "@ff14arena/shared": "workspace:*",
+    "fastify": "^5.6.1",
+    "socket.io": "^4.8.1"
+  }
+}

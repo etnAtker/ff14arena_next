@@ -1,0 +1,20 @@
+{
+  "name": "@ff14arena/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@ff14arena/content": "workspace:*",
+    "@ff14arena/core": "workspace:*",
+    "@ff14arena/shared": "workspace:*",
+    "pinia": "^3.0.4",
+    "pixi.js": "^8.14.2",
+    "socket.io-client": "^4.8.1",
+    "vue": "^3.5.22"
+  }
+}
