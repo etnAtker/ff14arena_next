@@ -5,9 +5,13 @@
 当前已建立：
 
 - [design](./design/README.md)
+- [implementation](./implementation/README.md)
 
 `design/` 用于存放设计目标、架构草案、MVP 规划与待确认问题。
 这些内容服务于项目立项与开发约束，不应默认视为已经完全拍板的最终规范。
+
+`implementation/` 用于存放当前仓库已经落地的实现说明、代码入口与原型限制。
+这些内容用于描述“现在代码实际上做到了什么”。
 
 后续若出现更稳定的说明，可在 `docs` 根下或新的子目录中继续拆分，例如：
 

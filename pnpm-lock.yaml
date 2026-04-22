@@ -85,6 +85,10 @@ importers:
       socket.io:
         specifier: ^4.8.1
         version: 4.8.3
+    devDependencies:
+      socket.io-client:
+        specifier: ^4.8.1
+        version: 4.8.3
 
   apps/web:
     dependencies:
@@ -112,11 +116,18 @@ importers:
 
   packages/content:
     dependencies:
+      '@ff14arena/core':
+        specifier: workspace:*
+        version: link:../core
       '@ff14arena/shared':
         specifier: workspace:*
         version: link:../shared
 
-  packages/core: {}
+  packages/core:
+    dependencies:
+      '@ff14arena/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/shared: {}
 

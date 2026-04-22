@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@ff14arena/core": "workspace:*",
     "@ff14arena/shared": "workspace:*"
   }
 }

@@ -11,5 +11,14 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    proxy: {
+      '/health': 'http://127.0.0.1:3000',
+      '/battles': 'http://127.0.0.1:3000',
+      '/rooms': 'http://127.0.0.1:3000',
+      '/socket.io': {
+        target: 'http://127.0.0.1:3000',
+        ws: true,
+      },
+    },
   },
 });
