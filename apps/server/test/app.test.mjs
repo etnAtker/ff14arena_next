@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { io } from 'socket.io-client';
 import { setTimeout as delay } from 'node:timers/promises';
 import { startServer } from '../src/app.ts';
@@ -159,5 +162,58 @@ test('房间全流程：创建、立即加入、开始、结算、重开', async
     owner.close();
     guest.close();
     await server.close();
+  }
+});
+
+test('生产静态托管：返回前端资源并仅对页面请求执行 SPA 回退', async () => {
+  const staticRoot = await mkdtemp(join(tmpdir(), 'ff14arena-static-'));
+  await mkdir(join(staticRoot, 'assets'));
+  await writeFile(
+    join(staticRoot, 'index.html'),
+    '<!doctype html><html><body>ff14arena</body></html>',
+  );
+  await writeFile(join(staticRoot, 'assets', 'entry.js'), 'console.log("ff14arena");');
+
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+    staticRoot,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+
+  try {
+    const homeResponse = await globalThis.fetch(baseUrl, {
+      headers: {
+        accept: 'text/html',
+      },
+    });
+    assert.equal(homeResponse.status, 200);
+    assert.match(await homeResponse.text(), /ff14arena/);
+
+    const assetResponse = await globalThis.fetch(`${baseUrl}/assets/entry.js`);
+    assert.equal(assetResponse.status, 200);
+    assert.match(await assetResponse.text(), /console\.log/);
+
+    const spaResponse = await globalThis.fetch(`${baseUrl}/battle/demo`, {
+      headers: {
+        accept: 'text/html',
+      },
+    });
+    assert.equal(spaResponse.status, 200);
+    assert.match(await spaResponse.text(), /ff14arena/);
+
+    const missingApiResponse = await globalThis.fetch(`${baseUrl}/rooms/missing`, {
+      headers: {
+        accept: 'text/html',
+      },
+    });
+    assert.equal(missingApiResponse.status, 404);
+    assert.deepEqual(await missingApiResponse.json(), {
+      message: '资源不存在',
+    });
+  } finally {
+    await server.close();
+    await rm(staticRoot, { recursive: true, force: true });
   }
 });

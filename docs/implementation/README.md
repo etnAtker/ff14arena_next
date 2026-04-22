@@ -37,6 +37,7 @@
 ### 子文档
 
 - [Web 客户端当前实现说明](./web-client.md)
+- [部署说明](./deployment.md)
 
 ### 模块入口
 

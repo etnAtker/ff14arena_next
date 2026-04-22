@@ -1,0 +1,7 @@
+services:
+  ff14arena:
+    image: ghcr.io/etnatker/ff14arena:latest
+    container_name: ff14arena
+    restart: unless-stopped
+    ports:
+      - '3000:3000'
