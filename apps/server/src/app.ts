@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
-import { battleCatalog } from '@ff14arena/content';
+import { battleCatalog, getBattleStaticData } from '@ff14arena/content';
 import { Server } from 'socket.io';
 import type { AddressInfo } from 'node:net';
 import type { ClientToServerEvents, ServerToClientEvents } from '@ff14arena/shared';
@@ -84,6 +84,22 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
     battles: battleCatalog,
   }));
 
+  app.get('/battles/:battleId/static', async (request, reply) => {
+    const { battleId } = request.params as { battleId: string };
+    const battle = getBattleStaticData(battleId);
+
+    if (battle === undefined) {
+      reply.code(404);
+      return {
+        message: '战斗不存在',
+      };
+    }
+
+    return {
+      battle,
+    };
+  });
+
   app.get('/rooms', async () => ({
     rooms: roomManager.listRooms(),
   }));
@@ -150,12 +166,12 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       roomManager.selectBattle(socket, payload.roomId, payload.battleId);
     });
 
-    socket.on('room:start', (payload) => {
-      roomManager.startRoom(socket, payload.roomId);
+    socket.on('room:switch-slot', (payload) => {
+      roomManager.switchSlot(socket, payload);
     });
 
-    socket.on('room:restart', (payload) => {
-      roomManager.restartRoom(socket, payload.roomId);
+    socket.on('room:start', (payload) => {
+      roomManager.startRoom(socket, payload.roomId);
     });
 
     socket.on('sim:move', (payload) => {

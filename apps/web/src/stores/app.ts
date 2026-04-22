@@ -3,7 +3,6 @@ import { defineStore } from 'pinia';
 import type { Socket } from 'socket.io-client';
 import type {
   BattleSummary,
-  EncounterResult,
   PartySlot,
   RoomStatePayload,
   RoomStateDto,
@@ -78,7 +77,6 @@ export const useAppStore = defineStore('app', () => {
   const rooms = ref<RoomSummaryDto[]>([]);
   const room = ref<RoomStateDto | null>(null);
   const snapshot = ref<SimulationSnapshot | null>(null);
-  const result = ref<EncounterResult | null>(null);
   const serverError = ref<string | null>(null);
   const connected = ref(false);
   const inputSeq = ref(0);
@@ -95,24 +93,7 @@ export const useAppStore = defineStore('app', () => {
     return hit?.slot ?? null;
   });
 
-  const page = computed<'home' | 'lobby' | 'battle' | 'result'>(() => {
-    if (room.value === null) {
-      return 'home';
-    }
-
-    if (
-      room.value.phase === 'finished' &&
-      (snapshot.value?.result !== null || result.value !== null)
-    ) {
-      return 'result';
-    }
-
-    if (room.value.phase === 'loading' || room.value.phase === 'running') {
-      return 'battle';
-    }
-
-    return 'lobby';
-  });
+  const page = computed<'home' | 'battle'>(() => (room.value === null ? 'home' : 'battle'));
 
   async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     const response = await fetch(url, init);
@@ -135,12 +116,11 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function appendLog(message: string): void {
-    logs.value = [message, ...logs.value].slice(0, 40);
+    logs.value = [message, ...logs.value].slice(0, 80);
   }
 
   function resetBattleState(options?: { clearLogs?: boolean }): void {
     snapshot.value = null;
-    result.value = null;
     inputSeq.value = 0;
 
     if (options?.clearLogs ?? true) {
@@ -221,12 +201,6 @@ export const useAppStore = defineStore('app', () => {
         }
 
         room.value = payload.room;
-
-        if (payload.room.result !== null) {
-          result.value = payload.room.result;
-        } else {
-          result.value = null;
-        }
       });
 
       nextSocket.on('room:slots', (payload) => {
@@ -237,16 +211,20 @@ export const useAppStore = defineStore('app', () => {
         }
 
         room.value = {
-          roomId: currentRoom.roomId,
-          name: currentRoom.name,
-          ownerUserId: currentRoom.ownerUserId,
-          ownerName: currentRoom.ownerName,
-          battleId: currentRoom.battleId,
-          battleName: currentRoom.battleName,
-          phase: currentRoom.phase,
+          ...currentRoom,
           slots: payload.slots,
-          result: currentRoom.result,
         };
+      });
+
+      nextSocket.on('room:closed', (payload) => {
+        if (room.value?.roomId !== payload.roomId) {
+          return;
+        }
+
+        appendLog(payload.reason);
+        room.value = null;
+        resetBattleState();
+        loadLobbyData().catch(() => undefined);
       });
 
       nextSocket.on('sim:start', (payload) => {
@@ -255,22 +233,9 @@ export const useAppStore = defineStore('app', () => {
         }
 
         snapshot.value = payload.snapshot;
-        result.value = null;
-        logs.value = [];
         inputSeq.value = 0;
-        appendLog(`战斗开始：${payload.snapshot.battleName}`);
-      });
-
-      nextSocket.on('sim:restart', (payload) => {
-        if (room.value?.roomId !== payload.roomId) {
-          return;
-        }
-
-        snapshot.value = payload.snapshot;
-        result.value = null;
         logs.value = [];
-        inputSeq.value = 0;
-        appendLog('战斗已重开');
+        appendLog(`开始模拟：${payload.snapshot.battleName}`);
       });
 
       nextSocket.on('sim:snapshot', (payload) => {
@@ -296,8 +261,7 @@ export const useAppStore = defineStore('app', () => {
           return;
         }
 
-        result.value = payload.result;
-        appendLog(payload.result.outcome === 'success' ? '战斗成功' : '战斗失败');
+        appendLog(payload.latestResult.outcome === 'success' ? '本轮成功' : '本轮失败');
       });
 
       socket.value = nextSocket;
@@ -401,6 +365,18 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
+  async function switchSlot(targetSlot: PartySlot): Promise<void> {
+    if (room.value === null) {
+      return;
+    }
+
+    const currentSocket = socket.value ?? (await ensureSocket());
+    currentSocket.emit('room:switch-slot', {
+      roomId: room.value.roomId,
+      targetSlot,
+    });
+  }
+
   async function startBattle(): Promise<void> {
     if (room.value === null) {
       return;
@@ -408,17 +384,6 @@ export const useAppStore = defineStore('app', () => {
 
     const currentSocket = socket.value ?? (await ensureSocket());
     currentSocket.emit('room:start', {
-      roomId: room.value.roomId,
-    });
-  }
-
-  async function restartBattle(): Promise<void> {
-    if (room.value === null) {
-      return;
-    }
-
-    const currentSocket = socket.value ?? (await ensureSocket());
-    currentSocket.emit('room:restart', {
       roomId: room.value.roomId,
     });
   }
@@ -477,6 +442,16 @@ export const useAppStore = defineStore('app', () => {
     sendFaceAngle(Math.atan2(position.y - actor.position.y, position.x - actor.position.x));
   }
 
+  function previewFaceAngle(facing: number): void {
+    const actor = getCurrentPlayerActor();
+
+    if (actor === null) {
+      return;
+    }
+
+    actor.facing = facing;
+  }
+
   function sendFaceAngle(facing: number): void {
     const actor = getCurrentPlayerActor();
 
@@ -496,6 +471,10 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function useKnockbackImmune(): void {
+    if (snapshot.value?.phase !== 'running') {
+      return;
+    }
+
     const actor = getCurrentPlayerActor();
 
     if (actor === null) {
@@ -541,7 +520,7 @@ export const useAppStore = defineStore('app', () => {
       case 'bossCastResolved':
         snapshot.value.boss.castBar = null;
         snapshot.value.hud.bossCastBar = null;
-        appendLog(`Boss 技能结算：${event.payload.actionName}`);
+        appendLog(`Boss 结算：${event.payload.actionName}`);
         break;
       case 'aoeSpawned': {
         snapshot.value.mechanics = snapshot.value.mechanics.filter(
@@ -594,21 +573,13 @@ export const useAppStore = defineStore('app', () => {
         appendLog(`${event.payload.actorName} 倒地：${event.payload.deathReason}`);
         break;
       }
-      case 'battleMessageChanged':
-        snapshot.value.hud.battleMessage = event.payload.message;
-        if (event.payload.message !== null) {
-          appendLog(`提示：${event.payload.message}`);
-        }
-        break;
       case 'battleFailureMarked':
         snapshot.value.failureMarked = true;
         snapshot.value.failureReasons = event.payload.failureReasons;
-        snapshot.value.hud.recentFailureReason = event.payload.failureReasons;
-        appendLog(`失败标记：${event.payload.failureReasons.join(' / ')}`);
+        appendLog(`失败原因：${event.payload.failureReasons.join(' / ')}`);
         break;
       case 'encounterCompleted':
-        snapshot.value.result = event.payload;
-        result.value = event.payload;
+        snapshot.value.latestResult = event.payload;
         break;
     }
   }
@@ -619,7 +590,6 @@ export const useAppStore = defineStore('app', () => {
     rooms,
     room,
     snapshot,
-    result,
     serverError,
     connected,
     logs,
@@ -632,10 +602,11 @@ export const useAppStore = defineStore('app', () => {
     leaveRoom,
     setReady,
     selectBattle,
+    switchSlot,
     startBattle,
-    restartBattle,
     sendMove,
     sendFace,
+    previewFaceAngle,
     sendFaceAngle,
     useKnockbackImmune,
   };

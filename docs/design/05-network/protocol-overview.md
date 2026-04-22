@@ -15,8 +15,8 @@
 - `room:leave`
 - `room:ready`
 - `room:select-battle`
+- `room:switch-slot`
 - `room:start`
-- `room:restart`
 - `sim:move`
 - `sim:face`
 - `sim:use-knockback-immune`
@@ -31,7 +31,7 @@
 - `sim:snapshot`
 - `sim:events`
 - `sim:end`
-- `sim:restart`
+- `room:closed`
 
 ## 协议规则
 
@@ -39,3 +39,5 @@
 - 所有输入都带 `inputSeq`
 - 服务端返回最近已处理的 `inputSeq`
 - 第一版不实现回滚，但保留输入确认字段
+- 房间内显示与等待态同步统一使用 `sim:snapshot`
+- `sim:end` 只携带上一轮结果，不再单独进入结算页

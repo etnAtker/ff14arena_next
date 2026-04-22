@@ -89,16 +89,17 @@
 - 左：`H1`
 - 左上：`D3`
 
-## HUD 显示接口
+## HUD / Bot 接口
 
-战斗写入以下显示接口：
+战斗写入以下接口：
 
 - `bossCastBar`
-- `battleMessage`
-- `recentFailureReason`
+- `botContext`
 
-`recentFailureReason` 显示聚合后的失败原因文本。  
-具体显示文案由战斗脚本定义。
+其中：
+
+- `bossCastBar` 用于前端顶部读条显示
+- `botContext` 仅供 Bot / 脚本读取，不参与前端直接展示
 
 ## 失败条件
 

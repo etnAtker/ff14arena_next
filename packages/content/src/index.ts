@@ -2,10 +2,11 @@ import type { BattleDefinition } from '@ff14arena/core';
 import {
   createFacingTowards,
   createPointOnRadius,
+  DEFAULT_PLAYER_MAX_HP,
   INJURY_UP_DURATION_MS,
   INJURY_UP_MULTIPLIER,
 } from '@ff14arena/core';
-import type { BattleSummary, PartySlot } from '@ff14arena/shared';
+import type { BattleStaticData, BattleSummary, PartySlot } from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 
 const LEFT_SHARE_GROUP: PartySlot[] = ['MT', 'H1', 'D1', 'D3'];
@@ -41,7 +42,12 @@ function createMoveDirective(
   return delta;
 }
 
-const OPENING_TWO_ROUNDS_BATTLE: BattleDefinition = {
+interface OpeningTwoRoundsBotContext {
+  mode: 'idle' | 'share' | 'spread';
+  safeRadius: number;
+}
+
+const OPENING_TWO_ROUNDS_BATTLE: BattleDefinition<OpeningTwoRoundsBotContext> = {
   id: 'opening_two_rounds',
   name: '双轮组合练习',
   arenaRadius: 20,
@@ -77,21 +83,25 @@ const OPENING_TWO_ROUNDS_BATTLE: BattleDefinition = {
     ] as const;
 
     ctx.state.setValue('rounds', rounds);
-    ctx.ui.setBattleMessage('战斗开始');
-    ctx.ui.pushHint('保持站位，等待读条');
+    ctx.bot.setContext({
+      mode: 'idle',
+      safeRadius: 5,
+    });
 
     for (const round of rounds) {
       ctx.timeline.at(round.startAt, () => {
         ctx.state.setValue('activeRound', round.index);
         ctx.state.setValue('activeArea', round.area);
         ctx.state.setValue('activeTarget', round.target);
+        ctx.bot.setContext({
+          mode: 'idle',
+          safeRadius: round.area === '钢铁' ? 6 : 5,
+        });
         ctx.boss.cast(
           `round_${round.index}`,
           `第${round.index}轮：${round.area} + ${round.target}`,
           3000,
         );
-        ctx.ui.setBattleMessage(`第${round.index}轮：${round.area} + ${round.target}`);
-        ctx.ui.pushHint(`${round.area} 后接 ${round.target}`);
 
         if (round.area === '钢铁') {
           ctx.spawn.circleAoe({
@@ -112,6 +122,11 @@ const OPENING_TWO_ROUNDS_BATTLE: BattleDefinition = {
       });
 
       ctx.timeline.at(round.startAt + 3000, () => {
+        ctx.bot.setContext({
+          mode: round.target === '分摊' ? 'share' : 'spread',
+          safeRadius: round.area === '钢铁' ? 6 : 5,
+        });
+
         if (round.target === '分摊') {
           const h1 = ctx.select.bySlot('H1');
           const h2 = ctx.select.bySlot('H2');
@@ -137,17 +152,18 @@ const OPENING_TWO_ROUNDS_BATTLE: BattleDefinition = {
       });
 
       ctx.timeline.at(round.startAt + 3300, () => {
-        ctx.ui.pushHint(null);
-        ctx.ui.setBattleMessage(`第${round.index}轮已结算`);
+        ctx.bot.setContext({
+          mode: 'idle',
+          safeRadius: 5,
+        });
       });
     }
 
     ctx.timeline.at(10_000, () => {
       ctx.state.complete();
-      ctx.ui.setBattleMessage('双轮组合练习结束');
     });
   },
-  getBotDirective({ snapshot, slot, actor }) {
+  getBotDirective({ snapshot, slot, actor, botContext }) {
     const faceAngle = createFacingTowards(actor.position, snapshot.boss.position);
     const activeShare = snapshot.mechanics.find((mechanic) => mechanic.kind === 'share');
     const activeSpread = snapshot.mechanics.find((mechanic) => mechanic.kind === 'spread');
@@ -179,8 +195,7 @@ const OPENING_TWO_ROUNDS_BATTLE: BattleDefinition = {
       };
     }
 
-    const battleMessage = snapshot.hud.battleMessage ?? '';
-    const safeRadius = battleMessage.includes('钢铁') ? 6 : 5;
+    const safeRadius = botContext?.safeRadius ?? 5;
     const target = createPointOnRadius(SPREAD_ANGLES[slot], safeRadius);
 
     return {
@@ -197,8 +212,22 @@ export const battleCatalog: BattleSummary[] = battleDefinitions.map((battle) => 
   name: battle.name,
 }));
 
+export const battleStaticCatalog: BattleStaticData[] = battleDefinitions.map((battle) => ({
+  id: battle.id,
+  name: battle.name,
+  bossName: battle.bossName,
+  arenaRadius: battle.arenaRadius,
+  bossTargetRingRadius: battle.bossTargetRingRadius,
+  defaultPlayerMaxHp: DEFAULT_PLAYER_MAX_HP,
+  initialPartyPositions: battle.initialPartyPositions,
+}));
+
 export function getBattleDefinition(battleId: string): BattleDefinition | undefined {
   return battleDefinitions.find((battle) => battle.id === battleId);
+}
+
+export function getBattleStaticData(battleId: string): BattleStaticData | undefined {
+  return battleStaticCatalog.find((battle) => battle.id === battleId);
 }
 
 export { INJURY_UP_DURATION_MS, INJURY_UP_MULTIPLIER };

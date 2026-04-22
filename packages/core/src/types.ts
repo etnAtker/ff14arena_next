@@ -37,10 +37,11 @@ export interface BotDirective {
   useKnockbackImmune?: boolean;
 }
 
-export interface BotDecisionContext {
+export interface BotDecisionContext<TBotContext = unknown> {
   snapshot: SimulationSnapshot;
   slot: PartySlot;
   actor: BaseActorSnapshot;
+  botContext: TBotContext | null;
 }
 
 export interface TimelineApi {
@@ -49,7 +50,7 @@ export interface TimelineApi {
   every(intervalMs: number, fn: () => void, windowMs?: number): void;
 }
 
-export interface BattleScriptContext {
+export interface BattleScriptContext<TBotContext = unknown> {
   readonly timeline: TimelineApi;
   readonly boss: {
     readonly id: string;
@@ -124,15 +125,16 @@ export interface BattleScriptContext {
     fail(reason: string): void;
     complete(outcome?: 'success' | 'failure'): void;
   };
+  readonly bot: {
+    setContext(context: TBotContext | null): void;
+  };
   readonly ui: {
     setCastBar(actionId: string, actionName: string, totalDurationMs: number): void;
     clearCastBar(): void;
-    setBattleMessage(message: string | null): void;
-    pushHint(message: string | null): void;
   };
 }
 
-export interface BattleDefinition {
+export interface BattleDefinition<TBotContext = unknown> {
   id: string;
   name: string;
   arenaRadius: number;
@@ -146,8 +148,8 @@ export interface BattleDefinition {
       facing: number;
     }
   >;
-  buildScript(ctx: BattleScriptContext): void;
-  getBotDirective(ctx: BotDecisionContext): BotDirective;
+  buildScript(ctx: BattleScriptContext<TBotContext>): void;
+  getBotDirective(ctx: BotDecisionContext<TBotContext>): BotDirective;
   failureTexts: BattleFailureTextApi;
 }
 

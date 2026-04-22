@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { Application, Graphics } from 'pixi.js';
+import { Application, Graphics, Text, TextStyle } from 'pixi.js';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { SimulationSnapshot, Vector2 } from '@ff14arena/shared';
 import { getFacingForCameraYaw } from './camera';
+import { getSlotColor, getSlotStageText } from '../../utils/ui';
 
 type OperationMode = 'traditional' | 'standard';
 
 const MIN_ZOOM = 0.7;
 const MAX_ZOOM = 2.4;
 const DRAG_ROTATION_SENSITIVITY = 0.005;
-const PLAYER_SCREEN_OFFSET_RATIO = 1 / 6;
+const PLAYER_SCREEN_OFFSET_RATIO = 1 / 10;
+const WORLD_VIEW_PADDING = 12;
 
 const props = defineProps<{
   snapshot: SimulationSnapshot | null;
@@ -25,12 +27,15 @@ const emit = defineEmits<{
   faceAngle: [facing: number];
 }>();
 
-const rootRef = ref<HTMLDivElement | null>(null);
+const stageRootRef = ref<HTMLDivElement | null>(null);
 
 let app: Application | null = null;
-let graphics: Graphics | null = null;
 let dragButton: 0 | 2 | null = null;
 let lastDragClientX = 0;
+let resizeObserver: ResizeObserver | null = null;
+let drawFrame: number | null = null;
+let isUnmounted = false;
+let isAppReady = false;
 
 function clampZoom(zoom: number): number {
   return Math.min(Math.max(zoom, MIN_ZOOM), MAX_ZOOM);
@@ -73,7 +78,7 @@ function getScreenAnchor(width: number, height: number): Vector2 {
 }
 
 function getWorldScale(width: number, height: number, arenaRadius: number): number {
-  const baseScale = Math.min(width, height) / (arenaRadius * 2 + 8);
+  const baseScale = Math.min(width, height) / (arenaRadius * 2 + WORLD_VIEW_PADDING);
   return baseScale * props.cameraZoom;
 }
 
@@ -93,25 +98,70 @@ function toStagePoint(point: Vector2, width: number, height: number, arenaRadius
   };
 }
 
-function draw(): void {
-  if (rootRef.value === null || app === null || graphics === null || props.snapshot === null) {
+function clearStage(): void {
+  if (app === null) {
     return;
   }
 
-  const width = rootRef.value.clientWidth;
-  const height = rootRef.value.clientHeight;
+  for (const child of [...app.stage.children]) {
+    child.destroy();
+  }
+}
+
+function scheduleDraw(): void {
+  if (isUnmounted || !isAppReady) {
+    return;
+  }
+
+  if (drawFrame !== null) {
+    cancelAnimationFrame(drawFrame);
+  }
+
+  drawFrame = requestAnimationFrame(() => {
+    drawFrame = null;
+
+    if (isUnmounted) {
+      return;
+    }
+
+    draw();
+  });
+}
+
+function draw(): void {
+  if (stageRootRef.value === null || app === null || !isAppReady) {
+    return;
+  }
+
+  const width = stageRootRef.value.clientWidth;
+  const height = stageRootRef.value.clientHeight;
+
+  if (width <= 0 || height <= 0) {
+    return;
+  }
+
+  if (app.renderer.width !== width || app.renderer.height !== height) {
+    app.renderer.resize(width, height);
+  }
+
+  clearStage();
+
+  if (props.snapshot === null) {
+    return;
+  }
+
   const { arenaRadius, bossTargetRingRadius } = props.snapshot;
   const scale = getWorldScale(width, height, arenaRadius);
   const arenaCenter = toStagePoint({ x: 0, y: 0 }, width, height, arenaRadius);
-
-  graphics.clear();
+  const graphics = new Graphics();
+  app.stage.addChild(graphics);
 
   graphics
     .circle(arenaCenter.x, arenaCenter.y, arenaRadius * scale)
-    .fill({ color: 0x1c2727, alpha: 1 });
+    .fill({ color: 0x162225, alpha: 1 });
   graphics
     .circle(arenaCenter.x, arenaCenter.y, arenaRadius * scale)
-    .stroke({ width: 3, color: 0x84d0c4, alpha: 0.9 });
+    .stroke({ width: 3, color: 0x86d8ca, alpha: 0.92 });
   graphics.circle(arenaCenter.x, arenaCenter.y, bossTargetRingRadius * scale).stroke({
     width: 2,
     color: 0xf0d08b,
@@ -140,7 +190,7 @@ function draw(): void {
       });
       graphics
         .circle(point.x, point.y, mechanic.innerRadius * scale)
-        .fill({ color: 0x1c2727, alpha: 1 });
+        .fill({ color: 0x162225, alpha: 1 });
       graphics.circle(point.x, point.y, mechanic.outerRadius * scale).stroke({
         width: 2,
         color: 0xc45779,
@@ -159,30 +209,122 @@ function draw(): void {
   }
 
   const bossPoint = toStagePoint(props.snapshot.boss.position, width, height, arenaRadius);
-  graphics.circle(bossPoint.x, bossPoint.y, 12).fill({ color: 0xf6c66a, alpha: 1 });
+  graphics.circle(bossPoint.x, bossPoint.y, 16).fill({ color: 0xf6c66a, alpha: 1 });
+  graphics.circle(bossPoint.x, bossPoint.y, 20).stroke({
+    width: 2,
+    color: 0xffefc2,
+    alpha: 0.7,
+  });
+
+  const bossLabel = new Text({
+    text: 'B',
+    style: new TextStyle({
+      fill: '#1a120d',
+      fontSize: 14,
+      fontWeight: '700',
+    }),
+  });
+  bossLabel.anchor.set(0.5);
+  bossLabel.x = bossPoint.x;
+  bossLabel.y = bossPoint.y;
+  app.stage.addChild(bossLabel);
 
   for (const actor of props.snapshot.actors) {
     const point = toStagePoint(actor.position, width, height, arenaRadius);
     const lineEnd = toStagePoint(
       {
-        x: actor.position.x + Math.cos(actor.facing) * 1.2,
-        y: actor.position.y + Math.sin(actor.facing) * 1.2,
+        x: actor.position.x + Math.cos(actor.facing) * 1.3,
+        y: actor.position.y + Math.sin(actor.facing) * 1.3,
       },
       width,
       height,
       arenaRadius,
     );
     const color =
-      actor.id === props.controlledActorId ? 0xfff2b0 : actor.kind === 'bot' ? 0xa7b7d7 : 0xffffff;
+      actor.slot === null
+        ? '#ffffff'
+        : getSlotColor(actor.slot, actor.id === props.controlledActorId);
+    const numericColor = Number.parseInt(color.replace('#', ''), 16);
     const alpha = actor.alive ? 1 : 0.35;
 
-    graphics
-      .circle(point.x, point.y, actor.id === props.controlledActorId ? 9 : 8)
-      .fill({ color, alpha });
+    graphics.circle(point.x, point.y, actor.id === props.controlledActorId ? 13 : 12).fill({
+      color: numericColor,
+      alpha,
+    });
+    graphics.circle(point.x, point.y, actor.id === props.controlledActorId ? 16 : 14).stroke({
+      width: actor.id === props.controlledActorId ? 3 : 2,
+      color: 0xffffff,
+      alpha: actor.id === props.controlledActorId ? 0.82 : 0.24,
+    });
     graphics.moveTo(point.x, point.y);
     graphics.lineTo(lineEnd.x, lineEnd.y);
-    graphics.stroke({ width: actor.id === props.controlledActorId ? 3 : 2, color, alpha });
+    graphics.stroke({
+      width: actor.id === props.controlledActorId ? 3 : 2,
+      color: numericColor,
+      alpha,
+    });
+
+    const label = new Text({
+      text: actor.slot === null ? '?' : getSlotStageText(actor.slot),
+      style: new TextStyle({
+        fill: '#f8f5ff',
+        fontSize: 12,
+        fontWeight: '700',
+      }),
+    });
+    label.anchor.set(0.5);
+    label.x = point.x;
+    label.y = point.y;
+    label.alpha = alpha;
+    app.stage.addChild(label);
   }
+}
+
+function createRenderSignature(): string {
+  const snapshot = props.snapshot;
+
+  if (snapshot === null) {
+    return [
+      'empty',
+      props.controlledActorId ?? '',
+      props.cameraYaw.toFixed(4),
+      props.cameraZoom.toFixed(3),
+      props.operationMode,
+    ].join('|');
+  }
+
+  const actorPart = snapshot.actors
+    .map((actor) =>
+      [
+        actor.id,
+        actor.position.x.toFixed(3),
+        actor.position.y.toFixed(3),
+        actor.facing.toFixed(3),
+        actor.alive ? '1' : '0',
+      ].join(':'),
+    )
+    .join(';');
+
+  const mechanicPart = snapshot.mechanics
+    .map((mechanic) => `${mechanic.id}:${mechanic.kind}`)
+    .join(';');
+
+  const castPart =
+    snapshot.hud.bossCastBar === null
+      ? 'none'
+      : `${snapshot.hud.bossCastBar.actionId}:${snapshot.hud.bossCastBar.startedAt}:${snapshot.hud.bossCastBar.totalDurationMs}`;
+
+  return [
+    snapshot.phase,
+    snapshot.tick,
+    actorPart,
+    mechanicPart,
+    castPart,
+    props.controlledActorId ?? '',
+    props.cameraYaw.toFixed(4),
+    props.cameraZoom.toFixed(3),
+    props.operationMode,
+  ].join('|');
 }
 
 function handleMouseDown(event: MouseEvent): void {
@@ -232,35 +374,51 @@ function handleDoubleClick(): void {
 }
 
 onMounted(async () => {
-  if (rootRef.value === null) {
+  isUnmounted = false;
+  isAppReady = false;
+
+  if (stageRootRef.value === null) {
     return;
   }
 
   app = new Application();
   await app.init({
-    resizeTo: rootRef.value,
+    resizeTo: stageRootRef.value,
     backgroundAlpha: 0,
     antialias: true,
   });
-  graphics = new Graphics();
-  app.stage.addChild(graphics);
-  rootRef.value.appendChild(app.canvas);
+  isAppReady = true;
+  stageRootRef.value.appendChild(app.canvas);
+  resizeObserver = new ResizeObserver(() => {
+    scheduleDraw();
+  });
+  resizeObserver.observe(stageRootRef.value);
   window.addEventListener('mousemove', handleMouseMove);
   window.addEventListener('mouseup', endDrag);
-  draw();
+  scheduleDraw();
 });
 
 watch(
-  () => [props.snapshot, props.cameraYaw, props.cameraZoom, props.controlledActorId],
+  () => createRenderSignature(),
   () => {
-    draw();
+    scheduleDraw();
   },
-  { deep: true },
+  { flush: 'post' },
 );
 
 onBeforeUnmount(() => {
+  isUnmounted = true;
+  isAppReady = false;
   window.removeEventListener('mousemove', handleMouseMove);
   window.removeEventListener('mouseup', endDrag);
+  resizeObserver?.disconnect();
+  resizeObserver = null;
+
+  if (drawFrame !== null) {
+    cancelAnimationFrame(drawFrame);
+    drawFrame = null;
+  }
+
   app?.destroy(true, {
     children: true,
     texture: true,
@@ -270,7 +428,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div
-    ref="rootRef"
+    ref="stageRootRef"
     class="battle-stage"
     @contextmenu.prevent
     @dblclick="handleDoubleClick"
@@ -282,14 +440,22 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .battle-stage {
+  position: relative;
   width: 100%;
-  min-height: 520px;
-  height: min(68vh, 760px);
-  border-radius: 16px;
-  background: rgba(10, 21, 23, 0.92);
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top, rgba(67, 130, 124, 0.12), transparent 26%),
+    rgba(10, 21, 23, 0.94);
   overflow: hidden;
   cursor: grab;
   user-select: none;
+}
+
+.battle-stage :deep(canvas) {
+  display: block;
 }
 
 .battle-stage:active {

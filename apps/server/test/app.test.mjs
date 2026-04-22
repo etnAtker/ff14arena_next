@@ -4,7 +4,6 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { io } from 'socket.io-client';
-import { setTimeout as delay } from 'node:timers/promises';
 import { startServer } from '../src/app.ts';
 
 function waitForConnect(socket) {
@@ -67,7 +66,28 @@ function waitForEvent(socket, eventName) {
   });
 }
 
-test('房间全流程：创建、立即加入、开始、结算、重开', async () => {
+function waitForPayload(socket, eventName, predicate, timeoutMs = 4000) {
+  return new Promise((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => {
+      socket.off(eventName, handleEvent);
+      reject(new Error(`${eventName} timeout`));
+    }, timeoutMs);
+
+    const handleEvent = (payload) => {
+      if (!predicate(payload)) {
+        return;
+      }
+
+      globalThis.clearTimeout(timer);
+      socket.off(eventName, handleEvent);
+      resolve(payload);
+    };
+
+    socket.on(eventName, handleEvent);
+  });
+}
+
+test('房间全流程：创建、立即加入、等待态快照、开始、结算回到待开始', async () => {
   const server = await startServer({
     host: '127.0.0.1',
     port: 0,
@@ -96,8 +116,9 @@ test('房间全流程：创建、立即加入、开始、结算、重开', async
 
     const ownerLobbyPromise = waitForRoomState(
       owner,
-      (room) => room.roomId === roomId && room.phase === 'lobby',
+      (room) => room.roomId === roomId && room.phase === 'waiting',
     );
+    const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
     owner.emit('room:join', {
       roomId,
       userId: 'owner-user',
@@ -106,12 +127,15 @@ test('房间全流程：创建、立即加入、开始、结算、重开', async
 
     await waitForConnect(owner);
     const joinedRoom = await ownerLobbyPromise;
+    const ownerWaitingSnapshot = await ownerWaitingSnapshotPromise;
     assert.equal(joinedRoom.slots.filter((slot) => slot.occupantType === 'player').length, 1);
+    assert.equal(ownerWaitingSnapshot.snapshot.phase, 'waiting');
 
     const guestLobbyPromise = waitForRoomState(
       guest,
-      (room) => room.roomId === roomId && room.phase === 'lobby',
+      (room) => room.roomId === roomId && room.phase === 'waiting',
     );
+    const guestWaitingSnapshotPromise = waitForEvent(guest, 'sim:snapshot');
     await waitForConnect(guest);
     guest.emit('room:join', {
       roomId,
@@ -121,43 +145,111 @@ test('房间全流程：创建、立即加入、开始、结算、重开', async
     });
     await guestLobbyPromise;
 
+    const waitingSnapshotAfterJoin = await guestWaitingSnapshotPromise;
+    assert.equal(waitingSnapshotAfterJoin.snapshot.phase, 'waiting');
+
+    const allReadyPromise = waitForPayload(
+      owner,
+      'room:slots',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.slots.find((slot) => slot.slot === 'ST')?.ready === true,
+    );
     guest.emit('room:ready', {
       roomId,
       ready: true,
     });
-    await delay(200);
+    await allReadyPromise;
 
-    const loadingPromise = waitForRoomState(
-      owner,
-      (room) => room.roomId === roomId && room.phase === 'loading',
-    );
     const startPromise = waitForEvent(owner, 'sim:start');
     const endPromise = waitForEvent(owner, 'sim:end');
+    const backToWaitingPromise = waitForPayload(
+      owner,
+      'sim:snapshot',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.snapshot.phase === 'waiting' &&
+        payload.snapshot.latestResult !== null,
+      12000,
+    );
 
     owner.emit('room:start', {
       roomId,
     });
 
-    const loadingRoom = await loadingPromise;
-    assert.equal(loadingRoom.phase, 'loading');
-
     const startPayload = await startPromise;
     assert.equal(startPayload.roomId, roomId);
+    assert.equal(startPayload.snapshot.phase, 'running');
 
     const endPayload = await endPromise;
     assert.equal(endPayload.roomId, roomId);
-    assert.equal(endPayload.result.outcome, 'success');
+    assert.equal(endPayload.latestResult.outcome, 'success');
 
-    const restartPromise = waitForEvent(owner, 'sim:restart');
-    owner.emit('room:restart', {
-      roomId,
-    });
-
-    const restartPayload = await restartPromise;
-    assert.equal(restartPayload.roomId, roomId);
+    const waitingAgainSnapshot = await backToWaitingPromise;
+    assert.equal(waitingAgainSnapshot.snapshot.latestResult?.outcome, 'success');
 
     const healthResponse = await globalThis.fetch(`${baseUrl}/health`);
     assert.equal(healthResponse.status, 200);
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
+test('房主离开后立即销毁房间并通知其他玩家', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '房主离开测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'opening_two_rounds',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    await ownerWaitingSnapshotPromise;
+
+    await waitForConnect(guest);
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+    });
+    await waitForRoomState(guest, (room) => room.roomId === roomId && room.phase === 'waiting');
+
+    const roomClosedPromise = waitForEvent(guest, 'room:closed');
+    owner.emit('room:leave', {
+      roomId,
+    });
+
+    const closedPayload = await roomClosedPromise;
+    assert.equal(closedPayload.roomId, roomId);
+    assert.match(closedPayload.reason, /房主已离开/);
   } finally {
     owner.close();
     guest.close();

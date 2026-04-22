@@ -1,43 +1,62 @@
 <script setup lang="ts">
 import type { SelectOption } from 'naive-ui';
-import { NCard, NLayoutHeader, NSelect, NTag } from 'naive-ui';
-import type { OperationMode, SelectValue } from '../../utils/ui';
+import { NButton, NCard, NLayoutHeader, NSelect, NTag } from 'naive-ui';
+import type { SelectValue } from '../../utils/ui';
 
 const props = defineProps<{
   connected: boolean;
   userName: string;
-  operationMode: OperationMode;
+  roomName: string | null;
+  roomPhase: string | null;
+  battleName: string | null;
+  isOwner: boolean;
+  battleOptions: SelectOption[];
+  roomBattleId: string | null;
+  battleSelectDisabled: boolean;
 }>();
 
 const emit = defineEmits<{
-  operationModeChange: [value: SelectValue];
+  selectBattle: [value: SelectValue];
+  leaveRoom: [];
 }>();
-
-const operationModeOptions: SelectOption[] = [
-  { label: '传统', value: 'traditional' },
-  { label: '标准', value: 'standard' },
-];
 </script>
 
 <template>
   <n-layout-header class="shell-header">
     <n-card embedded class="topbar-card">
       <div class="topbar">
-        <div>
+        <div class="brand-block">
           <p class="eyebrow">FF14 Arena Next</p>
-          <h1 class="page-title">多人联机机制模拟 MVP</h1>
+          <h1 class="page-title">联机机制模拟</h1>
+        </div>
+        <div v-if="props.roomName" class="room-block">
+          <div class="room-row single-line">
+            <strong class="room-name">{{ props.roomName }}</strong>
+            <n-tag
+              v-if="props.roomPhase"
+              :type="props.roomPhase === '模拟中' ? 'success' : 'info'"
+              round
+            >
+              {{ props.roomPhase }}
+            </n-tag>
+            <span class="battle-name">{{ props.battleName ?? '未选择战斗' }}</span>
+            <n-select
+              v-if="props.isOwner"
+              class="battle-select"
+              :value="props.roomBattleId"
+              :options="props.battleOptions"
+              :disabled="props.battleSelectDisabled"
+              placeholder="选择机制"
+              @update:value="emit('selectBattle', $event)"
+            />
+          </div>
         </div>
         <div class="topbar-actions">
           <n-tag :type="props.connected ? 'success' : 'error'" size="large" round>
             {{ props.connected ? '服务器在线' : '服务器断开' }}
           </n-tag>
           <n-tag type="info" size="large" round> 当前用户：{{ props.userName }} </n-tag>
-          <n-select
-            class="mode-select"
-            :value="props.operationMode"
-            :options="operationModeOptions"
-            @update:value="emit('operationModeChange', $event)"
-          />
+          <n-button v-if="props.roomName" secondary @click="emit('leaveRoom')">离开房间</n-button>
         </div>
       </div>
     </n-card>
@@ -46,11 +65,15 @@ const operationModeOptions: SelectOption[] = [
 
 <style scoped>
 .shell-header {
-  padding: 24px;
+  padding: 12px 20px 8px;
 }
 
 .topbar-card {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24);
+}
+
+.topbar-card :deep(.n-card__content) {
+  padding: 12px 16px;
 }
 
 .topbar {
@@ -68,20 +91,57 @@ const operationModeOptions: SelectOption[] = [
   flex-wrap: wrap;
 }
 
+.brand-block {
+  min-width: 160px;
+}
+
+.room-block {
+  flex: 1;
+  min-width: 300px;
+}
+
+.room-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.room-row.single-line {
+  flex-wrap: nowrap;
+}
+
+.room-name {
+  font-size: 16px;
+  white-space: nowrap;
+}
+
+.battle-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(246, 239, 228, 0.78);
+}
+
 .page-title {
   margin: 0;
+  font-size: 18px;
+  font-weight: 500;
 }
 
 .eyebrow {
-  margin: 0 0 6px;
-  font-size: 12px;
-  letter-spacing: 0.18em;
+  margin: 0 0 2px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: rgba(246, 239, 228, 0.55);
 }
 
-.mode-select {
-  width: 140px;
+.battle-select {
+  width: 220px;
+  flex: 0 0 220px;
 }
 
 @media (max-width: 768px) {
@@ -89,7 +149,6 @@ const operationModeOptions: SelectOption[] = [
     padding: 16px;
   }
 
-  .mode-select,
   .topbar-actions {
     width: 100%;
   }

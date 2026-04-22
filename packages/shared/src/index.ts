@@ -2,17 +2,10 @@ export const PARTY_SLOT_ORDER = ['MT', 'ST', 'H1', 'H2', 'D1', 'D2', 'D3', 'D4']
 
 export type PartySlot = (typeof PARTY_SLOT_ORDER)[number];
 
-export const ROOM_PHASES = [
-  'created',
-  'lobby',
-  'loading',
-  'running',
-  'finished',
-  'closed',
-] as const;
+export const ROOM_PHASES = ['waiting', 'running', 'closed'] as const;
 export type RoomPhase = (typeof ROOM_PHASES)[number];
 
-export const ROOM_RUNTIME_PHASES = ['lobby', 'loading', 'running', 'finished'] as const;
+export const ROOM_RUNTIME_PHASES = ['waiting', 'running'] as const;
 export type RoomRuntimePhase = (typeof ROOM_RUNTIME_PHASES)[number];
 
 export type ActorKind = 'player' | 'bot' | 'boss';
@@ -53,10 +46,6 @@ export interface BossCastBarState {
 
 export interface HudState {
   bossCastBar: BossCastBarState | null;
-  battleMessage: string | null;
-  recentFailureReason: string[];
-  centerHint: string | null;
-  countdownText: string | null;
 }
 
 export interface BaseActorSnapshot {
@@ -160,14 +149,31 @@ export interface SimulationSnapshot {
   boss: BossSnapshot;
   mechanics: MechanicSnapshot[];
   hud: HudState;
+  botContext: unknown | null;
   failureMarked: boolean;
   failureReasons: string[];
-  result: EncounterResult | null;
+  latestResult: EncounterResult | null;
 }
 
 export interface BattleSummary {
   id: string;
   name: string;
+}
+
+export interface BattleStaticData {
+  id: string;
+  name: string;
+  bossName: string;
+  arenaRadius: number;
+  bossTargetRingRadius: number;
+  defaultPlayerMaxHp: number;
+  initialPartyPositions: Record<
+    PartySlot,
+    {
+      position: Vector2;
+      facing: number;
+    }
+  >;
 }
 
 export interface RoomSlotState {
@@ -192,7 +198,7 @@ export interface RoomStateDto {
   battleName: string | null;
   phase: RoomPhase;
   slots: RoomSlotState[];
-  result: EncounterResult | null;
+  latestResult: EncounterResult | null;
 }
 
 export interface RoomSummaryDto {
@@ -314,13 +320,6 @@ export type ActorDiedEvent = BaseSimulationEvent<
   }
 >;
 
-export type BattleMessageChangedEvent = BaseSimulationEvent<
-  'battleMessageChanged',
-  {
-    message: string | null;
-  }
->;
-
 export type BattleFailureMarkedEvent = BaseSimulationEvent<
   'battleFailureMarked',
   {
@@ -346,7 +345,6 @@ export type SimulationEvent =
   | DamageAppliedEvent
   | StatusAppliedEvent
   | ActorDiedEvent
-  | BattleMessageChangedEvent
   | BattleFailureMarkedEvent
   | EncounterCompletedEvent;
 
@@ -371,11 +369,12 @@ export interface RoomSelectBattlePayload {
   battleId: string;
 }
 
-export interface RoomStartPayload {
+export interface RoomSwitchSlotPayload {
   roomId: string;
+  targetSlot: PartySlot;
 }
 
-export interface RoomRestartPayload {
+export interface RoomStartPayload {
   roomId: string;
 }
 
@@ -407,12 +406,12 @@ export interface SimEventsPayload {
 
 export interface SimEndPayload {
   roomId: string;
-  result: EncounterResult;
+  latestResult: EncounterResult;
 }
 
-export interface SimRestartPayload {
+export interface RoomClosedPayload {
   roomId: string;
-  snapshot: SimulationSnapshot;
+  reason: string;
 }
 
 export interface ServerErrorPayload {
@@ -427,7 +426,7 @@ export interface ServerToClientEvents {
   'sim:snapshot': (payload: SimSnapshotPayload) => void;
   'sim:events': (payload: SimEventsPayload) => void;
   'sim:end': (payload: SimEndPayload) => void;
-  'sim:restart': (payload: SimRestartPayload) => void;
+  'room:closed': (payload: RoomClosedPayload) => void;
   'server:error': (payload: ServerErrorPayload) => void;
 }
 
@@ -436,8 +435,8 @@ export interface ClientToServerEvents {
   'room:leave': (payload: RoomLeavePayload) => void;
   'room:ready': (payload: RoomReadyPayload) => void;
   'room:select-battle': (payload: RoomSelectBattlePayload) => void;
+  'room:switch-slot': (payload: RoomSwitchSlotPayload) => void;
   'room:start': (payload: RoomStartPayload) => void;
-  'room:restart': (payload: RoomRestartPayload) => void;
   'sim:move': (payload: MoveSimulationInput) => void;
   'sim:face': (payload: FaceSimulationInput) => void;
   'sim:use-knockback-immune': (payload: UseKnockbackImmuneSimulationInput) => void;

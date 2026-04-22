@@ -10,27 +10,18 @@ import {
 } from 'vue';
 import { storeToRefs } from 'pinia';
 import type { GlobalThemeOverrides, SelectOption } from 'naive-ui';
-import {
-  darkTheme,
-  dateZhCN,
-  NAlert,
-  NConfigProvider,
-  NGlobalStyle,
-  NLayout,
-  NLayoutContent,
-  zhCN,
-} from 'naive-ui';
+import { darkTheme, dateZhCN, NAlert, NConfigProvider, NGlobalStyle, zhCN } from 'naive-ui';
 import AppTopbar from './components/layout/AppTopbar.vue';
 import { getCameraYawForFacing } from './components/battle/camera';
 import { useAppStore } from './stores/app';
 import type { OperationMode, SelectValue } from './utils/ui';
 
 const HomePage = defineAsyncComponent(() => import('./components/pages/HomePage.vue'));
-const LobbyPage = defineAsyncComponent(() => import('./components/pages/LobbyPage.vue'));
 const BattlePage = defineAsyncComponent(() => import('./components/pages/BattlePage.vue'));
-const ResultPage = defineAsyncComponent(() => import('./components/pages/ResultPage.vue'));
 
 const OPERATION_MODE_STORAGE_KEY = 'ff14arena:operation-mode';
+const MIN_CAMERA_ZOOM = 0.7;
+const MAX_CAMERA_ZOOM = 2.4;
 
 const themeOverrides: GlobalThemeOverrides = {
   common: {
@@ -67,22 +58,7 @@ const themeOverrides: GlobalThemeOverrides = {
       },
     },
   },
-  Layout: {
-    color: 'transparent',
-    headerColor: 'transparent',
-  },
 };
-
-function preloadDeferredModules(): void {
-  void Promise.allSettled([
-    import('./components/pages/HomePage.vue'),
-    import('./components/pages/LobbyPage.vue'),
-    import('./components/pages/BattlePage.vue'),
-    import('./components/pages/ResultPage.vue'),
-    import('./components/battle/BattleStage.vue'),
-    import('socket.io-client'),
-  ]);
-}
 
 function loadOperationMode(): OperationMode {
   const raw = window.localStorage.getItem(OPERATION_MODE_STORAGE_KEY);
@@ -110,7 +86,6 @@ const {
   rooms,
   room,
   snapshot,
-  result,
   logs,
   connected,
   serverError,
@@ -125,6 +100,8 @@ const operationMode = ref<OperationMode>(loadOperationMode());
 const cameraYaw = ref(0);
 const cameraZoom = ref(1);
 const lastTraditionalFacing = ref<number | null>(null);
+const pendingPointerFacing = ref<number | null>(null);
+const lastSentPointerFacing = ref<number | null>(null);
 const pressedKeys = new Set<string>();
 
 const battleOptions = computed<SelectOption[]>(() =>
@@ -149,33 +126,29 @@ const currentReady = computed(() => {
 
   return room.value.slots.find((slot) => slot.slot === currentPlayerSlot.value)?.ready ?? false;
 });
-const currentBattleName = computed(() => room.value?.battleName ?? '未选择战斗');
-const currentCastProgress = computed(() => {
-  const castBar = snapshot.value?.hud.bossCastBar;
-
-  if (castBar === null || castBar === undefined || snapshot.value === null) {
-    return 0;
+const canStart = computed(() => {
+  if (!isOwner.value || room.value === null || snapshot.value?.phase !== 'waiting') {
+    return false;
   }
 
-  const elapsed = Math.max(snapshot.value.timeMs - castBar.startedAt, 0);
-  return Math.min(elapsed / castBar.totalDurationMs, 1);
+  if (room.value.battleId === null) {
+    return false;
+  }
+
+  return room.value.slots.every(
+    (slot) =>
+      slot.occupantType !== 'player' || slot.ownerUserId === room.value?.ownerUserId || slot.ready,
+  );
 });
-const controlHint = computed(() =>
-  operationMode.value === 'traditional'
-    ? '传统：左键或右键拖拽转镜头，移动方向跟随镜头，移动时人物自动转向。'
-    : '标准：左键拖拽转镜头，右键拖拽同时转镜头和人物，移动方向跟随人物朝向。',
+const latestResult = computed(
+  () => snapshot.value?.latestResult ?? room.value?.latestResult ?? null,
 );
-const recentFailureReasons = computed(
-  () => snapshot.value?.hud.recentFailureReason ?? snapshot.value?.failureReasons ?? [],
-);
-const resultFailureReasons = computed(() => result.value?.failureReasons ?? []);
-const battleActors = computed(() => snapshot.value?.actors ?? []);
-const battleRunningTime = computed(() => `${((snapshot.value?.timeMs ?? 0) / 1000).toFixed(1)}s`);
-const castDurationText = computed(() => {
-  const castBar = snapshot.value?.hud.bossCastBar;
-  return castBar === null || castBar === undefined
-    ? '无'
-    : `${(castBar.totalDurationMs / 1000).toFixed(1)}s`;
+const roomPhaseLabel = computed(() => {
+  if (snapshot.value === null) {
+    return null;
+  }
+
+  return snapshot.value.phase === 'running' ? '模拟中' : '待开始';
 });
 
 function movementIntent(): { horizontal: number; vertical: number } {
@@ -224,6 +197,8 @@ function movementVector(): { x: number; y: number } {
 function updateOperationMode(value: SelectValue): void {
   operationMode.value = value === 'standard' ? 'standard' : 'traditional';
   window.localStorage.setItem(OPERATION_MODE_STORAGE_KEY, operationMode.value);
+  pendingPointerFacing.value = null;
+  lastSentPointerFacing.value = null;
 }
 
 function selectBattleByValue(value: SelectValue): void {
@@ -265,7 +240,12 @@ function updateCameraYaw(nextYaw: number): void {
 }
 
 function updateCameraZoom(nextZoom: number): void {
-  cameraZoom.value = nextZoom;
+  cameraZoom.value = Math.min(Math.max(nextZoom, MIN_CAMERA_ZOOM), MAX_CAMERA_ZOOM);
+}
+
+function handlePointerFaceAngle(facing: number): void {
+  store.previewFaceAngle(facing);
+  pendingPointerFacing.value = facing;
 }
 
 function resetCameraZoom(): void {
@@ -294,7 +274,27 @@ watch(
         currentActor.value === null ? 0 : getCameraYawForFacing(currentActor.value.facing);
       cameraZoom.value = 1;
       lastTraditionalFacing.value = null;
+      pendingPointerFacing.value = null;
+      lastSentPointerFacing.value = null;
     }
+  },
+);
+
+watch(
+  () => [currentPlayerSlot.value, snapshot.value?.battleId, snapshot.value?.phase],
+  ([slot, battleId, phase], [previousSlot, previousBattleId, previousPhase]) => {
+    if (
+      currentActor.value === null ||
+      slot === null ||
+      (slot === previousSlot && battleId === previousBattleId && phase === previousPhase)
+    ) {
+      return;
+    }
+
+    cameraYaw.value = getCameraYawForFacing(currentActor.value.facing);
+    lastTraditionalFacing.value = null;
+    pendingPointerFacing.value = null;
+    lastSentPointerFacing.value = null;
   },
 );
 
@@ -304,7 +304,6 @@ onMounted(async () => {
   window.addEventListener('keyup', handleKeyUp);
 
   await nextTick();
-  window.setTimeout(preloadDeferredModules, 0);
 
   movementTimer = window.setInterval(() => {
     if (page.value !== 'battle') {
@@ -316,6 +315,19 @@ onMounted(async () => {
 
     if (operationMode.value !== 'traditional') {
       lastTraditionalFacing.value = null;
+
+      if (pendingPointerFacing.value !== null) {
+        if (
+          lastSentPointerFacing.value === null ||
+          Math.abs(
+            normalizeAngleDifference(pendingPointerFacing.value, lastSentPointerFacing.value),
+          ) >= 0.03
+        ) {
+          store.sendFaceAngle(pendingPointerFacing.value);
+          lastSentPointerFacing.value = pendingPointerFacing.value;
+        }
+      }
+
       return;
     }
 
@@ -354,98 +366,80 @@ onBeforeUnmount(() => {
     :date-locale="dateZhCN"
   >
     <n-global-style />
-    <n-layout class="shell">
+    <div class="shell">
       <AppTopbar
         :connected="connected"
         :user-name="profile.userName"
-        :operation-mode="operationMode"
-        @operation-mode-change="updateOperationMode"
+        :room-name="room?.name ?? null"
+        :room-phase="roomPhaseLabel"
+        :battle-name="snapshot?.battleName ?? room?.battleName ?? null"
+        :is-owner="isOwner"
+        :battle-options="battleOptions"
+        :room-battle-id="room?.battleId ?? null"
+        :battle-select-disabled="!isOwner || snapshot?.phase !== 'waiting'"
+        @select-battle="selectBattleByValue"
+        @leave-room="store.leaveRoom"
       />
 
-      <n-layout-content class="shell-content">
+      <main :class="['shell-content', page === 'battle' ? 'battle-content' : 'home-content']">
         <n-alert v-if="serverError" type="error" :show-icon="false" closable class="content-alert">
           {{ serverError }}
         </n-alert>
 
-        <Suspense>
-          <HomePage
-            v-if="page === 'home'"
-            :edit-user-name="editUserName"
-            :create-room-name="createRoomName"
-            :create-battle-id="createBattleId || null"
-            :battle-options="battleOptions"
-            :rooms="rooms"
-            @edit-user-name-change="editUserName = $event"
-            @create-room-name-change="createRoomName = $event"
-            @create-battle-id-change="createBattleId = $event ?? ''"
-            @create-room="handleCreateRoom"
-            @refresh-lobby="refreshLobby"
-            @join-room="handleJoinRoom"
-          />
+        <HomePage
+          v-if="page === 'home'"
+          :edit-user-name="editUserName"
+          :create-room-name="createRoomName"
+          :create-battle-id="createBattleId || null"
+          :battle-options="battleOptions"
+          :rooms="rooms"
+          @edit-user-name-change="editUserName = $event"
+          @create-room-name-change="createRoomName = $event"
+          @create-battle-id-change="createBattleId = $event ?? ''"
+          @create-room="handleCreateRoom"
+          @refresh-lobby="refreshLobby"
+          @join-room="handleJoinRoom"
+        />
 
-          <LobbyPage
-            v-else-if="page === 'lobby'"
-            :room="room"
-            :is-owner="isOwner"
-            :current-ready="currentReady"
-            :current-battle-name="currentBattleName"
-            :battle-options="battleOptions"
-            :room-battle-id="room?.battleId ?? null"
-            @leave-room="store.leaveRoom"
-            @toggle-ready="store.setReady(!currentReady)"
-            @start-battle="store.startBattle"
-            @select-battle="selectBattleByValue"
-          />
-
+        <div v-else class="battle-page-shell">
           <BattlePage
-            v-else-if="page === 'battle'"
+            :room="room"
             :snapshot="snapshot"
             :controlled-actor-id="currentActor?.id ?? null"
+            :current-player-slot="currentPlayerSlot"
             :camera-yaw="cameraYaw"
             :camera-zoom="cameraZoom"
             :operation-mode="operationMode"
             :is-owner="isOwner"
+            :current-ready="currentReady"
+            :can-start="canStart"
             :logs="logs"
-            :current-cast-progress="currentCastProgress"
-            :battle-running-time="battleRunningTime"
-            :cast-duration-text="castDurationText"
-            :control-hint="controlHint"
-            :recent-failure-reasons="recentFailureReasons"
-            :battle-actors="battleActors"
-            @leave-room="store.leaveRoom"
+            :latest-result="latestResult"
+            :operation-mode-options="[
+              { label: '传统', value: 'traditional' },
+              { label: '标准', value: 'standard' },
+            ]"
             @use-knockback-immune="store.useKnockbackImmune"
-            @restart-battle="store.restartBattle"
+            @start-battle="store.startBattle"
+            @set-ready="store.setReady(true)"
+            @switch-slot="store.switchSlot($event)"
             @reset-zoom="resetCameraZoom"
             @camera-yaw-change="updateCameraYaw"
             @camera-zoom-change="updateCameraZoom"
-            @face-angle="store.sendFaceAngle"
+            @operation-mode-change="updateOperationMode"
+            @face-angle="handlePointerFaceAngle"
           />
-
-          <ResultPage
-            v-else
-            :result="result"
-            :room-name="room?.name ?? '-'"
-            :battle-name="snapshot?.battleName ?? '-'"
-            :is-owner="isOwner"
-            :battle-actors="battleActors"
-            :result-failure-reasons="resultFailureReasons"
-            @restart-battle="store.restartBattle"
-            @leave-room="store.leaveRoom"
-          />
-
-          <template #fallback>
-            <section class="async-placeholder">
-              <p class="async-title">正在加载界面模块</p>
-              <p class="async-text">页面组件和联机依赖会按需加载，避免首页首包过重。</p>
-            </section>
-          </template>
-        </Suspense>
-      </n-layout-content>
-    </n-layout>
+        </div>
+      </main>
+    </div>
   </n-config-provider>
 </template>
 
 <style scoped>
+:global(html, body) {
+  height: 100%;
+}
+
 :global(body) {
   margin: 0;
   background:
@@ -454,41 +448,51 @@ onBeforeUnmount(() => {
 }
 
 :global(#app) {
-  min-height: 100vh;
+  height: 100%;
 }
 
 .shell {
-  min-height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .shell-content {
-  padding: 0 24px 24px;
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  padding: 0 20px 16px;
+}
+
+.home-content {
+  overflow: auto;
+}
+
+.battle-content {
+  box-sizing: border-box;
+  height: 100%;
+  overflow: hidden;
 }
 
 .content-alert {
-  margin-bottom: 16px;
+  margin-bottom: 0;
+  flex: 0 0 auto;
 }
 
-.async-placeholder {
-  min-height: 320px;
-  display: grid;
-  place-items: center;
-  text-align: center;
-  border: 1px solid rgba(255, 223, 177, 0.14);
-  border-radius: 20px;
-  background: rgba(26, 22, 20, 0.7);
-  padding: 32px 20px;
+.battle-page-shell {
+  flex: 1 1 auto;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
-.async-title {
-  margin: 0 0 8px;
-  font-size: 18px;
-  color: #f6efe4;
-}
-
-.async-text {
-  margin: 0;
-  color: rgba(246, 239, 228, 0.7);
+.battle-page-shell :deep(.battle-layout) {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 @media (max-width: 768px) {

@@ -2,7 +2,6 @@ import type {} from './globals';
 import type {
   BaseActorSnapshot,
   BattleFailureMarkedEvent,
-  BattleMessageChangedEvent,
   BossCastResolvedEvent,
   BossCastStartedEvent,
   BossSnapshot,
@@ -45,7 +44,7 @@ interface SchedulerEntry {
 interface RuntimeState {
   battle: BattleDefinition;
   roomId: string;
-  phase: 'loading' | 'running' | 'finished';
+  phase: 'waiting' | 'running';
   tick: number;
   timeMs: number;
   arenaRadius: number;
@@ -61,7 +60,7 @@ interface RuntimeState {
   events: SimulationEvent[];
   failureMarked: boolean;
   failureReasons: string[];
-  result: EncounterResult | null;
+  latestResult: EncounterResult | null;
   acknowledgedInputSeq: number;
 }
 
@@ -154,17 +153,6 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     }
   }
 
-  function setBattleMessage(message: string | null): void {
-    const currentState = assertState(state);
-    currentState.scriptState.set('hud:battleMessage', message);
-    emit<BattleMessageChangedEvent>({
-      type: 'battleMessageChanged',
-      payload: {
-        message,
-      },
-    });
-  }
-
   function setFailure(reason: string): void {
     const currentState = assertState(state);
 
@@ -186,12 +174,13 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
   function setResult(outcome?: 'success' | 'failure'): void {
     const currentState = assertState(state);
 
-    if (currentState.result !== null) {
+    if (currentState.latestResult !== null) {
       return;
     }
 
-    currentState.phase = 'finished';
-    currentState.result = {
+    currentState.phase = 'waiting';
+    currentState.boss.castBar = null;
+    currentState.latestResult = {
       outcome: outcome ?? (currentState.failureMarked ? 'failure' : 'success'),
       failureReasons: [...currentState.failureReasons],
     };
@@ -199,7 +188,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
 
     emit<EncounterCompletedEvent>({
       type: 'encounterCompleted',
-      payload: currentState.result,
+      payload: currentState.latestResult,
     });
   }
 
@@ -559,7 +548,6 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             startedAt: currentState.timeMs,
             totalDurationMs,
           };
-          currentState.scriptState.set('hud:bossCastBar', currentState.boss.castBar);
 
           emit<BossCastStartedEvent>({
             type: 'bossCastStarted',
@@ -574,7 +562,6 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             }
 
             latestState.boss.castBar = null;
-            latestState.scriptState.set('hud:bossCastBar', null);
             emit<BossCastResolvedEvent>({
               type: 'bossCastResolved',
               payload: {
@@ -593,7 +580,6 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           }
 
           currentState.boss.castBar = null;
-          currentState.scriptState.set('hud:bossCastBar', null);
           emit<BossCastResolvedEvent>({
             type: 'bossCastResolved',
             payload: {
@@ -765,6 +751,11 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           setResult(outcome);
         },
       },
+      bot: {
+        setContext(context) {
+          assertState(state).scriptState.set('bot:context', context);
+        },
+      },
       ui: {
         setCastBar(actionId, actionName, totalDurationMs) {
           const currentState = assertState(state);
@@ -774,18 +765,10 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             startedAt: currentState.timeMs,
             totalDurationMs,
           };
-          currentState.scriptState.set('hud:bossCastBar', currentState.boss.castBar);
         },
         clearCastBar() {
           const currentState = assertState(state);
           currentState.boss.castBar = null;
-          currentState.scriptState.set('hud:bossCastBar', null);
-        },
-        setBattleMessage(message) {
-          setBattleMessage(message);
-        },
-        pushHint(message) {
-          assertState(state).scriptState.set('hud:centerHint', message);
         },
       },
     };
@@ -809,17 +792,15 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       hud: {
         bossCastBar:
           currentState.boss.castBar === null ? null : structuredClone(currentState.boss.castBar),
-        battleMessage:
-          (currentState.scriptState.get('hud:battleMessage') as string | null | undefined) ?? null,
-        recentFailureReason: [...currentState.failureReasons],
-        centerHint:
-          (currentState.scriptState.get('hud:centerHint') as string | null | undefined) ?? null,
-        countdownText:
-          (currentState.scriptState.get('hud:countdownText') as string | null | undefined) ?? null,
       },
+      botContext:
+        currentState.scriptState.get('bot:context') === undefined
+          ? null
+          : structuredClone(currentState.scriptState.get('bot:context')),
       failureMarked: currentState.failureMarked,
       failureReasons: [...currentState.failureReasons],
-      result: currentState.result === null ? null : structuredClone(currentState.result),
+      latestResult:
+        currentState.latestResult === null ? null : structuredClone(currentState.latestResult),
     };
   }
 
@@ -862,7 +843,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       state = {
         battle,
         roomId,
-        phase: 'loading',
+        phase: 'waiting',
         tick: 0,
         timeMs: 0,
         arenaRadius: battle.arenaRadius,
@@ -901,7 +882,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         events: [],
         failureMarked: false,
         failureReasons: [],
-        result: null,
+        latestResult: null,
         acknowledgedInputSeq: 0,
       };
       running = false;
@@ -941,15 +922,23 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         drainDueScheduler();
         refreshStatuses();
 
-        if (currentState.result !== null) {
-          currentState.phase = 'finished';
+        if (currentState.latestResult !== null) {
           running = false;
           break;
         }
       }
     },
     dispatchInput(input) {
-      assertState(state).inputQueue.push(input);
+      const currentState = assertState(state);
+
+      if (currentState.phase === 'waiting') {
+        applyInput(input);
+        advanceMovement(FIXED_TICK_MS);
+        refreshStatuses();
+        return;
+      }
+
+      currentState.inputQueue.push(input);
     },
     getSnapshot() {
       return createSnapshot();

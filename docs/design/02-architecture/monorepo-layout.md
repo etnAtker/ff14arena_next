@@ -42,7 +42,7 @@ workspace 结构由 `pnpm-workspace.yaml` 管理。
 
 职责：
 
-- 房间页、战斗页、结算页
+- 首页与模拟页
 - 场地绘制、玩家与 Boss 可视化、机制表现
 - 用户输入采集
 - 本地镜像状态展示
@@ -64,7 +64,7 @@ workspace 结构由 `pnpm-workspace.yaml` 管理。
 - 战斗选择与开练流程
 - 权威模拟实例托管
 - Bot 托管
-- 状态广播与断线重连
+- 状态广播与离房补位
 
 ## packages/core
 
