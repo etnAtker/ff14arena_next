@@ -3,6 +3,7 @@
 ## 技术栈
 
 - Vue 3
+- Naive UI
 - PixiJS
 - Pinia
 - Socket.IO Client
@@ -10,7 +11,8 @@
 
 ## 职责划分
 
-Vue 负责页面结构、表单、按钮和 HUD 容器。  
+Vue 负责页面结构与状态编排。  
+Naive UI 负责表单、按钮、卡片、列表、状态标签和信息面板等通用 UI 组件。  
 PixiJS 负责场地、角色、Boss、AOE 和标记绘制。  
 Pinia 负责房间状态、当前用户状态、当前战斗元数据和 UI 状态。  
 业务规则不写入前端 Store。

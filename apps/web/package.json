@@ -12,6 +12,7 @@
     "@ff14arena/content": "workspace:*",
     "@ff14arena/core": "workspace:*",
     "@ff14arena/shared": "workspace:*",
+    "naive-ui": "^2.44.1",
     "pinia": "^3.0.4",
     "pixi.js": "^8.14.2",
     "socket.io-client": "^4.8.1",

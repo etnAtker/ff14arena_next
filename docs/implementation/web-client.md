@@ -6,7 +6,7 @@
 
 - [apps/web/src/App.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/App.vue)
 - [apps/web/src/stores/app.ts](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/stores/app.ts)
-- [apps/web/src/components/BattleStage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/BattleStage.vue)
+- [apps/web/src/components/battle/BattleStage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/battle/BattleStage.vue)
 
 ## 1. 页面流转
 
@@ -31,7 +31,30 @@
 - 客户端只在收到最终完成结果后切换到结算页
 - 写入失败标记后，战斗页继续显示，失败原因仍留在 HUD 中持续展示
 
-## 2. 当前操控模式
+## 2. 当前 UI 组织
+
+当前前端页面壳层已切换为以下分工：
+
+- `App.vue` 负责 provider、顶层状态、键盘输入与页面切换
+- `components/layout` 负责顶栏等全局壳层组件
+- `components/pages` 负责首页、大厅、战斗、结算四个页面组件
+- `components/battle` 负责战斗场地和镜头换算等战斗视图模块
+- `utils/ui.ts` 负责 phase 标签、槽位文本、角色状态等展示辅助逻辑
+- 页面组件与战斗视图按需异步加载，降低首页首包体积
+- 首屏完成后，客户端会在后台预加载其余页面模块、战斗渲染模块和 Socket 客户端依赖
+- Socket 客户端仍在首次需要联机时才真正创建连接，而不是应用启动时立即连服
+- Naive UI 负责卡片、表单、选择器、按钮、标签、列表、描述信息和滚动容器
+- 少量手写 CSS 只保留整体间距、响应式折叠和 Pixi 场地容器尺寸控制
+- PixiJS 继续只负责战斗场地绘制与镜头交互
+
+当前已经完成的 UI 重构点：
+
+- 首页创建房间表单改为组件化表单
+- 房间列表改为卡片和状态标签展示
+- 大厅概览、战斗 HUD、队伍状态、日志区和结算页改为组件化面板
+- 原先 `App.vue` 中大段按钮、表单、卡片和列表视觉样式已删除，改由组件库承载
+
+## 3. 当前操控模式
 
 当前客户端已经实现两种本地可切换的操控模式：
 
@@ -68,7 +91,7 @@
 - 移动输入按固定间隔连续发送
 - 朝向输入在本地状态变化时发送
 
-## 3. 当前镜头与绘制
+## 4. 当前镜头与绘制
 
 当前战斗场地绘制使用 PixiJS，并已实现以下镜头行为：
 
@@ -88,7 +111,7 @@
 - 朝向指示线
 - 圆形 / 环形 / 分摊 / 分散 AOE
 
-## 4. 当前 HUD 与战斗信息
+## 5. 当前 HUD 与战斗信息
 
 当前 HUD 已显示以下内容：
 
@@ -124,7 +147,7 @@
 - 存活状态
 - 防击退状态
 
-## 5. 当前仍未实现的前端项
+## 6. 当前仍未实现的前端项
 
 以下项目在设计文档中已有目标描述，但当前前端仍未落地：
 

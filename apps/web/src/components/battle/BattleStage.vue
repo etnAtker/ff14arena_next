@@ -2,7 +2,7 @@
 import { Application, Graphics } from 'pixi.js';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { SimulationSnapshot, Vector2 } from '@ff14arena/shared';
-import { getFacingForCameraYaw } from '../camera';
+import { getFacingForCameraYaw } from './camera';
 
 type OperationMode = 'traditional' | 'standard';
 
@@ -283,13 +283,10 @@ onBeforeUnmount(() => {
 <style scoped>
 .battle-stage {
   width: 100%;
-  height: 100%;
   min-height: 520px;
-  border: 1px solid rgba(169, 214, 205, 0.28);
-  border-radius: 24px;
-  background:
-    radial-gradient(circle at top, rgba(80, 144, 132, 0.16), transparent 35%),
-    linear-gradient(180deg, rgba(10, 21, 23, 0.96), rgba(7, 12, 15, 0.96));
+  height: min(68vh, 760px);
+  border-radius: 16px;
+  background: rgba(10, 21, 23, 0.92);
   overflow: hidden;
   cursor: grab;
   user-select: none;
