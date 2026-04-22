@@ -100,14 +100,13 @@ export const useAppStore = defineStore('app', () => {
     }
 
     if (
-      snapshot.value?.result !== null ||
-      result.value !== null ||
-      room.value.phase === 'finished'
+      room.value.phase === 'finished' &&
+      (snapshot.value?.result !== null || result.value !== null)
     ) {
       return 'result';
     }
 
-    if (room.value.phase === 'running') {
+    if (room.value.phase === 'loading' || room.value.phase === 'running') {
       return 'battle';
     }
 
@@ -136,6 +135,26 @@ export const useAppStore = defineStore('app', () => {
 
   function appendLog(message: string): void {
     logs.value = [message, ...logs.value].slice(0, 40);
+  }
+
+  function resetBattleState(options?: { clearLogs?: boolean }): void {
+    snapshot.value = null;
+    result.value = null;
+    inputSeq.value = 0;
+
+    if (options?.clearLogs ?? true) {
+      logs.value = [];
+    }
+  }
+
+  function getCurrentPlayerActor() {
+    const slot = currentPlayerSlot.value;
+
+    if (slot === null) {
+      return null;
+    }
+
+    return snapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
   }
 
   function waitForRoomState(roomId: string, timeoutMs = 3000): Promise<RoomStateDto> {
@@ -186,9 +205,19 @@ export const useAppStore = defineStore('app', () => {
     });
 
     nextSocket.on('room:state', (payload) => {
+      const previousRoomId = room.value?.roomId ?? null;
+      const nextRoomId = payload.room.roomId;
+
+      if (previousRoomId !== null && previousRoomId !== nextRoomId) {
+        resetBattleState();
+      }
+
       room.value = payload.room;
+
       if (payload.room.result !== null) {
         result.value = payload.room.result;
+      } else {
+        result.value = null;
       }
     });
 
@@ -213,20 +242,34 @@ export const useAppStore = defineStore('app', () => {
     });
 
     nextSocket.on('sim:start', (payload) => {
+      if (room.value?.roomId !== payload.roomId) {
+        return;
+      }
+
       snapshot.value = payload.snapshot;
       result.value = null;
       logs.value = [];
+      inputSeq.value = 0;
       appendLog(`战斗开始：${payload.snapshot.battleName}`);
     });
 
     nextSocket.on('sim:restart', (payload) => {
+      if (room.value?.roomId !== payload.roomId) {
+        return;
+      }
+
       snapshot.value = payload.snapshot;
       result.value = null;
       logs.value = [];
+      inputSeq.value = 0;
       appendLog('战斗已重开');
     });
 
     nextSocket.on('sim:snapshot', (payload) => {
+      if (room.value?.roomId !== payload.roomId) {
+        return;
+      }
+
       snapshot.value = payload.snapshot;
     });
 
@@ -241,6 +284,10 @@ export const useAppStore = defineStore('app', () => {
     });
 
     nextSocket.on('sim:end', (payload) => {
+      if (room.value?.roomId !== payload.roomId) {
+        return;
+      }
+
       result.value = payload.result;
       appendLog(payload.result.outcome === 'success' ? '战斗成功' : '战斗失败');
     });
@@ -262,6 +309,8 @@ export const useAppStore = defineStore('app', () => {
 
     try {
       ensureSocket();
+      resetBattleState();
+      room.value = null;
 
       const response = await fetchJson<{ room: RoomStateDto }>('/rooms', {
         method: 'POST',
@@ -276,8 +325,9 @@ export const useAppStore = defineStore('app', () => {
         }),
       });
 
+      const roomStatePromise = waitForRoomState(response.room.roomId);
       joinRoom(response.room.roomId);
-      await waitForRoomState(response.room.roomId);
+      await roomStatePromise;
       loadLobbyData().catch(() => undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : '创建房间失败';
@@ -289,6 +339,8 @@ export const useAppStore = defineStore('app', () => {
 
   function joinRoom(roomId: string, slot?: PartySlot): void {
     const currentSocket = ensureSocket();
+    resetBattleState();
+    room.value = null;
     currentSocket.emit('room:join', {
       roomId,
       userId: profile.value.userId,
@@ -306,9 +358,7 @@ export const useAppStore = defineStore('app', () => {
       roomId: room.value.roomId,
     });
     room.value = null;
-    snapshot.value = null;
-    result.value = null;
-    logs.value = [];
+    resetBattleState();
     loadLobbyData().catch(() => undefined);
   }
 
@@ -383,10 +433,9 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function sendMove(direction: Vector2): void {
-    const slot = currentPlayerSlot.value;
-    const actor = snapshot.value?.actors.find((candidate) => candidate.slot === slot);
+    const actor = getCurrentPlayerActor();
 
-    if (slot === null || actor === undefined) {
+    if (actor === null) {
       return;
     }
 
@@ -400,27 +449,37 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function sendFace(position: Vector2): void {
-    const slot = currentPlayerSlot.value;
-    const actor = snapshot.value?.actors.find((candidate) => candidate.slot === slot);
+    const actor = getCurrentPlayerActor();
 
-    if (slot === null || actor === undefined) {
+    if (actor === null) {
       return;
     }
+
+    sendFaceAngle(Math.atan2(position.y - actor.position.y, position.x - actor.position.x));
+  }
+
+  function sendFaceAngle(facing: number): void {
+    const actor = getCurrentPlayerActor();
+
+    if (actor === null) {
+      return;
+    }
+
+    actor.facing = facing;
 
     emitSimulationInput({
       actorId: actor.id,
       type: 'face',
       payload: {
-        facing: Math.atan2(position.y - actor.position.y, position.x - actor.position.x),
+        facing,
       },
     });
   }
 
   function useKnockbackImmune(): void {
-    const slot = currentPlayerSlot.value;
-    const actor = snapshot.value?.actors.find((candidate) => candidate.slot === slot);
+    const actor = getCurrentPlayerActor();
 
-    if (slot === null || actor === undefined) {
+    if (actor === null) {
       return;
     }
 
@@ -548,6 +607,7 @@ export const useAppStore = defineStore('app', () => {
     restartBattle,
     sendMove,
     sendFace,
+    sendFaceAngle,
     useKnockbackImmune,
   };
 });

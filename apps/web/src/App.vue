@@ -1,9 +1,32 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import BattleStage from './components/BattleStage.vue';
 import { useAppStore } from './stores/app';
+
+type OperationMode = 'traditional' | 'standard';
+
+const OPERATION_MODE_STORAGE_KEY = 'ff14arena:operation-mode';
+
+function loadOperationMode(): OperationMode {
+  const raw = window.localStorage.getItem(OPERATION_MODE_STORAGE_KEY);
+  return raw === 'standard' ? 'standard' : 'traditional';
+}
+
+function rotateVector(vector: { x: number; y: number }, angle: number): { x: number; y: number } {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+
+  return {
+    x: vector.x * cos - vector.y * sin,
+    y: vector.x * sin + vector.y * cos,
+  };
+}
+
+function normalizeAngleDifference(left: number, right: number): number {
+  return Math.atan2(Math.sin(left - right), Math.cos(left - right));
+}
 
 const store = useAppStore();
 const {
@@ -23,9 +46,20 @@ const {
 const createRoomName = ref('练习房');
 const createBattleId = ref<string>('');
 const editUserName = ref(profile.value.userName);
+const operationMode = ref<OperationMode>(loadOperationMode());
+const cameraYaw = ref(0);
+const cameraZoom = ref(1);
+const lastTraditionalFacing = ref<number | null>(null);
 const pressedKeys = new Set<string>();
 
 const isOwner = computed(() => room.value?.ownerUserId === profile.value.userId);
+const currentActor = computed(() => {
+  if (currentPlayerSlot.value === null) {
+    return null;
+  }
+
+  return snapshot.value?.actors.find((actor) => actor.slot === currentPlayerSlot.value) ?? null;
+});
 const currentReady = computed(() => {
   if (room.value === null || currentPlayerSlot.value === null) {
     return false;
@@ -33,13 +67,66 @@ const currentReady = computed(() => {
 
   return room.value.slots.find((slot) => slot.slot === currentPlayerSlot.value)?.ready ?? false;
 });
-
 const currentBattleName = computed(() => room.value?.battleName ?? '未选择战斗');
+const currentCastProgress = computed(() => {
+  const castBar = snapshot.value?.hud.bossCastBar;
+
+  if (castBar === null || castBar === undefined || snapshot.value === null) {
+    return 0;
+  }
+
+  const elapsed = Math.max(snapshot.value.timeMs - castBar.startedAt, 0);
+  return Math.min(elapsed / castBar.totalDurationMs, 1);
+});
+const controlHint = computed(() =>
+  operationMode.value === 'traditional'
+    ? '传统：左键/右键拖拽转镜头，移动方向跟随镜头，移动时人物自动转向。'
+    : '标准：左键拖拽转镜头，右键拖拽同时转镜头和人物，移动方向跟随人物朝向。',
+);
+const recentFailureReasons = computed(
+  () => snapshot.value?.hud.recentFailureReason ?? snapshot.value?.failureReasons ?? [],
+);
+
+function movementIntent(): { horizontal: number; vertical: number } {
+  return {
+    horizontal: (pressedKeys.has('KeyD') ? 1 : 0) - (pressedKeys.has('KeyA') ? 1 : 0),
+    vertical: (pressedKeys.has('KeyS') ? 1 : 0) - (pressedKeys.has('KeyW') ? 1 : 0),
+  };
+}
 
 function movementVector(): { x: number; y: number } {
+  const { horizontal, vertical } = movementIntent();
+
+  if (horizontal === 0 && vertical === 0) {
+    return {
+      x: 0,
+      y: 0,
+    };
+  }
+
+  if (operationMode.value === 'traditional') {
+    return rotateVector(
+      {
+        x: horizontal,
+        y: vertical,
+      },
+      cameraYaw.value,
+    );
+  }
+
+  const facing = currentActor.value?.facing ?? 0;
+  const forward = {
+    x: Math.cos(facing),
+    y: Math.sin(facing),
+  };
+  const right = {
+    x: Math.cos(facing + Math.PI / 2),
+    y: Math.sin(facing + Math.PI / 2),
+  };
+
   return {
-    x: (pressedKeys.has('KeyD') ? 1 : 0) - (pressedKeys.has('KeyA') ? 1 : 0),
-    y: (pressedKeys.has('KeyS') ? 1 : 0) - (pressedKeys.has('KeyW') ? 1 : 0),
+    x: right.x * horizontal - forward.x * vertical,
+    y: right.y * horizontal - forward.y * vertical,
   };
 }
 
@@ -69,6 +156,20 @@ function handleJoinRoom(roomId: string): void {
   store.joinRoom(roomId);
 }
 
+function handleOperationModeChange(event: Event): void {
+  const nextMode = (event.target as HTMLSelectElement).value as OperationMode;
+  operationMode.value = nextMode === 'standard' ? 'standard' : 'traditional';
+  window.localStorage.setItem(OPERATION_MODE_STORAGE_KEY, operationMode.value);
+}
+
+function updateCameraYaw(nextYaw: number): void {
+  cameraYaw.value = nextYaw;
+}
+
+function updateCameraZoom(nextZoom: number): void {
+  cameraZoom.value = nextZoom;
+}
+
 function handleKeyDown(event: KeyboardEvent): void {
   pressedKeys.add(event.code);
 
@@ -83,6 +184,17 @@ function handleKeyUp(event: KeyboardEvent): void {
 
 let movementTimer: number | null = null;
 
+watch(
+  () => snapshot.value?.tick,
+  (tick) => {
+    if (snapshot.value !== null && tick === 0) {
+      cameraYaw.value = 0;
+      cameraZoom.value = 1;
+      lastTraditionalFacing.value = null;
+    }
+  },
+);
+
 onMounted(async () => {
   await refreshLobby();
   window.addEventListener('keydown', handleKeyDown);
@@ -93,7 +205,28 @@ onMounted(async () => {
       return;
     }
 
-    store.sendMove(movementVector());
+    const direction = movementVector();
+    store.sendMove(direction);
+
+    if (operationMode.value !== 'traditional') {
+      lastTraditionalFacing.value = null;
+      return;
+    }
+
+    if (direction.x === 0 && direction.y === 0) {
+      lastTraditionalFacing.value = null;
+      return;
+    }
+
+    const facing = Math.atan2(direction.y, direction.x);
+
+    if (
+      lastTraditionalFacing.value === null ||
+      Math.abs(normalizeAngleDifference(facing, lastTraditionalFacing.value)) >= 0.05
+    ) {
+      store.sendFaceAngle(facing);
+      lastTraditionalFacing.value = facing;
+    }
   }, 50);
 });
 
@@ -119,6 +252,13 @@ onBeforeUnmount(() => {
           {{ connected ? '服务器在线' : '服务器断开' }}
         </span>
         <span class="pill">当前用户：{{ profile.userName }}</span>
+        <label class="pill mode-pill">
+          <span>操作模式</span>
+          <select :value="operationMode" @change="handleOperationModeChange">
+            <option value="traditional">传统</option>
+            <option value="standard">标准</option>
+          </select>
+        </label>
       </div>
     </header>
 
@@ -223,6 +363,18 @@ onBeforeUnmount(() => {
               }}
             </p>
             <p>准备：{{ room?.slots.find((item) => item.slot === slot)?.ready ? '是' : '否' }}</p>
+            <p>HP：{{ room?.slots.find((item) => item.slot === slot)?.currentHp ?? '-' }}</p>
+            <p>
+              存活：{{
+                room?.slots.find((item) => item.slot === slot)?.alive === false ? '否' : '是'
+              }}
+            </p>
+            <p>
+              防击退：
+              {{
+                room?.slots.find((item) => item.slot === slot)?.knockbackImmune ? '生效中' : '无'
+              }}
+            </p>
           </li>
         </ul>
       </article>
@@ -237,7 +389,16 @@ onBeforeUnmount(() => {
           </div>
           <button class="ghost-button" @click="store.leaveRoom">离开房间</button>
         </div>
-        <BattleStage :snapshot="snapshot" @face="store.sendFace" />
+        <BattleStage
+          :snapshot="snapshot"
+          :controlled-actor-id="currentActor?.id ?? null"
+          :camera-yaw="cameraYaw"
+          :camera-zoom="cameraZoom"
+          :operation-mode="operationMode"
+          @camera-yaw-change="updateCameraYaw"
+          @camera-zoom-change="updateCameraZoom"
+          @face-angle="store.sendFaceAngle"
+        />
       </article>
 
       <article class="panel hud-panel">
@@ -252,6 +413,20 @@ onBeforeUnmount(() => {
             <dd>{{ snapshot?.hud.bossCastBar?.actionName ?? '无' }}</dd>
           </div>
           <div>
+            <dt>读条进度</dt>
+            <dd>{{ (currentCastProgress * 100).toFixed(0) }}%</dd>
+          </div>
+          <div>
+            <dt>总读条</dt>
+            <dd>
+              {{
+                snapshot?.hud.bossCastBar === null || snapshot?.hud.bossCastBar === undefined
+                  ? '无'
+                  : `${(snapshot.hud.bossCastBar.totalDurationMs / 1000).toFixed(1)}s`
+              }}
+            </dd>
+          </div>
+          <div>
             <dt>战斗提示</dt>
             <dd>{{ snapshot?.hud.battleMessage ?? '无' }}</dd>
           </div>
@@ -259,19 +434,33 @@ onBeforeUnmount(() => {
             <dt>中心提示</dt>
             <dd>{{ snapshot?.hud.centerHint ?? '无' }}</dd>
           </div>
+          <div>
+            <dt>倒计时</dt>
+            <dd>{{ snapshot?.hud.countdownText ?? '无' }}</dd>
+          </div>
+          <div>
+            <dt>镜头缩放</dt>
+            <dd>{{ cameraZoom.toFixed(2) }}x</dd>
+          </div>
+          <div>
+            <dt>当前模式</dt>
+            <dd>{{ operationMode === 'traditional' ? '传统' : '标准' }}</dd>
+          </div>
         </dl>
         <div class="failure-box">
           <h3>失败原因聚合</h3>
           <ul>
-            <li v-for="reason in snapshot?.failureReasons ?? []" :key="reason">{{ reason }}</li>
-            <li v-if="(snapshot?.failureReasons ?? []).length === 0">当前未写入失败标记</li>
+            <li v-for="reason in recentFailureReasons" :key="reason">{{ reason }}</li>
+            <li v-if="recentFailureReasons.length === 0">当前未写入失败标记</li>
           </ul>
         </div>
         <div class="control-row battle-controls">
           <button class="secondary-button" @click="store.useKnockbackImmune">防击退（1）</button>
           <button v-if="isOwner" class="ghost-button" @click="store.restartBattle">房主重开</button>
+          <button class="ghost-button" @click="cameraZoom = 1">重置缩放</button>
         </div>
-        <p class="hint-text">移动：WASD，点击场地改变朝向，按键 1 使用防击退。</p>
+        <p class="hint-text">{{ controlHint }}</p>
+        <p class="hint-text">滚轮缩放，双击场地重置缩放，按键 1 使用防击退。</p>
       </article>
 
       <article class="panel party-panel">
@@ -286,6 +475,15 @@ onBeforeUnmount(() => {
             <p>存活：{{ actor.alive ? '是' : '否' }}</p>
             <p>状态：{{ actor.statuses.map((status) => status.name).join('、') || '无' }}</p>
             <p>防击退：{{ actor.knockbackImmune ? '生效中' : '未生效' }}</p>
+            <p>
+              冷却：
+              {{
+                Math.max(
+                  (actor.knockbackImmuneCooldown.readyAt - (snapshot?.timeMs ?? 0)) / 1000,
+                  0,
+                ).toFixed(1)
+              }}s
+            </p>
           </li>
         </ul>
       </article>
@@ -457,6 +655,15 @@ select {
   display: inline-flex;
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.06);
+}
+
+.mode-pill {
+  align-items: center;
+  gap: 10px;
+}
+
+.mode-pill select {
+  padding: 6px 10px;
 }
 
 .is-connected {
