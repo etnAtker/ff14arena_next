@@ -2,6 +2,7 @@
 import { Application, Graphics } from 'pixi.js';
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { SimulationSnapshot, Vector2 } from '@ff14arena/shared';
+import { getFacingForCameraYaw } from '../camera';
 
 type OperationMode = 'traditional' | 'standard';
 
@@ -212,13 +213,7 @@ function handleMouseMove(event: MouseEvent): void {
     return;
   }
 
-  const actor = getControlledActor();
-
-  if (actor === null) {
-    return;
-  }
-
-  emit('faceAngle', actor.facing + deltaX * DRAG_ROTATION_SENSITIVITY);
+  emit('faceAngle', getFacingForCameraYaw(nextYaw));
 }
 
 function endDrag(): void {

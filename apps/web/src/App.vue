@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import BattleStage from './components/BattleStage.vue';
+import { getCameraYawForFacing } from './camera';
 import { useAppStore } from './stores/app';
 
 type OperationMode = 'traditional' | 'standard';
@@ -188,7 +189,8 @@ watch(
   () => snapshot.value?.tick,
   (tick) => {
     if (snapshot.value !== null && tick === 0) {
-      cameraYaw.value = 0;
+      cameraYaw.value =
+        currentActor.value === null ? 0 : getCameraYawForFacing(currentActor.value.facing);
       cameraZoom.value = 1;
       lastTraditionalFacing.value = null;
     }
