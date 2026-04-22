@@ -1,3 +1,4 @@
+import type {} from './globals';
 import type {
   BaseActorSnapshot,
   BattleFailureMarkedEvent,
