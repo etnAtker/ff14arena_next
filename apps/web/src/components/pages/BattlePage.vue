@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { SelectOption } from 'naive-ui';
 import { NButton, NCard, NEmpty, NInputNumber, NScrollbar, NSelect, NText } from 'naive-ui';
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type {
   EncounterResult,
@@ -58,12 +58,30 @@ const actorMap = computed(() => {
 });
 
 const castBar = computed(() => props.snapshot?.hud.bossCastBar ?? null);
+const renderNowMs = ref(0);
+const renderClockBase = ref({
+  snapshotTimeMs: 0,
+  clientNowMs: 0,
+});
+let renderFrame: number | null = null;
+
+const renderSimulationTimeMs = computed(() => {
+  if (props.snapshot === null) {
+    return 0;
+  }
+
+  return (
+    renderClockBase.value.snapshotTimeMs +
+    Math.max(renderNowMs.value - renderClockBase.value.clientNowMs, 0)
+  );
+});
+
 const castProgress = computed(() => {
   if (castBar.value === null || props.snapshot === null) {
     return 0;
   }
 
-  const elapsed = Math.max(props.snapshot.timeMs - castBar.value.startedAt, 0);
+  const elapsed = Math.max(renderSimulationTimeMs.value - castBar.value.startedAt, 0);
   return Math.min(elapsed / castBar.value.totalDurationMs, 1);
 });
 
@@ -146,6 +164,37 @@ function handleZoomInput(value: number | null): void {
 
   emit('cameraZoomChange', Math.min(Math.max(value, MIN_ZOOM), MAX_ZOOM));
 }
+
+function tickRenderClock(now: number): void {
+  renderNowMs.value = now;
+  renderFrame = requestAnimationFrame(tickRenderClock);
+}
+
+watch(
+  () => props.snapshot?.timeMs ?? 0,
+  (timeMs) => {
+    renderClockBase.value = {
+      snapshotTimeMs: timeMs,
+      clientNowMs: performance.now(),
+    };
+  },
+  { immediate: true },
+);
+
+onMounted(() => {
+  renderClockBase.value = {
+    snapshotTimeMs: props.snapshot?.timeMs ?? 0,
+    clientNowMs: performance.now(),
+  };
+  renderFrame = requestAnimationFrame(tickRenderClock);
+});
+
+onBeforeUnmount(() => {
+  if (renderFrame !== null) {
+    cancelAnimationFrame(renderFrame);
+    renderFrame = null;
+  }
+});
 </script>
 
 <template>
@@ -444,8 +493,8 @@ function handleZoomInput(value: number | null): void {
 }
 
 .result-stack {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(220px, 36%);
   gap: 12px;
   height: 100%;
   min-height: 0;
@@ -455,6 +504,7 @@ function handleZoomInput(value: number | null): void {
 .log-panel {
   display: grid;
   gap: 10px;
+  min-height: 0;
 }
 
 .reason-list,
@@ -478,9 +528,7 @@ function handleZoomInput(value: number | null): void {
 }
 
 .log-panel {
-  flex: 0 0 36%;
-  min-height: 0;
-  margin-top: auto;
+  min-height: 220px;
 }
 
 .log-scrollbar {

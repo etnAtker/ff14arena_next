@@ -223,8 +223,18 @@ export interface UseKnockbackImmunePayload {
 }
 
 export interface ContinuousInputFramePayload {
+  position: Vector2;
   moveDirection: Vector2;
-  facing?: number;
+  facing: number;
+}
+
+export interface ActorPoseSample {
+  actorId: string;
+  inputSeq: number;
+  issuedAt: number;
+  position: Vector2;
+  facing: number;
+  moveState: MoveState;
 }
 
 export type PositionCorrectionMode = 'smooth' | 'hard';
@@ -239,7 +249,6 @@ export interface SimulationInputBase<TType extends SimulationInputType, TPayload
   actorId: string;
   inputSeq: number;
   issuedAt: number;
-  issuedAtServerTimeEstimate?: number;
   type: TType;
   payload: TPayload;
 }
@@ -256,7 +265,6 @@ export interface ContinuousSimulationInputFrame {
   actorId: string;
   inputSeq: number;
   issuedAt: number;
-  issuedAtServerTimeEstimate?: number;
   payload: ContinuousInputFramePayload;
 }
 
@@ -282,16 +290,6 @@ export type ActorMovedEvent = BaseSimulationEvent<
     correctionMode: PositionCorrectionMode;
   }
 >;
-
-export interface NetTimeSyncRequestPayload {
-  clientSendAt: number;
-}
-
-export interface NetTimeSyncResponsePayload {
-  clientSendAt: number;
-  serverReceivedAt: number;
-  serverSendAt: number;
-}
 
 export type BossCastStartedEvent = BaseSimulationEvent<
   'bossCastStarted',
@@ -425,7 +423,6 @@ export interface SimSnapshotPayload {
   roomId: string;
   syncId: number;
   snapshot: SimulationSnapshot;
-  acknowledgedInputSeq: number;
   reason: 'join' | 'rejoin' | 'resync' | 'waiting-state' | 'tick' | 'battle-end' | 'battle-start';
 }
 
@@ -433,7 +430,6 @@ export interface SimEventsPayload {
   roomId: string;
   syncId: number;
   events: SimulationEvent[];
-  acknowledgedInputSeq: number;
 }
 
 export interface SimEndPayload {
@@ -457,7 +453,6 @@ export interface ServerErrorPayload {
 }
 
 export interface ServerToClientEvents {
-  'net:time-sync:response': (payload: NetTimeSyncResponsePayload) => void;
   'room:state': (payload: RoomStatePayload) => void;
   'room:slots': (payload: RoomSlotsPayload) => void;
   'sim:start': (payload: SimStartPayload) => void;
@@ -469,7 +464,6 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
-  'net:time-sync:request': (payload: NetTimeSyncRequestPayload) => void;
   'room:join': (payload: RoomJoinPayload) => void;
   'room:leave': (payload: RoomLeavePayload) => void;
   'room:ready': (payload: RoomReadyPayload) => void;

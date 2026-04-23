@@ -89,8 +89,6 @@ const {
   logs,
   connected,
   latencyDisplay,
-  latencyLabel,
-  networkLatencyDisplay,
   serverError,
   currentPlayerSlot,
   page,
@@ -373,8 +371,6 @@ onBeforeUnmount(() => {
       <AppTopbar
         :connected="connected"
         :latency-display="latencyDisplay"
-        :latency-label="latencyLabel"
-        :network-latency-display="networkLatencyDisplay"
         :user-name="profile.userName"
         :room-name="room?.name ?? null"
         :room-phase="roomPhaseLabel"

@@ -3,7 +3,6 @@ import { defineStore } from 'pinia';
 import type { Socket } from 'socket.io-client';
 import type {
   BattleSummary,
-  NetTimeSyncResponsePayload,
   PartySlot,
   RoomStatePayload,
   RoomStateDto,
@@ -29,10 +28,8 @@ interface FacingPreviewState {
 const PROFILE_STORAGE_KEY = 'ff14arena:profile';
 const RESYNC_THROTTLE_MS = 500;
 const CONTINUOUS_INPUT_INTERVAL_MS = 50;
-const TIME_SYNC_INTERVAL_MS = 2_000;
 const TRANSPORT_PROBE_INTERVAL_MS = 1_500;
 const LOCAL_PLAYER_MOVE_SPEED = 6;
-const INPUT_LATENCY_STALE_MS = 3_000;
 
 function createDefaultProfile(): LocalProfile {
   return {
@@ -99,11 +96,14 @@ function movePosition(position: Vector2, direction: Vector2, deltaMs: number): V
   };
 }
 
-interface PendingContinuousInput {
+interface LocalControlledPose {
   actorId: string;
-  issuedAt: number;
-  moveDirection: Vector2;
-  facing?: number;
+  position: Vector2;
+  facing: number;
+  moveState: {
+    direction: Vector2;
+    moving: boolean;
+  };
 }
 
 function cloneVector(vector: Vector2): Vector2 {
@@ -126,18 +126,10 @@ export const useAppStore = defineStore('app', () => {
   const inputSeq = ref(0);
   const logs = ref<string[]>([]);
   const currentSyncId = ref(0);
-  const lastAcknowledgedInputSeq = ref(0);
   const facingPreview = ref<FacingPreviewState | null>(null);
   const lastResyncRequestedAt = ref(0);
-  const serverClockOffsetMs = ref(0);
-  const timeSyncRoundTripLatencyMs = ref(0);
   const transportProbeLatencyMs = ref(0);
-  const inputAcknowledgementLatencyMs = ref(0);
-  const lastInputLatencySampleAtMs = ref(0);
-
-  const pendingInputIssuedAt = new Map<number, number>();
-  const pendingContinuousInputs = new Map<number, PendingContinuousInput>();
-  let timeSyncTimer: number | null = null;
+  const localControlledPose = ref<LocalControlledPose | null>(null);
   let transportProbeTimer: number | null = null;
 
   const snapshot = computed<SimulationSnapshot | null>(() => {
@@ -174,35 +166,7 @@ export const useAppStore = defineStore('app', () => {
   });
 
   const page = computed<'home' | 'battle'>(() => (room.value === null ? 'home' : 'battle'));
-  const latencyDisplay = computed(() => {
-    const now = Date.now();
-
-    if (
-      inputAcknowledgementLatencyMs.value > 0 &&
-      now - lastInputLatencySampleAtMs.value <= INPUT_LATENCY_STALE_MS
-    ) {
-      return `${Math.round(inputAcknowledgementLatencyMs.value)} ms`;
-    }
-
-    if (transportProbeLatencyMs.value > 0) {
-      return `${Math.round(transportProbeLatencyMs.value)} ms`;
-    }
-
-    return '--';
-  });
-  const latencyLabel = computed(() => {
-    const now = Date.now();
-
-    if (
-      inputAcknowledgementLatencyMs.value > 0 &&
-      now - lastInputLatencySampleAtMs.value <= INPUT_LATENCY_STALE_MS
-    ) {
-      return '输入确认';
-    }
-
-    return '网络探测';
-  });
-  const networkLatencyDisplay = computed(() =>
+  const latencyDisplay = computed(() =>
     transportProbeLatencyMs.value > 0 ? `${Math.round(transportProbeLatencyMs.value)} ms` : '--',
   );
 
@@ -234,16 +198,14 @@ export const useAppStore = defineStore('app', () => {
     facingPreview.value = null;
   }
 
-  function clearPendingContinuousInputs(): void {
-    pendingContinuousInputs.clear();
+  function clearLocalControlledPose(): void {
+    localControlledPose.value = null;
   }
 
   function resetSyncState(options?: { clearInputSeq?: boolean }): void {
     authoritativeSnapshot.value = null;
     currentSyncId.value = 0;
-    lastAcknowledgedInputSeq.value = 0;
-    pendingInputIssuedAt.clear();
-    clearPendingContinuousInputs();
+    clearLocalControlledPose();
     clearFacingPreview();
 
     if (options?.clearInputSeq ?? true) {
@@ -268,31 +230,13 @@ export const useAppStore = defineStore('app', () => {
       return null;
     }
 
-    return snapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
-  }
+    const actor = snapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
 
-  function getCurrentPlayerAuthoritativeActor() {
-    const slot = currentPlayerSlot.value;
-
-    if (slot === null) {
+    if (actor === null || !actor.alive) {
       return null;
     }
 
-    return authoritativeSnapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
-  }
-
-  function getIssuedAtServerTimeEstimate(clientIssuedAt: number): number {
-    return clientIssuedAt + serverClockOffsetMs.value;
-  }
-
-  function requestTimeSync(): void {
-    if (socket.value === null) {
-      return;
-    }
-
-    socket.value.emit('net:time-sync:request', {
-      clientSendAt: Date.now(),
-    });
+    return actor;
   }
 
   async function probeTransportLatency(): Promise<void> {
@@ -321,17 +265,6 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  function startTimeSyncLoop(): void {
-    if (timeSyncTimer !== null) {
-      window.clearInterval(timeSyncTimer);
-    }
-
-    requestTimeSync();
-    timeSyncTimer = window.setInterval(() => {
-      requestTimeSync();
-    }, TIME_SYNC_INTERVAL_MS);
-  }
-
   function startTransportProbeLoop(): void {
     if (transportProbeTimer !== null) {
       window.clearInterval(transportProbeTimer);
@@ -343,15 +276,6 @@ export const useAppStore = defineStore('app', () => {
     }, TRANSPORT_PROBE_INTERVAL_MS);
   }
 
-  function stopTimeSyncLoop(): void {
-    if (timeSyncTimer === null) {
-      return;
-    }
-
-    window.clearInterval(timeSyncTimer);
-    timeSyncTimer = null;
-  }
-
   function stopTransportProbeLoop(): void {
     if (transportProbeTimer === null) {
       return;
@@ -359,73 +283,6 @@ export const useAppStore = defineStore('app', () => {
 
     window.clearInterval(transportProbeTimer);
     transportProbeTimer = null;
-  }
-
-  function applyTimeSyncResponse(payload: NetTimeSyncResponsePayload): void {
-    const clientReceivedAt = Date.now();
-    const rtt = Math.max(
-      clientReceivedAt - payload.clientSendAt - (payload.serverSendAt - payload.serverReceivedAt),
-      0,
-    );
-    const offset =
-      (payload.serverReceivedAt -
-        payload.clientSendAt +
-        (payload.serverSendAt - clientReceivedAt)) /
-      2;
-
-    if (timeSyncRoundTripLatencyMs.value === 0) {
-      timeSyncRoundTripLatencyMs.value = rtt;
-      serverClockOffsetMs.value = offset;
-      return;
-    }
-
-    timeSyncRoundTripLatencyMs.value = timeSyncRoundTripLatencyMs.value * 0.7 + rtt * 0.3;
-    serverClockOffsetMs.value = serverClockOffsetMs.value * 0.8 + offset * 0.2;
-  }
-
-  function handleAcknowledgedInputSeq(acknowledgedInputSeq: number): void {
-    if (acknowledgedInputSeq <= lastAcknowledgedInputSeq.value) {
-      return;
-    }
-
-    const now = Date.now();
-    let latestAcknowledgedIssuedAt: number | null = null;
-
-    for (const seq of [...pendingInputIssuedAt.keys()]) {
-      if (seq <= acknowledgedInputSeq) {
-        const issuedAt = pendingInputIssuedAt.get(seq);
-
-        if (issuedAt !== undefined) {
-          latestAcknowledgedIssuedAt = issuedAt;
-        }
-        pendingInputIssuedAt.delete(seq);
-      }
-    }
-
-    for (const seq of [...pendingContinuousInputs.keys()]) {
-      if (seq <= acknowledgedInputSeq) {
-        pendingContinuousInputs.delete(seq);
-      }
-    }
-
-    if (latestAcknowledgedIssuedAt !== null) {
-      const sampleLatencyMs = Math.max(now - latestAcknowledgedIssuedAt, 0);
-
-      if (inputAcknowledgementLatencyMs.value === 0) {
-        inputAcknowledgementLatencyMs.value = sampleLatencyMs;
-      } else {
-        inputAcknowledgementLatencyMs.value =
-          inputAcknowledgementLatencyMs.value * 0.6 + sampleLatencyMs * 0.4;
-      }
-
-      lastInputLatencySampleAtMs.value = now;
-    }
-
-    lastAcknowledgedInputSeq.value = acknowledgedInputSeq;
-  }
-
-  function rememberPendingInput(seq: number): void {
-    pendingInputIssuedAt.set(seq, Date.now());
   }
 
   function reconcileFacingPreview(nextSnapshot: SimulationSnapshot): void {
@@ -445,49 +302,6 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  function reconcileControlledActorPrediction(): void {
-    if (authoritativeSnapshot.value === null) {
-      return;
-    }
-
-    const actor = getCurrentPlayerAuthoritativeActor();
-
-    if (actor === null) {
-      return;
-    }
-
-    const pendingInputs = [...pendingContinuousInputs.entries()]
-      .filter(([, input]) => input.actorId === actor.id)
-      .sort(([leftSeq], [rightSeq]) => leftSeq - rightSeq)
-      .map(([, input]) => input);
-
-    if (pendingInputs.length === 0) {
-      return;
-    }
-
-    let position = cloneVector(actor.position);
-    let facing = actor.facing;
-    let direction = cloneVector(actor.moveState.direction);
-    let moving = actor.moveState.moving;
-
-    for (const input of pendingInputs) {
-      direction = normalizeDirection(input.moveDirection);
-      moving = Math.hypot(direction.x, direction.y) > 0;
-      position = movePosition(position, direction, CONTINUOUS_INPUT_INTERVAL_MS);
-
-      if (input.facing !== undefined) {
-        facing = input.facing;
-      }
-    }
-
-    actor.position = position;
-    actor.facing = facing;
-    actor.moveState = {
-      direction,
-      moving,
-    };
-  }
-
   function acceptSyncId(syncId: number): boolean {
     if (syncId < currentSyncId.value) {
       return false;
@@ -495,25 +309,39 @@ export const useAppStore = defineStore('app', () => {
 
     if (syncId > currentSyncId.value) {
       currentSyncId.value = syncId;
-      pendingInputIssuedAt.clear();
-      clearPendingContinuousInputs();
-      lastAcknowledgedInputSeq.value = 0;
+      clearLocalControlledPose();
       clearFacingPreview();
     }
 
     return true;
   }
 
-  function acceptSnapshot(options: {
-    syncId: number;
-    snapshot: SimulationSnapshot;
-    acknowledgedInputSeq: number;
-  }): void {
-    if (!acceptSyncId(options.syncId)) {
+  function applyLocalControlledPose(snapshotValue: SimulationSnapshot): void {
+    const controlledPose = localControlledPose.value;
+
+    if (controlledPose === null) {
       return;
     }
 
-    handleAcknowledgedInputSeq(options.acknowledgedInputSeq);
+    const actor = snapshotValue.actors.find((candidate) => candidate.id === controlledPose.actorId);
+
+    if (actor === undefined || !actor.alive) {
+      clearLocalControlledPose();
+      return;
+    }
+
+    actor.position = cloneVector(controlledPose.position);
+    actor.facing = controlledPose.facing;
+    actor.moveState = {
+      direction: cloneVector(controlledPose.moveState.direction),
+      moving: controlledPose.moveState.moving,
+    };
+  }
+
+  function acceptSnapshot(options: { syncId: number; snapshot: SimulationSnapshot }): void {
+    if (!acceptSyncId(options.syncId)) {
+      return;
+    }
 
     const currentSnapshot = authoritativeSnapshot.value;
 
@@ -527,7 +355,7 @@ export const useAppStore = defineStore('app', () => {
     }
 
     authoritativeSnapshot.value = options.snapshot;
-    reconcileControlledActorPrediction();
+    applyLocalControlledPose(options.snapshot);
     reconcileFacingPreview(options.snapshot);
   }
 
@@ -603,20 +431,15 @@ export const useAppStore = defineStore('app', () => {
         connected.value = true;
         serverError.value = null;
         appendLog('已连接服务器');
-        startTimeSyncLoop();
         startTransportProbeLoop();
         rejoinCurrentRoom();
       });
 
       nextSocket.on('disconnect', () => {
         connected.value = false;
-        stopTimeSyncLoop();
         stopTransportProbeLoop();
+        clearLocalControlledPose();
         appendLog('与服务器断开连接');
-      });
-
-      nextSocket.on('net:time-sync:response', (payload) => {
-        applyTimeSyncResponse(payload);
       });
 
       nextSocket.on('server:error', (payload) => {
@@ -670,9 +493,7 @@ export const useAppStore = defineStore('app', () => {
 
         authoritativeSnapshot.value = payload.snapshot;
         inputSeq.value = 0;
-        lastAcknowledgedInputSeq.value = 0;
-        pendingInputIssuedAt.clear();
-        clearPendingContinuousInputs();
+        clearLocalControlledPose();
         clearFacingPreview();
         logs.value = [];
         appendLog(`开始模拟：${payload.snapshot.battleName}`);
@@ -686,7 +507,6 @@ export const useAppStore = defineStore('app', () => {
         acceptSnapshot({
           syncId: payload.syncId,
           snapshot: payload.snapshot,
-          acknowledgedInputSeq: payload.acknowledgedInputSeq,
         });
       });
 
@@ -703,8 +523,6 @@ export const useAppStore = defineStore('app', () => {
           requestResync('missing_snapshot');
           return;
         }
-
-        handleAcknowledgedInputSeq(payload.acknowledgedInputSeq);
 
         const acceptedEvents = payload.events.filter(
           (event: SimulationEvent) =>
@@ -724,7 +542,7 @@ export const useAppStore = defineStore('app', () => {
         const latestEvent = acceptedEvents[acceptedEvents.length - 1];
         authoritativeSnapshot.value.tick = latestEvent.tick;
         authoritativeSnapshot.value.timeMs = latestEvent.timeMs;
-        reconcileControlledActorPrediction();
+        applyLocalControlledPose(authoritativeSnapshot.value);
         reconcileFacingPreview(authoritativeSnapshot.value);
       });
 
@@ -860,39 +678,47 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
-  function rememberPendingContinuousInput(seq: number, input: PendingContinuousInput): void {
-    pendingContinuousInputs.set(seq, input);
-  }
-
   function applyOptimisticContinuousInput(frame: {
     moveDirection: Vector2;
     facing?: number;
-  }): void {
+  }): LocalControlledPose | null {
     if (authoritativeSnapshot.value === null) {
-      return;
+      return null;
     }
 
-    const actor = getCurrentPlayerAuthoritativeActor();
+    const actor = getCurrentPlayerActor();
 
     if (actor === null) {
-      return;
+      return null;
     }
 
     const direction = normalizeDirection(frame.moveDirection);
+    const nextFacing = frame.facing ?? actor.facing;
+    const nextPosition = movePosition(actor.position, direction, CONTINUOUS_INPUT_INTERVAL_MS);
 
-    actor.position = movePosition(actor.position, direction, CONTINUOUS_INPUT_INTERVAL_MS);
+    actor.position = nextPosition;
     actor.moveState = {
       direction,
       moving: Math.hypot(direction.x, direction.y) > 0,
     };
+    actor.facing = nextFacing;
 
-    if (frame.facing !== undefined) {
-      actor.facing = frame.facing;
-    }
+    const nextPose = {
+      actorId: actor.id,
+      position: cloneVector(nextPosition),
+      facing: nextFacing,
+      moveState: {
+        direction: cloneVector(direction),
+        moving: actor.moveState.moving,
+      },
+    };
+
+    localControlledPose.value = nextPose;
+    return nextPose;
   }
 
   function emitSimulationInput(
-    input: Omit<SimulationInput, 'roomId' | 'inputSeq' | 'issuedAt' | 'issuedAtServerTimeEstimate'>,
+    input: Omit<SimulationInput, 'roomId' | 'inputSeq' | 'issuedAt'>,
   ): void {
     if (room.value === null || socket.value === null) {
       return;
@@ -905,10 +731,7 @@ export const useAppStore = defineStore('app', () => {
       roomId: room.value.roomId,
       inputSeq: inputSeq.value,
       issuedAt,
-      issuedAtServerTimeEstimate: getIssuedAtServerTimeEstimate(issuedAt),
     } as SimulationInput;
-
-    rememberPendingInput(payload.inputSeq);
 
     switch (payload.type) {
       case 'use-knockback-immune':
@@ -934,27 +757,24 @@ export const useAppStore = defineStore('app', () => {
     const nextInputSeq = inputSeq.value;
     const issuedAt = Date.now();
     const moveDirection = normalizeDirection(frame.moveDirection);
-    rememberPendingInput(nextInputSeq);
-    rememberPendingContinuousInput(nextInputSeq, {
-      actorId: actor.id,
-      issuedAt,
+    const nextPose = applyOptimisticContinuousInput({
       moveDirection,
       ...(frame.facing !== undefined ? { facing: frame.facing } : {}),
     });
-    applyOptimisticContinuousInput({
-      moveDirection,
-      ...(frame.facing !== undefined ? { facing: frame.facing } : {}),
-    });
+
+    if (nextPose === null) {
+      return;
+    }
 
     socket.value.emit('sim:input-frame', {
       roomId: room.value.roomId,
       actorId: actor.id,
       inputSeq: nextInputSeq,
       issuedAt,
-      issuedAtServerTimeEstimate: getIssuedAtServerTimeEstimate(issuedAt),
       payload: {
+        position: nextPose.position,
         moveDirection,
-        ...(frame.facing !== undefined ? { facing: frame.facing } : {}),
+        facing: nextPose.facing,
       },
     });
   }
@@ -1004,8 +824,27 @@ export const useAppStore = defineStore('app', () => {
         );
 
         if (actor !== undefined) {
+          if (
+            event.payload.actorId === localControlledPose.value?.actorId &&
+            event.payload.correctionMode !== 'hard'
+          ) {
+            break;
+          }
+
           actor.position = event.payload.position;
           actor.facing = event.payload.facing;
+
+          if (event.payload.actorId === localControlledPose.value?.actorId) {
+            localControlledPose.value = {
+              actorId: actor.id,
+              position: cloneVector(event.payload.position),
+              facing: event.payload.facing,
+              moveState: {
+                direction: cloneVector(actor.moveState.direction),
+                moving: actor.moveState.moving,
+              },
+            };
+          }
         }
         break;
       }
@@ -1046,6 +885,10 @@ export const useAppStore = defineStore('app', () => {
           actor.currentHp = event.payload.remainingHp;
           actor.alive = event.payload.remainingHp > 0;
           actor.lastDamageSource = event.payload.sourceLabel;
+
+          if (!actor.alive && actor.id === localControlledPose.value?.actorId) {
+            clearLocalControlledPose();
+          }
         }
         break;
       }
@@ -1070,6 +913,10 @@ export const useAppStore = defineStore('app', () => {
           actor.alive = false;
           actor.currentHp = 0;
           actor.deathReason = event.payload.deathReason;
+
+          if (actor.id === localControlledPose.value?.actorId) {
+            clearLocalControlledPose();
+          }
         }
         appendLog(`${event.payload.actorName} 倒地：${event.payload.deathReason}`);
         break;
@@ -1094,8 +941,6 @@ export const useAppStore = defineStore('app', () => {
     serverError,
     connected,
     latencyDisplay,
-    latencyLabel,
-    networkLatencyDisplay,
     logs,
     currentPlayerSlot,
     page,

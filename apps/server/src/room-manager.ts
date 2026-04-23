@@ -3,6 +3,7 @@ import { createSimulation, DEFAULT_PLAYER_MAX_HP, FIXED_TICK_MS } from '@ff14are
 import type { BattleDefinition, PartyMemberBlueprint, SimulationInstance } from '@ff14arena/core';
 import type { Server as SocketServer, Socket } from 'socket.io';
 import type {
+  ActorPoseSample,
   ClientToServerEvents,
   ContinuousSimulationInputFrame,
   EncounterResult,
@@ -55,8 +56,9 @@ interface RoomRecord {
   snapshotBroadcastCounter: number;
   latestResult: EncounterResult | null;
   inputSeqByActorId: Map<string, number>;
+  lastPoseSeqByActorId: Map<string, number>;
+  pendingPoseByActorId: Map<string, ActorPoseSample>;
   syncId: number;
-  simulationTimeOriginMs: number | null;
 }
 
 function createBotOccupant(roomId: string, slot: PartySlot): BotSlotOccupant {
@@ -116,8 +118,9 @@ export class RoomManager {
       snapshotBroadcastCounter: 0,
       latestResult: null,
       inputSeqByActorId: new Map(),
+      lastPoseSeqByActorId: new Map(),
+      pendingPoseByActorId: new Map(),
       syncId: 1,
-      simulationTimeOriginMs: null,
     };
 
     this.rooms.set(roomId, room);
@@ -208,26 +211,9 @@ export class RoomManager {
     });
   }
 
-  private updateSimulationTimeOrigin(room: RoomRecord): void {
-    const snapshot = room.simulation?.getSnapshot();
-
-    if (snapshot === undefined) {
-      room.simulationTimeOriginMs = null;
-      return;
-    }
-
-    room.simulationTimeOriginMs = Date.now() - snapshot.timeMs;
-  }
-
-  private toSimulationTimeMs(
-    room: RoomRecord,
-    issuedAtServerTimeEstimate?: number,
-  ): number | undefined {
-    if (issuedAtServerTimeEstimate === undefined || room.simulationTimeOriginMs === null) {
-      return undefined;
-    }
-
-    return Math.max(0, issuedAtServerTimeEstimate - room.simulationTimeOriginMs);
+  private resetPoseSyncState(room: RoomRecord): void {
+    room.lastPoseSeqByActorId.clear();
+    room.pendingPoseByActorId.clear();
   }
 
   private rebuildWaitingSimulation(
@@ -246,7 +232,6 @@ export class RoomManager {
         room.loopHandle = null;
       }
       room.simulation = null;
-      room.simulationTimeOriginMs = null;
       room.phase = 'waiting';
       return;
     }
@@ -273,7 +258,6 @@ export class RoomManager {
 
     room.simulation = simulation;
     room.phase = 'waiting';
-    this.updateSimulationTimeOrigin(room);
     this.ensureSimulationLoop(room);
   }
 
@@ -291,6 +275,11 @@ export class RoomManager {
     if (room.simulation === null) {
       return;
     }
+
+    for (const sample of room.pendingPoseByActorId.values()) {
+      room.simulation.applyActorPoseSample(sample);
+    }
+    room.pendingPoseByActorId.clear();
 
     if (room.phase === 'running' && room.battle !== null) {
       const preTickSnapshot = room.simulation.getSnapshot();
@@ -364,21 +353,18 @@ export class RoomManager {
     room.simulation.tick(FIXED_TICK_MS);
     room.snapshotBroadcastCounter += 1;
     const events = room.simulation.drainEvents();
-    const acknowledgedInputSeq = room.simulation.getAcknowledgedInputSeq();
 
     if (events.length > 0) {
       this.io.to(room.roomId).emit('sim:events', {
         roomId: room.roomId,
         syncId: room.syncId,
         events,
-        acknowledgedInputSeq,
       });
     }
 
     if (room.snapshotBroadcastCounter >= 10) {
       room.snapshotBroadcastCounter = 0;
       this.emitSnapshot(room, {
-        acknowledgedInputSeq,
         reason: 'tick',
       });
       this.emitRoomSlots(room);
@@ -432,7 +418,6 @@ export class RoomManager {
         this.emitRoomSlots(room);
         this.emitSnapshot(room, {
           target: socket,
-          acknowledgedInputSeq: room.simulation?.getAcknowledgedInputSeq() ?? 0,
           reason: 'rejoin',
         });
       }
@@ -573,6 +558,7 @@ export class RoomManager {
     room.battle = battle;
     room.latestResult = null;
     room.syncId += 1;
+    this.resetPoseSyncState(room);
     this.resetReadyStates(room);
     this.rebuildWaitingSimulation(room, {
       resetAllActors: true,
@@ -708,42 +694,31 @@ export class RoomManager {
       return;
     }
 
-    const issuedAtServerTimeEstimate = this.toSimulationTimeMs(
-      room,
-      inputFrame.issuedAtServerTimeEstimate,
-    );
+    const lastSeq = room.lastPoseSeqByActorId.get(inputFrame.actorId) ?? 0;
 
-    const moveInput: SimulationInput = {
-      roomId: inputFrame.roomId,
-      actorId: inputFrame.actorId,
-      inputSeq: inputFrame.inputSeq,
-      issuedAt: inputFrame.issuedAt,
-      ...(issuedAtServerTimeEstimate === undefined ? {} : { issuedAtServerTimeEstimate }),
-      type: 'move',
-      payload: {
-        direction: inputFrame.payload.moveDirection,
-      },
-    };
-
-    room.simulation.dispatchInput(moveInput);
-
-    if (inputFrame.payload.facing === undefined) {
+    if (inputFrame.inputSeq <= lastSeq) {
       return;
     }
 
-    const faceInput: SimulationInput = {
-      roomId: inputFrame.roomId,
+    room.lastPoseSeqByActorId.set(inputFrame.actorId, inputFrame.inputSeq);
+    room.pendingPoseByActorId.set(inputFrame.actorId, {
       actorId: inputFrame.actorId,
       inputSeq: inputFrame.inputSeq,
       issuedAt: inputFrame.issuedAt,
-      ...(issuedAtServerTimeEstimate === undefined ? {} : { issuedAtServerTimeEstimate }),
-      type: 'face',
-      payload: {
-        facing: inputFrame.payload.facing,
+      position: {
+        x: inputFrame.payload.position.x,
+        y: inputFrame.payload.position.y,
       },
-    };
-
-    room.simulation.dispatchInput(faceInput);
+      facing: inputFrame.payload.facing,
+      moveState: {
+        direction: {
+          x: inputFrame.payload.moveDirection.x,
+          y: inputFrame.payload.moveDirection.y,
+        },
+        moving:
+          Math.hypot(inputFrame.payload.moveDirection.x, inputFrame.payload.moveDirection.y) > 0,
+      },
+    });
   }
 
   requestResync(socket: TypedSocket, payload: SimResyncRequestPayload): void {
@@ -765,7 +740,6 @@ export class RoomManager {
     this.emitRoomSlots(room, socket);
     this.emitSnapshot(room, {
       target: socket,
-      acknowledgedInputSeq: room.simulation?.getAcknowledgedInputSeq() ?? 0,
       reason: 'resync',
     });
   }
@@ -815,6 +789,7 @@ export class RoomManager {
     room.snapshotBroadcastCounter = 0;
     room.inputSeqByActorId.clear();
     room.syncId += 1;
+    this.resetPoseSyncState(room);
     const simulation = room.simulation ?? createSimulation({ tickRate: 20 });
 
     simulation.stop();
@@ -830,7 +805,6 @@ export class RoomManager {
 
     room.simulation = simulation;
     room.phase = 'running';
-    this.updateSimulationTimeOrigin(room);
     this.ensureSimulationLoop(room);
 
     const startSnapshot = simulation.getSnapshot();
@@ -848,6 +822,7 @@ export class RoomManager {
     room.phase = 'waiting';
     room.latestResult = endSnapshot.latestResult;
     room.syncId += 1;
+    this.resetPoseSyncState(room);
     const resetActorIds = new Set<string>();
 
     for (const slot of PARTY_SLOT_ORDER) {
@@ -880,7 +855,6 @@ export class RoomManager {
     this.emitRoomState(room);
     this.emitRoomSlots(room);
     this.emitSnapshot(room, {
-      acknowledgedInputSeq: room.simulation?.getAcknowledgedInputSeq() ?? 0,
       reason,
     });
   }
@@ -911,7 +885,6 @@ export class RoomManager {
   private emitSnapshot(
     room: RoomRecord,
     options: {
-      acknowledgedInputSeq: number;
       reason:
         | 'join'
         | 'rejoin'
@@ -933,7 +906,6 @@ export class RoomManager {
       roomId: room.roomId,
       syncId: room.syncId,
       snapshot,
-      acknowledgedInputSeq: options.acknowledgedInputSeq,
       reason: options.reason,
     };
 

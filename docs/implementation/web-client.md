@@ -81,15 +81,14 @@
 
 - 连续覆盖型输入统一通过 `sim:input-frame` 发送
 - 输入帧包含：
+  - `position`
+  - `facing`
   - `moveDirection`
-  - 可选 `facing`
   - `inputSeq`
   - `issuedAt`
-  - 可选 `issuedAtServerTimeEstimate`
 - 客户端本地维护递增的 `inputSeq`
-- 服务端在 `sim:events` 与 `sim:snapshot` 中回传 `acknowledgedInputSeq`
-- 客户端根据 `acknowledgedInputSeq` 清理待确认输入记录
-- 客户端会周期性做轻量时间同步，用于估算 `issuedAtServerTimeEstimate`
+- 客户端先本地推进自己的移动，再把当前位姿样本上报给服务端
+- `waiting` 与 `running` 永远共用同一套 `sim:input-frame` 发送链路
 
 ### 当前快照链
 
@@ -109,9 +108,9 @@
 
 - 当前已实现本地朝向预览
 - 当前已实现本机连续移动的即时乐观移动
-- 客户端会在权威快照或事件到达后，以权威位置为基线重放未确认的连续输入
-- 上述连续移动预测与重放在 `waiting` 和 `running` 两种 phase 中共用同一套逻辑
-- 客户端不再把 `sim:events` 视为 `running` 专属，自机移动相关权威更新在两种 phase 中共用同一套消费入口
+- 客户端会在收到快照或事件后，把本机最新本地位姿重新覆盖到当前镜像上
+- 上述本地移动与位姿覆盖逻辑在 `waiting` 和 `running` 两种 phase 中共用同一套实现
+- 客户端不再依赖输入确认序号、时间同步或未确认输入重放
 - 远端角色使用渲染层位置镜像平滑追逐权威位置
 - 强修正距离过大时，渲染层会直接跳到权威位置，不做平滑
 - 当前尚未实现更细致的特殊位移预测

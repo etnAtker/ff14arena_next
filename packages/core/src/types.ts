@@ -1,4 +1,5 @@
 import type {
+  ActorPoseSample,
   BaseActorSnapshot,
   BossSnapshot,
   DamageType,
@@ -171,8 +172,8 @@ export interface SimulationInstance {
   start(): void;
   stop(): void;
   tick(deltaMs: number): void;
+  applyActorPoseSample(sample: ActorPoseSample): void;
   dispatchInput(input: SimulationInput): void;
   getSnapshot(): SimulationSnapshot;
   drainEvents(): SimulationEvent[];
-  getAcknowledgedInputSeq(): number;
 }

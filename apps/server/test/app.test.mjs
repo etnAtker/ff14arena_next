@@ -101,6 +101,20 @@ function displacementBetween(from, to) {
   return Math.hypot(to.x - from.x, to.y - from.y);
 }
 
+function emitPoseFrame(socket, options) {
+  socket.emit('sim:input-frame', {
+    roomId: options.roomId,
+    actorId: options.actorId,
+    inputSeq: options.inputSeq,
+    issuedAt: Date.now(),
+    payload: {
+      position: options.position,
+      facing: options.facing,
+      moveDirection: options.moveDirection,
+    },
+  });
+}
+
 test('房间全流程：创建、立即加入、等待态快照、开始、结算回到待开始', async () => {
   const server = await startServer({
     host: '127.0.0.1',
@@ -454,7 +468,7 @@ test('客户端请求重同步时，服务端会回送当前权威快照', async
   }
 });
 
-test('高延迟移动输入会按 issuedAtServerTimeEstimate 补偿权威位置', async () => {
+test('运行态位姿样本会同步到服务端当前权威位置', async () => {
   const server = await startServer({
     host: '127.0.0.1',
     port: 0,
@@ -470,7 +484,7 @@ test('高延迟移动输入会按 issuedAtServerTimeEstimate 补偿权威位置'
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        name: '高延迟移动测试',
+        name: '运行态位姿样本测试',
         ownerUserId: 'owner-user',
         ownerName: '房主',
         battleId: 'opening_two_rounds',
@@ -501,7 +515,11 @@ test('高延迟移动输入会按 issuedAtServerTimeEstimate 补偿权威位置'
     const ownerActor = startPayload.snapshot.actors.find((actor) => actor.slot === 'MT');
     assert.ok(ownerActor, '应找到房主控制的 MT 角色');
 
-    await sleep(220);
+    const targetPosition = {
+      x: ownerActor.position.x + 1.2,
+      y: ownerActor.position.y + 0.4,
+    };
+    const targetFacing = ownerActor.facing + 0.3;
 
     const movedEventPromise = waitForPayload(
       owner,
@@ -511,18 +529,16 @@ test('高延迟移动输入会按 issuedAtServerTimeEstimate 补偿权威位置'
         payload.events.some(
           (event) => event.type === 'actorMoved' && event.payload.actorId === ownerActor.id,
         ),
-      8_000,
+      4000,
     );
 
-    owner.emit('sim:input-frame', {
+    emitPoseFrame(owner, {
       roomId,
       actorId: ownerActor.id,
       inputSeq: 1,
-      issuedAt: Date.now() - 100,
-      issuedAtServerTimeEstimate: Date.now() - 100,
-      payload: {
-        moveDirection: { x: 1, y: 0 },
-      },
+      position: targetPosition,
+      facing: targetFacing,
+      moveDirection: { x: 1, y: 0 },
     });
 
     const movedPayload = await movedEventPromise;
@@ -530,23 +546,15 @@ test('高延迟移动输入会按 issuedAtServerTimeEstimate 补偿权威位置'
       .filter((event) => event.type === 'actorMoved' && event.payload.actorId === ownerActor.id)
       .at(-1);
     assert.ok(actorMovedEvent, '应收到房主角色的移动事件');
-
-    const movedDistance = Math.hypot(
-      actorMovedEvent.payload.position.x - ownerActor.position.x,
-      actorMovedEvent.payload.position.y - ownerActor.position.y,
-    );
-
-    assert.ok(
-      movedDistance >= 0.55,
-      `补偿后首次权威位移应至少接近 0.6m，实际为 ${movedDistance.toFixed(3)}m`,
-    );
+    assert.deepEqual(actorMovedEvent.payload.position, targetPosition);
+    assert.equal(actorMovedEvent.payload.facing, targetFacing);
   } finally {
     owner.close();
     await server.close();
   }
 });
 
-test('等待态连续移动通过统一事件链返回 ack 与位移事件', async () => {
+test('等待态位姿样本通过统一事件链返回位移事件', async () => {
   const server = await startServer({
     host: '127.0.0.1',
     port: 0,
@@ -562,7 +570,7 @@ test('等待态连续移动通过统一事件链返回 ack 与位移事件', asy
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        name: '等待态事件链测试',
+        name: '等待态位姿样本测试',
         ownerUserId: 'owner-user',
         ownerName: '房主',
         battleId: 'opening_two_rounds',
@@ -584,27 +592,29 @@ test('等待态连续移动通过统一事件链返回 ack 与位移事件', asy
     const ownerActor = waitingSnapshot.snapshot.actors.find((actor) => actor.slot === 'MT');
     assert.ok(ownerActor, '应找到房主控制的 MT 角色');
 
+    const targetPosition = {
+      x: ownerActor.position.x + 0.8,
+      y: ownerActor.position.y,
+    };
+
     const movedEventPromise = waitForPayload(
       owner,
       'sim:events',
       (payload) =>
         payload.roomId === roomId &&
-        payload.acknowledgedInputSeq >= 1 &&
         payload.events.some(
           (event) => event.type === 'actorMoved' && event.payload.actorId === ownerActor.id,
         ),
       4000,
     );
 
-    owner.emit('sim:input-frame', {
+    emitPoseFrame(owner, {
       roomId,
       actorId: ownerActor.id,
       inputSeq: 1,
-      issuedAt: Date.now(),
-      issuedAtServerTimeEstimate: Date.now(),
-      payload: {
-        moveDirection: { x: 1, y: 0 },
-      },
+      position: targetPosition,
+      facing: ownerActor.facing,
+      moveDirection: { x: 1, y: 0 },
     });
 
     const movedPayload = await movedEventPromise;
@@ -612,14 +622,14 @@ test('等待态连续移动通过统一事件链返回 ack 与位移事件', asy
       (event) => event.type === 'actorMoved' && event.payload.actorId === ownerActor.id,
     );
     assert.ok(actorMovedEvent, '等待态输入后应收到位移事件');
-    assert.equal(movedPayload.acknowledgedInputSeq, 1);
+    assert.deepEqual(actorMovedEvent.payload.position, targetPosition);
   } finally {
     owner.close();
     await server.close();
   }
 });
 
-test('准备态与战斗态连续移动使用同一套位移规则', async () => {
+test('准备态与战斗态位姿样本使用同一套移动链路', async () => {
   const server = await startServer({
     host: '127.0.0.1',
     port: 0,
@@ -664,24 +674,32 @@ test('准备态与战斗态连续移动使用同一套位移规则', async () =>
       x: ownerSlot.position.x,
       y: ownerSlot.position.y,
     };
+    let waitingCurrentPosition = { ...waitingStartPosition };
 
     for (let seq = 1; seq <= 3; seq += 1) {
       const eventPromise = waitForPayload(
         owner,
         'sim:events',
-        (payload) => payload.roomId === roomId && payload.acknowledgedInputSeq >= seq,
+        (payload) =>
+          payload.roomId === roomId &&
+          payload.events.some(
+            (event) => event.type === 'actorMoved' && event.payload.actorId === ownerSlot.id,
+          ),
         4000,
       );
 
-      owner.emit('sim:input-frame', {
+      waitingCurrentPosition = {
+        x: waitingCurrentPosition.x,
+        y: waitingCurrentPosition.y + 0.6,
+      };
+
+      emitPoseFrame(owner, {
         roomId,
         actorId: ownerSlot.id,
         inputSeq: seq,
-        issuedAt: Date.now(),
-        issuedAtServerTimeEstimate: Date.now(),
-        payload: {
-          moveDirection: { x: 0, y: 1 },
-        },
+        position: waitingCurrentPosition,
+        facing: ownerSlot.facing,
+        moveDirection: { x: 0, y: 1 },
       });
 
       await eventPromise;
@@ -691,18 +709,20 @@ test('准备态与战斗态连续移动使用同一套位移规则', async () =>
     const waitingStopPromise = waitForPayload(
       owner,
       'sim:events',
-      (payload) => payload.roomId === roomId && payload.acknowledgedInputSeq >= 4,
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.events.some(
+          (event) => event.type === 'actorMoved' && event.payload.actorId === ownerSlot.id,
+        ),
       4000,
     );
-    owner.emit('sim:input-frame', {
+    emitPoseFrame(owner, {
       roomId,
       actorId: ownerSlot.id,
       inputSeq: 4,
-      issuedAt: Date.now(),
-      issuedAtServerTimeEstimate: Date.now(),
-      payload: {
-        moveDirection: { x: 0, y: 0 },
-      },
+      position: waitingCurrentPosition,
+      facing: ownerSlot.facing,
+      moveDirection: { x: 0, y: 0 },
     });
     await waitingStopPromise;
 
@@ -732,6 +752,7 @@ test('准备态与战斗态连续移动使用同一套位移规则', async () =>
       x: runningStartActor.position.x,
       y: runningStartActor.position.y,
     };
+    let runningCurrentPosition = { ...runningStartPosition };
 
     for (let seq = 1; seq <= 3; seq += 1) {
       const runningEventPromise = waitForPayload(
@@ -739,20 +760,24 @@ test('准备态与战斗态连续移动使用同一套位移规则', async () =>
         'sim:events',
         (payload) =>
           payload.roomId === roomId &&
-          payload.snapshot === undefined &&
-          payload.acknowledgedInputSeq >= seq,
+          payload.events.some(
+            (event) => event.type === 'actorMoved' && event.payload.actorId === ownerSlot.id,
+          ),
         4000,
       );
 
-      owner.emit('sim:input-frame', {
+      runningCurrentPosition = {
+        x: runningCurrentPosition.x,
+        y: runningCurrentPosition.y + 0.6,
+      };
+
+      emitPoseFrame(owner, {
         roomId,
         actorId: ownerSlot.id,
         inputSeq: seq,
-        issuedAt: Date.now(),
-        issuedAtServerTimeEstimate: Date.now(),
-        payload: {
-          moveDirection: { x: 0, y: 1 },
-        },
+        position: runningCurrentPosition,
+        facing: ownerSlot.facing,
+        moveDirection: { x: 0, y: 1 },
       });
 
       await runningEventPromise;
@@ -762,18 +787,20 @@ test('准备态与战斗态连续移动使用同一套位移规则', async () =>
     const runningStopPromise = waitForPayload(
       owner,
       'sim:events',
-      (payload) => payload.roomId === roomId && payload.acknowledgedInputSeq >= 4,
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.events.some(
+          (event) => event.type === 'actorMoved' && event.payload.actorId === ownerSlot.id,
+        ),
       4000,
     );
-    owner.emit('sim:input-frame', {
+    emitPoseFrame(owner, {
       roomId,
       actorId: ownerSlot.id,
       inputSeq: 4,
-      issuedAt: Date.now(),
-      issuedAtServerTimeEstimate: Date.now(),
-      payload: {
-        moveDirection: { x: 0, y: 0 },
-      },
+      position: runningCurrentPosition,
+      facing: ownerSlot.facing,
+      moveDirection: { x: 0, y: 0 },
     });
     await runningStopPromise;
 
@@ -783,8 +810,7 @@ test('准备态与战斗态连续移动使用同一套位移规则', async () =>
       (payload) =>
         payload.roomId === roomId &&
         payload.reason === 'resync' &&
-        payload.snapshot.phase === 'running' &&
-        payload.acknowledgedInputSeq >= 3,
+        payload.snapshot.phase === 'running',
       6000,
     );
     owner.emit('sim:request-resync', {

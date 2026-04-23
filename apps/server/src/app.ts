@@ -150,15 +150,6 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
   }
 
   io.on('connection', (socket) => {
-    socket.on('net:time-sync:request', (payload) => {
-      const serverReceivedAt = Date.now();
-      socket.emit('net:time-sync:response', {
-        clientSendAt: payload.clientSendAt,
-        serverReceivedAt,
-        serverSendAt: Date.now(),
-      });
-    });
-
     socket.on('room:join', (payload) => {
       roomManager.joinRoom(socket, payload);
     });

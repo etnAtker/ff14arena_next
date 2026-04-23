@@ -64,17 +64,25 @@
 - 连续覆盖型输入：
   - `sim:input-frame`
 - 一次性指令：
-  - `sim:use-knockback-immunity`
+  - `sim:use-knockback-immune`
 - 主动重同步请求：
   - `sim:request-resync`
 
 当前连续覆盖型输入统一通过 `sim:input-frame` 发送。  
-该输入帧可同时携带移动方向、可选朝向、`inputSeq`、`issuedAt` 和可选 `issuedAtServerTimeEstimate`。
+该输入帧当前携带：
+
+- `inputSeq`
+- `issuedAt`
+- `payload.position`
+- `payload.facing`
+- `payload.moveDirection`
 
 ### 当前下行事件
 
-- `room:update`
-  同步当前房间、成员和槽位状态
+- `room:state`
+  同步当前房间状态
+- `room:slots`
+  同步当前槽位状态
 - `sim:start`
   下发一轮新同步流的起始快照
 - `sim:events`
@@ -82,8 +90,7 @@
 - `sim:snapshot`
   下发 join / rejoin / resync 快照以及周期性权威快照
 
-当前 `sim:start`、`sim:events` 和 `sim:snapshot` 都会携带 `syncId`。  
-服务端在 `sim:events` 与 `sim:snapshot` 中回传 `acknowledgedInputSeq`，用于告知客户端已经处理到的连续输入序号。
+当前 `sim:start`、`sim:events` 和 `sim:snapshot` 都会携带 `syncId`。
 
 ## 5. 权威同步行为
 
@@ -97,14 +104,14 @@
 
 当前同步模型中：
 
-- 位置与状态以服务端权威结果为准
-- `acknowledgedInputSeq` 只表示服务端已处理到的连续输入序号
-- 服务端会把 `issuedAtServerTimeEstimate` 从墙钟时间换算到当前权威模拟时间轴
-- `packages/core` 会保留最近一小段移动历史，并在新移动输入到达时按估计生效时刻补算当前位置
-- 等待态与运行态共用同一个 `SimulationInstance` 接口和同一套移动规则，不再维护独立的等待态移动实现
-- 等待态与运行态都通过同一套输入入队、Tick 消费、`sim:events` 与周期性 `sim:snapshot` 链路同步移动结果
-- 服务端不会采纳客户端上报的绝对坐标作为权威位置
-- 击退、越界修正等强位移会直接发硬修正位置事件
+- 玩家普通移动由客户端本地模拟，并以上传位姿样本的方式同步给服务端
+- 服务端按 `actorId + inputSeq` 去重，只保留每个 Actor 最新的位姿样本
+- 服务端在每个房间 Tick 开始时先写入位姿样本，再推进 `packages/core`
+- `waiting` 与 `running` 永远共用同一套移动链路，不维护独立实现
+- `running` 只是比 `waiting` 多推进战斗脚本、AOE、伤害、Buff 与结算
+- Bot 与主动能力仍通过 `SimulationInput` 进入同一个 `SimulationInstance`
+- 普通移动不再做 `issuedAtServerTimeEstimate` 时间补偿，也不再回传输入确认序号
+- 击退、越界修正等强修正仍通过事件直接下发位置结果
 
 ## 6. 当前边界
 

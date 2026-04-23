@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Application, Graphics, Text, TextStyle } from 'pixi.js';
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
 import type { SimulationSnapshot, Vector2 } from '@ff14arena/shared';
 import { getFacingForCameraYaw } from './camera';
 import { getSlotColor, getSlotStageText } from '../../utils/ui';
@@ -41,8 +41,7 @@ interface RenderActorState {
 let app: Application | null = null;
 let dragButton: 0 | 2 | null = null;
 let lastDragClientX = 0;
-let resizeObserver: ResizeObserver | null = null;
-let drawFrame: number | null = null;
+let renderLoopFrame: number | null = null;
 let isUnmounted = false;
 let isAppReady = false;
 let lastDrawAt = 0;
@@ -288,27 +287,7 @@ function advanceRenderActors(deltaMs: number): boolean {
   return hasAnimatingActor;
 }
 
-function scheduleDraw(): void {
-  if (isUnmounted || !isAppReady) {
-    return;
-  }
-
-  if (drawFrame !== null) {
-    cancelAnimationFrame(drawFrame);
-  }
-
-  drawFrame = requestAnimationFrame(() => {
-    drawFrame = null;
-
-    if (isUnmounted) {
-      return;
-    }
-
-    draw();
-  });
-}
-
-function draw(): void {
+function draw(now: number): void {
   if (stageRootRef.value === null || app === null || !isAppReady) {
     return;
   }
@@ -324,7 +303,6 @@ function draw(): void {
     app.renderer.resize(width, height);
   }
 
-  const now = performance.now();
   const deltaMs = lastDrawAt === 0 ? 16 : Math.min(now - lastDrawAt, 50);
   lastDrawAt = now;
 
@@ -337,7 +315,7 @@ function draw(): void {
     return;
   }
 
-  const shouldContinueAnimating = advanceRenderActors(deltaMs);
+  advanceRenderActors(deltaMs);
 
   const { arenaRadius, bossTargetRingRadius } = props.snapshot;
   const scale = getWorldScale(width, height, arenaRadius);
@@ -464,10 +442,15 @@ function draw(): void {
       label.alpha = alpha;
     }
   }
+}
 
-  if (shouldContinueAnimating) {
-    scheduleDraw();
+function runRenderLoop(now: number): void {
+  if (isUnmounted) {
+    return;
   }
+
+  renderLoopFrame = requestAnimationFrame(runRenderLoop);
+  draw(now);
 }
 
 function handleMouseDown(event: MouseEvent): void {
@@ -549,45 +532,20 @@ onMounted(async () => {
   isAppReady = true;
   stageRootRef.value.appendChild(app.canvas);
   createStagePrimitives();
-  resizeObserver = new ResizeObserver(() => {
-    scheduleDraw();
-  });
-  resizeObserver.observe(stageRootRef.value);
   window.addEventListener('mousemove', handleMouseMove);
   window.addEventListener('mouseup', endDrag);
-  scheduleDraw();
+  renderLoopFrame = requestAnimationFrame(runRenderLoop);
 });
-
-watch(
-  () => [
-    props.snapshot?.phase ?? 'none',
-    props.snapshot?.tick ?? -1,
-    props.snapshot?.timeMs ?? -1,
-    props.snapshot?.actors.length ?? 0,
-    props.snapshot?.mechanics.length ?? 0,
-    props.snapshot?.hud.bossCastBar?.startedAt ?? -1,
-    props.controlledActorId ?? '',
-    props.cameraYaw,
-    props.cameraZoom,
-    props.operationMode,
-  ],
-  () => {
-    scheduleDraw();
-  },
-  { flush: 'post' },
-);
 
 onBeforeUnmount(() => {
   isUnmounted = true;
   isAppReady = false;
   window.removeEventListener('mousemove', handleMouseMove);
   window.removeEventListener('mouseup', endDrag);
-  resizeObserver?.disconnect();
-  resizeObserver = null;
 
-  if (drawFrame !== null) {
-    cancelAnimationFrame(drawFrame);
-    drawFrame = null;
+  if (renderLoopFrame !== null) {
+    cancelAnimationFrame(renderLoopFrame);
+    renderLoopFrame = null;
   }
 
   if (dragUpdateFrame !== null) {

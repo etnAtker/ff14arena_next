@@ -6,8 +6,6 @@ import type { SelectValue } from '../../utils/ui';
 const props = defineProps<{
   connected: boolean;
   latencyDisplay: string;
-  latencyLabel: string;
-  networkLatencyDisplay: string;
   userName: string;
   roomName: string | null;
   roomPhase: string | null;
@@ -58,12 +56,7 @@ const emit = defineEmits<{
           <n-tag :type="props.connected ? 'success' : 'error'" size="large" round>
             {{ props.connected ? '服务器在线' : '服务器断开' }}
           </n-tag>
-          <n-tag type="warning" size="large" round>
-            {{ props.latencyLabel }}：{{ props.latencyDisplay }}
-          </n-tag>
-          <n-tag type="default" size="large" round>
-            网络探测：{{ props.networkLatencyDisplay }}
-          </n-tag>
+          <n-tag type="warning" size="large" round> 延迟：{{ props.latencyDisplay }} </n-tag>
           <n-tag type="info" size="large" round> 当前用户：{{ props.userName }} </n-tag>
           <n-button v-if="props.roomName" secondary @click="emit('leaveRoom')">离开房间</n-button>
         </div>

@@ -1,5 +1,6 @@
 import type {} from './globals';
 import type {
+  ActorPoseSample,
   BaseActorSnapshot,
   BattleFailureMarkedEvent,
   BossCastResolvedEvent,
@@ -55,9 +56,8 @@ interface ActorMovementRuntime {
 }
 
 const MOVEMENT_HISTORY_WINDOW_MS = 1_000;
-const MAX_MOVEMENT_COMPENSATION_MS = 120;
 const HARD_CORRECTION_DISTANCE = 0.9;
-const POSITION_EPSILON = 1e-6;
+const POSITION_EPSILON = 0.001;
 
 interface RuntimeState {
   battle: BattleDefinition;
@@ -79,7 +79,6 @@ interface RuntimeState {
   failureMarked: boolean;
   failureReasons: string[];
   latestResult: EncounterResult | null;
-  acknowledgedInputSeq: number;
   movementRuntime: Map<string, ActorMovementRuntime>;
 }
 
@@ -102,6 +101,13 @@ function sameDirection(left: Vector2, right: Vector2): boolean {
   return (
     Math.abs(left.x - right.x) <= POSITION_EPSILON && Math.abs(left.y - right.y) <= POSITION_EPSILON
   );
+}
+
+function sameMoveState(
+  left: BaseActorSnapshot['moveState'],
+  right: BaseActorSnapshot['moveState'],
+): boolean {
+  return left.moving === right.moving && sameDirection(left.direction, right.direction);
 }
 
 function createMovementRuntime(
@@ -641,11 +647,48 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     });
   }
 
+  function applyActorPoseSample(sample: ActorPoseSample): void {
+    const currentState = assertState(state);
+    const actor = currentState.actors.get(sample.actorId);
+
+    if (actor === undefined || !actor.alive) {
+      return;
+    }
+
+    const previousPosition = cloneVector(actor.position);
+    const previousFacing = actor.facing;
+    const previousMoveState = {
+      direction: cloneVector(actor.moveState.direction),
+      moving: actor.moveState.moving,
+    };
+
+    actor.position = cloneVector(sample.position);
+    actor.facing = sample.facing;
+    actor.moveState = {
+      direction: cloneVector(sample.moveState.direction),
+      moving: sample.moveState.moving,
+    };
+
+    resetMovementRuntime(actor, currentState.timeMs);
+
+    if (currentState.phase === 'running') {
+      checkOutOfBounds(actor);
+    }
+
+    const positionDelta = distance(previousPosition, actor.position);
+    const moved =
+      positionDelta > POSITION_EPSILON ||
+      Math.abs(previousFacing - actor.facing) > POSITION_EPSILON ||
+      !sameMoveState(previousMoveState, actor.moveState);
+
+    if (moved) {
+      emitActorMoved(actor, positionDelta >= HARD_CORRECTION_DISTANCE ? 'hard' : 'smooth');
+    }
+  }
+
   function applyInput(input: SimulationInput): void {
     const currentState = assertState(state);
     const actor = currentState.actors.get(input.actorId);
-
-    currentState.acknowledgedInputSeq = Math.max(currentState.acknowledgedInputSeq, input.inputSeq);
 
     if (actor === undefined || !actor.alive) {
       return;
@@ -665,19 +708,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         const direction = normalize(input.payload.direction);
         const previousPosition = cloneVector(actor.position);
         const previousDirection = cloneVector(actor.moveState.direction);
-        const replayTargetTimeMs = Math.max(currentState.timeMs - tickMs, 0);
-        const earliestCompensationTimeMs = Math.max(
-          runtime.anchorTimeMs,
-          currentState.timeMs - MAX_MOVEMENT_COMPENSATION_MS,
-        );
-        const estimatedTimeMs =
-          input.issuedAtServerTimeEstimate === undefined
-            ? currentState.timeMs
-            : input.issuedAtServerTimeEstimate;
-        const effectiveTimeMs = Math.max(
-          runtime.segments[runtime.segments.length - 1]?.startTimeMs ?? earliestCompensationTimeMs,
-          Math.min(currentState.timeMs, Math.max(earliestCompensationTimeMs, estimatedTimeMs)),
-        );
+        const effectiveTimeMs = currentState.timeMs;
 
         const lastSegment = runtime.segments[runtime.segments.length - 1];
 
@@ -705,7 +736,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           moving: length(direction) > 0,
         };
 
-        const idealPosition = evaluatePositionAt(runtime, replayTargetTimeMs);
+        const idealPosition = evaluatePositionAt(runtime, currentState.timeMs);
         const error = distance(previousPosition, idealPosition);
 
         actor.position = idealPosition;
@@ -755,7 +786,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     for (const actor of currentState.actors.values()) {
       pruneMovementRuntime(getMovementRuntime(actor.id), currentState.timeMs);
 
-      if (!actor.alive || !actor.moveState.moving) {
+      if (actor.kind !== 'bot' || !actor.alive || !actor.moveState.moving) {
         continue;
       }
 
@@ -1208,7 +1239,6 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         failureMarked: latestResult?.outcome === 'failure',
         failureReasons: latestResult?.failureReasons ?? [],
         latestResult,
-        acknowledgedInputSeq: 0,
         movementRuntime,
       };
       running = false;
@@ -1257,6 +1287,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         }
       }
     },
+    applyActorPoseSample(sample) {
+      applyActorPoseSample(sample);
+    },
     dispatchInput(input) {
       assertState(state).inputQueue.push(input);
     },
@@ -1267,9 +1300,6 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       const currentEvents = [...assertState(state).events];
       assertState(state).events.length = 0;
       return currentEvents;
-    },
-    getAcknowledgedInputSeq() {
-      return assertState(state).acknowledgedInputSeq;
     },
   };
 }
