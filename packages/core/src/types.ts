@@ -1,5 +1,5 @@
 import type {
-  ActorPoseSample,
+  ActorControlFrame,
   BaseActorSnapshot,
   BossSnapshot,
   DamageType,
@@ -7,7 +7,6 @@ import type {
   MechanicSnapshot,
   PartySlot,
   SimulationEvent,
-  SimulationInput,
   SimulationSnapshot,
   StatusId,
   Vector2,
@@ -32,27 +31,13 @@ export interface BattleFailureTextApi {
   mechanicDeath: (actorName: string, sourceLabel: string) => string;
 }
 
-export interface BotDirective {
-  moveDirection?: Vector2;
-  faceTargetId?: string;
-  faceAngle?: number;
-  useKnockbackImmune?: boolean;
-}
-
-export interface BotDecisionContext<TBotContext = unknown> {
-  snapshot: SimulationSnapshot;
-  slot: PartySlot;
-  actor: BaseActorSnapshot;
-  botContext: TBotContext | null;
-}
-
 export interface TimelineApi {
   at(timeMs: number, fn: () => void): void;
   after(delayMs: number, fn: () => void): void;
   every(intervalMs: number, fn: () => void, windowMs?: number): void;
 }
 
-export interface BattleScriptContext<TBotContext = unknown> {
+export interface BattleScriptContext {
   readonly timeline: TimelineApi;
   readonly boss: {
     readonly id: string;
@@ -127,16 +112,13 @@ export interface BattleScriptContext<TBotContext = unknown> {
     fail(reason: string): void;
     complete(outcome?: 'success' | 'failure'): void;
   };
-  readonly bot: {
-    setContext(context: TBotContext | null): void;
-  };
   readonly ui: {
     setCastBar(actionId: string, actionName: string, totalDurationMs: number): void;
     clearCastBar(): void;
   };
 }
 
-export interface BattleDefinition<TBotContext = unknown> {
+export interface BattleDefinition {
   id: string;
   name: string;
   arenaRadius: number;
@@ -150,8 +132,7 @@ export interface BattleDefinition<TBotContext = unknown> {
       facing: number;
     }
   >;
-  buildScript(ctx: BattleScriptContext<TBotContext>): void;
-  getBotDirective(ctx: BotDecisionContext<TBotContext>): BotDirective;
+  buildScript(ctx: BattleScriptContext): void;
   failureTexts: BattleFailureTextApi;
 }
 
@@ -172,8 +153,7 @@ export interface SimulationInstance {
   start(): void;
   stop(): void;
   tick(deltaMs: number): void;
-  applyActorPoseSample(sample: ActorPoseSample): void;
-  dispatchInput(input: SimulationInput): void;
+  submitActorControlFrame(frame: ActorControlFrame): void;
   getSnapshot(): SimulationSnapshot;
   drainEvents(): SimulationEvent[];
 }

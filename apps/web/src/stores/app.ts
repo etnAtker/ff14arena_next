@@ -1,6 +1,7 @@
 import { computed, ref, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import type { Socket } from 'socket.io-client';
+import { movePosition, normalizeMoveDirection } from '@ff14arena/core';
 import type {
   BattleSummary,
   PartySlot,
@@ -29,7 +30,6 @@ const PROFILE_STORAGE_KEY = 'ff14arena:profile';
 const RESYNC_THROTTLE_MS = 500;
 const CONTINUOUS_INPUT_INTERVAL_MS = 50;
 const TRANSPORT_PROBE_INTERVAL_MS = 1_500;
-const LOCAL_PLAYER_MOVE_SPEED = 6;
 
 function createDefaultProfile(): LocalProfile {
   return {
@@ -62,38 +62,8 @@ function loadProfile(): LocalProfile {
   return fallback;
 }
 
-function normalizeDirection(direction: Vector2): Vector2 {
-  const vectorLength = Math.hypot(direction.x, direction.y);
-
-  if (vectorLength === 0) {
-    return {
-      x: 0,
-      y: 0,
-    };
-  }
-
-  return {
-    x: direction.x / vectorLength,
-    y: direction.y / vectorLength,
-  };
-}
-
 function normalizeAngleDifference(left: number, right: number): number {
   return Math.atan2(Math.sin(left - right), Math.cos(left - right));
-}
-
-function movePosition(position: Vector2, direction: Vector2, deltaMs: number): Vector2 {
-  if (deltaMs <= 0) {
-    return {
-      x: position.x,
-      y: position.y,
-    };
-  }
-
-  return {
-    x: position.x + direction.x * LOCAL_PLAYER_MOVE_SPEED * (deltaMs / 1_000),
-    y: position.y + direction.y * LOCAL_PLAYER_MOVE_SPEED * (deltaMs / 1_000),
-  };
 }
 
 interface LocalControlledPose {
@@ -692,7 +662,7 @@ export const useAppStore = defineStore('app', () => {
       return null;
     }
 
-    const direction = normalizeDirection(frame.moveDirection);
+    const direction = normalizeMoveDirection(frame.moveDirection);
     const nextFacing = frame.facing ?? actor.facing;
     const nextPosition = movePosition(actor.position, direction, CONTINUOUS_INPUT_INTERVAL_MS);
 
@@ -756,7 +726,7 @@ export const useAppStore = defineStore('app', () => {
     inputSeq.value += 1;
     const nextInputSeq = inputSeq.value;
     const issuedAt = Date.now();
-    const moveDirection = normalizeDirection(frame.moveDirection);
+    const moveDirection = normalizeMoveDirection(frame.moveDirection);
     const nextPose = applyOptimisticContinuousInput({
       moveDirection,
       ...(frame.facing !== undefined ? { facing: frame.facing } : {}),

@@ -106,10 +106,10 @@
 
 - 玩家普通移动由客户端本地模拟，并以上传位姿样本的方式同步给服务端
 - 服务端按 `actorId + inputSeq` 去重，只保留每个 Actor 最新的位姿样本
-- 服务端在每个房间 Tick 开始时先写入位姿样本，再推进 `packages/core`
+- 服务端在每个房间 Tick 开始时先收集玩家与 Bot 的统一控制帧，再推进 `packages/core`
 - `waiting` 与 `running` 永远共用同一套移动链路，不维护独立实现
 - `running` 只是比 `waiting` 多推进战斗脚本、AOE、伤害、Buff 与结算
-- Bot 与主动能力仍通过 `SimulationInput` 进入同一个 `SimulationInstance`
+- Bot controller 运行在 `core` 外部，只读取快照与 `scriptState`，再向 `core` 提交统一控制帧
 - 普通移动不再做 `issuedAtServerTimeEstimate` 时间补偿，也不再回传输入确认序号
 - 击退、越界修正等强修正仍通过事件直接下发位置结果
 

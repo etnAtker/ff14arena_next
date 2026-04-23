@@ -1,9 +1,9 @@
-import { getBattleDefinition } from '@ff14arena/content';
+import { getBattleBotController, getBattleDefinition } from '@ff14arena/content';
 import { createSimulation, DEFAULT_PLAYER_MAX_HP, FIXED_TICK_MS } from '@ff14arena/core';
 import type { BattleDefinition, PartyMemberBlueprint, SimulationInstance } from '@ff14arena/core';
 import type { Server as SocketServer, Socket } from 'socket.io';
 import type {
-  ActorPoseSample,
+  ActorControlFrame,
   ClientToServerEvents,
   ContinuousSimulationInputFrame,
   EncounterResult,
@@ -14,8 +14,8 @@ import type {
   RoomSummaryDto,
   ServerToClientEvents,
   SimResyncRequestPayload,
-  SimulationInput,
   SimulationSnapshot,
+  UseKnockbackImmuneSimulationInput,
 } from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 
@@ -57,7 +57,7 @@ interface RoomRecord {
   latestResult: EncounterResult | null;
   inputSeqByActorId: Map<string, number>;
   lastPoseSeqByActorId: Map<string, number>;
-  pendingPoseByActorId: Map<string, ActorPoseSample>;
+  pendingControlByActorId: Map<string, ActorControlFrame>;
   syncId: number;
 }
 
@@ -119,7 +119,7 @@ export class RoomManager {
       latestResult: null,
       inputSeqByActorId: new Map(),
       lastPoseSeqByActorId: new Map(),
-      pendingPoseByActorId: new Map(),
+      pendingControlByActorId: new Map(),
       syncId: 1,
     };
 
@@ -213,7 +213,7 @@ export class RoomManager {
 
   private resetPoseSyncState(room: RoomRecord): void {
     room.lastPoseSeqByActorId.clear();
-    room.pendingPoseByActorId.clear();
+    room.pendingControlByActorId.clear();
   }
 
   private rebuildWaitingSimulation(
@@ -276,13 +276,14 @@ export class RoomManager {
       return;
     }
 
-    for (const sample of room.pendingPoseByActorId.values()) {
-      room.simulation.applyActorPoseSample(sample);
+    for (const frame of room.pendingControlByActorId.values()) {
+      room.simulation.submitActorControlFrame(frame);
     }
-    room.pendingPoseByActorId.clear();
+    room.pendingControlByActorId.clear();
 
     if (room.phase === 'running' && room.battle !== null) {
       const preTickSnapshot = room.simulation.getSnapshot();
+      const botController = getBattleBotController(room.battle.id);
 
       for (const slot of PARTY_SLOT_ORDER) {
         const occupant = room.slots[slot];
@@ -297,56 +298,24 @@ export class RoomManager {
           continue;
         }
 
-        const directive = room.battle.getBotDirective({
+        if (botController === undefined) {
+          continue;
+        }
+
+        const control = botController({
           snapshot: preTickSnapshot,
           slot,
           actor,
-          botContext: preTickSnapshot.botContext,
         });
         const nextSeq = (room.inputSeqByActorId.get(actor.id) ?? 0) + 1;
         room.inputSeqByActorId.set(actor.id, nextSeq);
-
-        if (directive.moveDirection !== undefined) {
-          room.simulation.dispatchInput({
-            roomId: room.roomId,
-            actorId: actor.id,
-            inputSeq: nextSeq,
-            issuedAt: Date.now(),
-            type: 'move',
-            payload: {
-              direction: directive.moveDirection,
-            },
-          });
-        }
-
-        if (directive.faceAngle !== undefined) {
-          room.simulation.dispatchInput({
-            roomId: room.roomId,
-            actorId: actor.id,
-            inputSeq: nextSeq + 1,
-            issuedAt: Date.now(),
-            type: 'face',
-            payload: {
-              facing: directive.faceAngle,
-            },
-          });
-          room.inputSeqByActorId.set(actor.id, nextSeq + 1);
-        }
-
-        if (directive.useKnockbackImmune) {
-          const lastSeq = (room.inputSeqByActorId.get(actor.id) ?? nextSeq + 1) + 1;
-          room.simulation.dispatchInput({
-            roomId: room.roomId,
-            actorId: actor.id,
-            inputSeq: lastSeq,
-            issuedAt: Date.now(),
-            type: 'use-knockback-immune',
-            payload: {
-              issuedBy: 'bot',
-            },
-          });
-          room.inputSeqByActorId.set(actor.id, lastSeq);
-        }
+        room.simulation.submitActorControlFrame({
+          actorId: actor.id,
+          inputSeq: nextSeq,
+          issuedAt: Date.now(),
+          ...(control.pose === undefined ? {} : { pose: control.pose }),
+          ...(control.commands === undefined ? {} : { commands: control.commands }),
+        });
       }
     }
 
@@ -646,7 +615,7 @@ export class RoomManager {
     this.startSimulation(room);
   }
 
-  enqueueInput(socket: TypedSocket, input: SimulationInput): void {
+  enqueueInput(socket: TypedSocket, input: UseKnockbackImmuneSimulationInput): void {
     const room = this.rooms.get(input.roomId);
 
     if (room === undefined) {
@@ -671,7 +640,17 @@ export class RoomManager {
       return;
     }
 
-    room.simulation.dispatchInput(input);
+    room.simulation.submitActorControlFrame({
+      actorId: input.actorId,
+      inputSeq: input.inputSeq,
+      issuedAt: input.issuedAt,
+      commands: [
+        {
+          type: 'use-knockback-immune',
+          payload: input.payload,
+        },
+      ],
+    });
   }
 
   enqueueContinuousInput(socket: TypedSocket, inputFrame: ContinuousSimulationInputFrame): void {
@@ -701,22 +680,24 @@ export class RoomManager {
     }
 
     room.lastPoseSeqByActorId.set(inputFrame.actorId, inputFrame.inputSeq);
-    room.pendingPoseByActorId.set(inputFrame.actorId, {
+    room.pendingControlByActorId.set(inputFrame.actorId, {
       actorId: inputFrame.actorId,
       inputSeq: inputFrame.inputSeq,
       issuedAt: inputFrame.issuedAt,
-      position: {
-        x: inputFrame.payload.position.x,
-        y: inputFrame.payload.position.y,
-      },
-      facing: inputFrame.payload.facing,
-      moveState: {
-        direction: {
-          x: inputFrame.payload.moveDirection.x,
-          y: inputFrame.payload.moveDirection.y,
+      pose: {
+        position: {
+          x: inputFrame.payload.position.x,
+          y: inputFrame.payload.position.y,
         },
-        moving:
-          Math.hypot(inputFrame.payload.moveDirection.x, inputFrame.payload.moveDirection.y) > 0,
+        facing: inputFrame.payload.facing,
+        moveState: {
+          direction: {
+            x: inputFrame.payload.moveDirection.x,
+            y: inputFrame.payload.moveDirection.y,
+          },
+          moving:
+            Math.hypot(inputFrame.payload.moveDirection.x, inputFrame.payload.moveDirection.y) > 0,
+        },
       },
     });
   }

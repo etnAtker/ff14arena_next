@@ -1,5 +1,6 @@
 import type {} from './globals';
 import type {
+  ActorControlFrame,
   ActorPoseSample,
   BaseActorSnapshot,
   BattleFailureMarkedEvent,
@@ -11,7 +12,6 @@ import type {
   EncounterResult,
   MechanicSnapshot,
   SimulationEvent,
-  SimulationInput,
   SimulationSnapshot,
   StatusAppliedEvent,
   StatusId,
@@ -74,7 +74,7 @@ interface RuntimeState {
   schedulerOrder: number;
   scriptCursorTimeMs: number;
   scriptState: Map<string, unknown>;
-  inputQueue: SimulationInput[];
+  inputQueue: ActorControlFrame[];
   events: SimulationEvent[];
   failureMarked: boolean;
   failureReasons: string[];
@@ -686,118 +686,46 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     }
   }
 
-  function applyInput(input: SimulationInput): void {
+  function applyControlFrame(frame: ActorControlFrame): void {
     const currentState = assertState(state);
-    const actor = currentState.actors.get(input.actorId);
+    const actor = currentState.actors.get(frame.actorId);
 
-    if (actor === undefined || !actor.alive) {
+    if (frame.pose !== undefined) {
+      applyActorPoseSample({
+        actorId: frame.actorId,
+        inputSeq: frame.inputSeq,
+        issuedAt: frame.issuedAt,
+        position: frame.pose.position,
+        facing: frame.pose.facing,
+        moveState: frame.pose.moveState,
+      });
+    }
+
+    if (actor === undefined || !actor.alive || frame.commands === undefined) {
       return;
     }
 
-    switch (input.type) {
-      case 'move': {
-        const runtime = getMovementRuntime(actor.id);
-
-        if (input.inputSeq <= runtime.lastMoveInputSeq) {
-          break;
-        }
-
-        runtime.lastMoveInputSeq = input.inputSeq;
-        pruneMovementRuntime(runtime, currentState.timeMs);
-
-        const direction = normalize(input.payload.direction);
-        const previousPosition = cloneVector(actor.position);
-        const previousDirection = cloneVector(actor.moveState.direction);
-        const effectiveTimeMs = currentState.timeMs;
-
-        const lastSegment = runtime.segments[runtime.segments.length - 1];
-
-        if (lastSegment === undefined) {
-          runtime.segments.push({
-            startTimeMs: effectiveTimeMs,
-            direction: cloneVector(direction),
-          });
-          break;
-        }
-
-        if (!sameDirection(lastSegment.direction, direction)) {
-          if (Math.abs(effectiveTimeMs - lastSegment.startTimeMs) <= POSITION_EPSILON) {
-            lastSegment.direction = cloneVector(direction);
-          } else {
-            runtime.segments.push({
-              startTimeMs: effectiveTimeMs,
-              direction: cloneVector(direction),
-            });
+    for (const command of frame.commands) {
+      switch (command.type) {
+        case 'use-knockback-immune':
+          if (
+            actor.knockbackImmune ||
+            actor.knockbackImmuneCooldown.readyAt > currentState.timeMs
+          ) {
+            continue;
           }
-        }
 
-        actor.moveState = {
-          direction,
-          moving: length(direction) > 0,
-        };
-
-        const idealPosition = evaluatePositionAt(runtime, currentState.timeMs);
-        const error = distance(previousPosition, idealPosition);
-
-        actor.position = idealPosition;
-
-        if (
-          error > POSITION_EPSILON ||
-          !sameDirection(previousDirection, actor.moveState.direction)
-        ) {
-          emitActorMoved(actor, error >= HARD_CORRECTION_DISTANCE ? 'hard' : 'smooth');
-        }
-        break;
-      }
-      case 'face': {
-        const runtime = getMovementRuntime(actor.id);
-
-        if (input.inputSeq <= runtime.lastFacingInputSeq) {
+          applyStatus(actor, 'knockback_immune', 8_000);
           break;
-        }
-
-        runtime.lastFacingInputSeq = input.inputSeq;
-
-        if (Math.abs(actor.facing - input.payload.facing) <= POSITION_EPSILON) {
-          break;
-        }
-
-        actor.facing = input.payload.facing;
-        emitActorMoved(actor, 'smooth');
-        break;
       }
-      case 'use-knockback-immune':
-        if (
-          actor.knockbackImmune ||
-          actor.knockbackImmuneCooldown.readyAt > currentState.timeMs ||
-          !actor.alive
-        ) {
-          return;
-        }
-
-        applyStatus(actor, 'knockback_immune', 8_000);
-        break;
     }
   }
 
-  function advanceMovement(deltaMs: number): void {
+  function advanceMovement(): void {
     const currentState = assertState(state);
 
     for (const actor of currentState.actors.values()) {
       pruneMovementRuntime(getMovementRuntime(actor.id), currentState.timeMs);
-
-      if (actor.kind !== 'bot' || !actor.alive || !actor.moveState.moving) {
-        continue;
-      }
-
-      const before = cloneVector(actor.position);
-      const delta = scale(actor.moveState.direction, DEFAULT_PLAYER_MOVE_SPEED * (deltaMs / 1000));
-      actor.position = add(actor.position, delta);
-      checkOutOfBounds(actor);
-
-      if (before.x !== actor.position.x || before.y !== actor.position.y) {
-        emitActorMoved(actor, 'smooth');
-      }
     }
   }
 
@@ -1039,11 +967,6 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           setResult(outcome);
         },
       },
-      bot: {
-        setContext(context) {
-          assertState(state).scriptState.set('bot:context', context);
-        },
-      },
       ui: {
         setCastBar(actionId, actionName, totalDurationMs) {
           const currentState = assertState(state);
@@ -1081,10 +1004,12 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         bossCastBar:
           currentState.boss.castBar === null ? null : structuredClone(currentState.boss.castBar),
       },
-      botContext:
-        currentState.scriptState.get('bot:context') === undefined
-          ? null
-          : structuredClone(currentState.scriptState.get('bot:context')),
+      scriptState: Object.fromEntries(
+        [...currentState.scriptState.entries()].map(([key, value]) => [
+          key,
+          structuredClone(value),
+        ]),
+      ),
       failureMarked: currentState.failureMarked,
       failureReasons: [...currentState.failureReasons],
       latestResult:
@@ -1231,9 +1156,14 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         schedulerOrder: 0,
         scriptCursorTimeMs: 0,
         scriptState:
-          sourceSnapshot?.botContext === null || sourceSnapshot?.botContext === undefined
+          sourceSnapshot === null
             ? new Map()
-            : new Map([['bot:context', structuredClone(sourceSnapshot.botContext)]]),
+            : new Map(
+                Object.entries(sourceSnapshot.scriptState).map(([key, value]) => [
+                  key,
+                  structuredClone(value),
+                ]),
+              ),
         inputQueue: [],
         events: [],
         failureMarked: latestResult?.outcome === 'failure',
@@ -1270,11 +1200,11 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         const pendingInputs = [...currentState.inputQueue];
         currentState.inputQueue.length = 0;
 
-        for (const input of pendingInputs) {
-          applyInput(input);
+        for (const frame of pendingInputs) {
+          applyControlFrame(frame);
         }
 
-        advanceMovement(tickMs);
+        advanceMovement();
         refreshStatuses();
 
         if (currentState.phase === 'running') {
@@ -1287,11 +1217,32 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         }
       }
     },
-    applyActorPoseSample(sample) {
-      applyActorPoseSample(sample);
-    },
-    dispatchInput(input) {
-      assertState(state).inputQueue.push(input);
+    submitActorControlFrame(frame) {
+      assertState(state).inputQueue.push({
+        actorId: frame.actorId,
+        inputSeq: frame.inputSeq,
+        issuedAt: frame.issuedAt,
+        ...(frame.pose === undefined
+          ? {}
+          : {
+              pose: {
+                position: cloneVector(frame.pose.position),
+                facing: frame.pose.facing,
+                moveState: {
+                  direction: cloneVector(frame.pose.moveState.direction),
+                  moving: frame.pose.moveState.moving,
+                },
+              },
+            }),
+        ...(frame.commands === undefined
+          ? {}
+          : {
+              commands: frame.commands.map((command) => ({
+                type: command.type,
+                payload: structuredClone(command.payload),
+              })),
+            }),
+      });
     },
     getSnapshot() {
       return createSnapshot();

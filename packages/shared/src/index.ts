@@ -149,7 +149,7 @@ export interface SimulationSnapshot {
   boss: BossSnapshot;
   mechanics: MechanicSnapshot[];
   hud: HudState;
-  botContext: unknown | null;
+  scriptState: Record<string, unknown>;
   failureMarked: boolean;
   failureReasons: string[];
   latestResult: EncounterResult | null;
@@ -235,6 +235,25 @@ export interface ActorPoseSample {
   position: Vector2;
   facing: number;
   moveState: MoveState;
+}
+
+export interface ActorControlPose {
+  position: Vector2;
+  facing: number;
+  moveState: MoveState;
+}
+
+export interface ActorControlCommand {
+  type: 'use-knockback-immune';
+  payload: UseKnockbackImmunePayload;
+}
+
+export interface ActorControlFrame {
+  actorId: string;
+  inputSeq: number;
+  issuedAt: number;
+  pose?: ActorControlPose;
+  commands?: ActorControlCommand[];
 }
 
 export type PositionCorrectionMode = 'smooth' | 'hard';

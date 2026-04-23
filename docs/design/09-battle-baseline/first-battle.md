@@ -89,17 +89,17 @@
 - 左：`H1`
 - 左上：`D3`
 
-## HUD / Bot 接口
+## HUD / 机制上下文接口
 
 战斗写入以下接口：
 
 - `bossCastBar`
-- `botContext`
+- `scriptState`
 
 其中：
 
 - `bossCastBar` 用于前端顶部读条显示
-- `botContext` 仅供 Bot / 脚本读取，不参与前端直接展示
+- `scriptState` 存放脚本确定下来的机制上下文，供 Bot controller 与脚本读取，不参与前端直接展示
 
 ## 失败条件
 

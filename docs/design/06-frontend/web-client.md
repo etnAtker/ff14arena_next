@@ -160,7 +160,7 @@ Boss 读条绘制在场地区域顶部，显示：
 ## HUD 接口
 
 - `bossCastBar`
-- `botContext` 只作为脚本 / Bot 使用，不参与前端展示
+- `scriptState` 只作为脚本 / Bot controller 使用，不参与前端展示
 
 ## 镜头规则
 
