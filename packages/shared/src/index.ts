@@ -227,6 +227,8 @@ export interface ContinuousInputFramePayload {
   facing?: number;
 }
 
+export type PositionCorrectionMode = 'smooth' | 'hard';
+
 export type SimulationInputPayload =
   | MoveInputPayload
   | FaceInputPayload
@@ -237,6 +239,7 @@ export interface SimulationInputBase<TType extends SimulationInputType, TPayload
   actorId: string;
   inputSeq: number;
   issuedAt: number;
+  issuedAtServerTimeEstimate?: number;
   type: TType;
   payload: TPayload;
 }
@@ -253,6 +256,7 @@ export interface ContinuousSimulationInputFrame {
   actorId: string;
   inputSeq: number;
   issuedAt: number;
+  issuedAtServerTimeEstimate?: number;
   payload: ContinuousInputFramePayload;
 }
 
@@ -275,8 +279,19 @@ export type ActorMovedEvent = BaseSimulationEvent<
     actorId: string;
     position: Vector2;
     facing: number;
+    correctionMode: PositionCorrectionMode;
   }
 >;
+
+export interface NetTimeSyncRequestPayload {
+  clientSendAt: number;
+}
+
+export interface NetTimeSyncResponsePayload {
+  clientSendAt: number;
+  serverReceivedAt: number;
+  serverSendAt: number;
+}
 
 export type BossCastStartedEvent = BaseSimulationEvent<
   'bossCastStarted',
@@ -442,6 +457,7 @@ export interface ServerErrorPayload {
 }
 
 export interface ServerToClientEvents {
+  'net:time-sync:response': (payload: NetTimeSyncResponsePayload) => void;
   'room:state': (payload: RoomStatePayload) => void;
   'room:slots': (payload: RoomSlotsPayload) => void;
   'sim:start': (payload: SimStartPayload) => void;
@@ -453,6 +469,7 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
+  'net:time-sync:request': (payload: NetTimeSyncRequestPayload) => void;
   'room:join': (payload: RoomJoinPayload) => void;
   'room:leave': (payload: RoomLeavePayload) => void;
   'room:ready': (payload: RoomReadyPayload) => void;

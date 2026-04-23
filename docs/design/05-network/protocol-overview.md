@@ -17,6 +17,7 @@
 - `room:select-battle`
 - `room:switch-slot`
 - `room:start`
+- `net:time-sync:request`
 - `sim:input-frame`
 - `sim:use-knockback-immune`
 - `sim:request-resync`
@@ -27,6 +28,7 @@
 
 - `room:state`
 - `room:slots`
+- `net:time-sync:response`
 - `sim:start`
 - `sim:snapshot`
 - `sim:events`
@@ -38,6 +40,7 @@
 - 所有房间内消息都带 `roomId`
 - 所有输入都带 `inputSeq`
 - 服务端返回最近已处理的 `inputSeq`
+- 客户端会先做轻量时间同步，再为连续移动输入补上 `issuedAtServerTimeEstimate`
 - 连续覆盖型输入统一通过 `sim:input-frame` 发送
 - 一次性指令仍保持独立事件，例如防击退
 - 客户端在检测到快照缺失、相位错位或旧包覆盖风险时，可主动请求重同步

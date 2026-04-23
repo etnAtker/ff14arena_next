@@ -63,6 +63,7 @@ interface RoomRecord {
   latestResult: EncounterResult | null;
   inputSeqByActorId: Map<string, number>;
   syncId: number;
+  simulationStartedAtMs: number | null;
 }
 
 function normalizeDirection(direction: { x: number; y: number }): { x: number; y: number } {
@@ -140,6 +141,7 @@ export class RoomManager {
       latestResult: null,
       inputSeqByActorId: new Map(),
       syncId: 1,
+      simulationStartedAtMs: null,
     };
 
     this.rooms.set(roomId, room);
@@ -536,6 +538,14 @@ export class RoomManager {
       actorId: inputFrame.actorId,
       inputSeq: inputFrame.inputSeq,
       issuedAt: inputFrame.issuedAt,
+      ...(inputFrame.issuedAtServerTimeEstimate === undefined || room.simulationStartedAtMs === null
+        ? {}
+        : {
+            issuedAtServerTimeEstimate: Math.max(
+              0,
+              inputFrame.issuedAtServerTimeEstimate - room.simulationStartedAtMs,
+            ),
+          }),
       type: 'move',
       payload: {
         direction: inputFrame.payload.moveDirection,
@@ -553,6 +563,14 @@ export class RoomManager {
       actorId: inputFrame.actorId,
       inputSeq: inputFrame.inputSeq,
       issuedAt: inputFrame.issuedAt,
+      ...(inputFrame.issuedAtServerTimeEstimate === undefined || room.simulationStartedAtMs === null
+        ? {}
+        : {
+            issuedAtServerTimeEstimate: Math.max(
+              0,
+              inputFrame.issuedAtServerTimeEstimate - room.simulationStartedAtMs,
+            ),
+          }),
       type: 'face',
       payload: {
         facing: inputFrame.payload.facing,
@@ -676,6 +694,7 @@ export class RoomManager {
 
     room.simulation = simulation;
     room.phase = 'running';
+    room.simulationStartedAtMs = Date.now();
 
     const startSnapshot = simulation.getSnapshot();
 
@@ -798,6 +817,7 @@ export class RoomManager {
 
     room.simulation = null;
     room.phase = 'waiting';
+    room.simulationStartedAtMs = null;
     room.latestResult = endSnapshot.latestResult;
     room.syncId += 1;
     const resetActorIds = new Set<string>();

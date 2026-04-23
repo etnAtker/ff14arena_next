@@ -41,6 +41,24 @@ interface SchedulerEntry {
   cancelled: boolean;
 }
 
+interface MovementSegment {
+  startTimeMs: number;
+  direction: Vector2;
+}
+
+interface ActorMovementRuntime {
+  anchorTimeMs: number;
+  anchorPosition: Vector2;
+  segments: MovementSegment[];
+  lastMoveInputSeq: number;
+  lastFacingInputSeq: number;
+}
+
+const MOVEMENT_HISTORY_WINDOW_MS = 1_000;
+const MAX_MOVEMENT_COMPENSATION_MS = 120;
+const HARD_CORRECTION_DISTANCE = 0.9;
+const POSITION_EPSILON = 1e-6;
+
 interface RuntimeState {
   battle: BattleDefinition;
   roomId: string;
@@ -62,6 +80,7 @@ interface RuntimeState {
   failureReasons: string[];
   latestResult: EncounterResult | null;
   acknowledgedInputSeq: number;
+  movementRuntime: Map<string, ActorMovementRuntime>;
 }
 
 function assertState(state: RuntimeState | null): RuntimeState {
@@ -76,6 +95,27 @@ function cloneVector(vector: Vector2): Vector2 {
   return {
     x: vector.x,
     y: vector.y,
+  };
+}
+
+function sameDirection(left: Vector2, right: Vector2): boolean {
+  return (
+    Math.abs(left.x - right.x) <= POSITION_EPSILON && Math.abs(left.y - right.y) <= POSITION_EPSILON
+  );
+}
+
+function createMovementRuntime(position: Vector2): ActorMovementRuntime {
+  return {
+    anchorTimeMs: 0,
+    anchorPosition: cloneVector(position),
+    segments: [
+      {
+        startTimeMs: 0,
+        direction: { x: 0, y: 0 },
+      },
+    ],
+    lastMoveInputSeq: 0,
+    lastFacingInputSeq: 0,
   };
 }
 
@@ -109,6 +149,16 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
 
   function getActor(actorId: string): BaseActorSnapshot | undefined {
     return assertState(state).actors.get(actorId);
+  }
+
+  function getMovementRuntime(actorId: string): ActorMovementRuntime {
+    const runtime = assertState(state).movementRuntime.get(actorId);
+
+    if (runtime === undefined) {
+      throw new Error(`missing movement runtime for actor ${actorId}`);
+    }
+
+    return runtime;
   }
 
   function getAlivePartyActors(): BaseActorSnapshot[] {
@@ -246,6 +296,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       moving: false,
     };
     actor.deathReason = reason;
+    resetMovementRuntime(actor, currentState.timeMs);
 
     emit({
       type: 'actorDied',
@@ -434,6 +485,8 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
   }
 
   function applyKnockback(targetIds: string[], source: Vector2, knockbackDistance: number): void {
+    const currentState = assertState(state);
+
     for (const targetId of targetIds) {
       const target = getActor(targetId);
 
@@ -447,8 +500,136 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
 
       const direction = normalize(subtract(target.position, source));
       target.position = add(target.position, scale(direction, knockbackDistance));
+      resetMovementRuntime(target, currentState.timeMs);
+      emitActorMoved(target, 'hard');
       checkOutOfBounds(target);
     }
+  }
+
+  function movePosition(position: Vector2, direction: Vector2, deltaMs: number): Vector2 {
+    if (deltaMs <= 0 || length(direction) <= POSITION_EPSILON) {
+      return cloneVector(position);
+    }
+
+    return add(position, scale(direction, DEFAULT_PLAYER_MOVE_SPEED * (deltaMs / 1_000)));
+  }
+
+  function getDirectionAt(runtime: ActorMovementRuntime, timeMs: number): Vector2 {
+    for (let index = runtime.segments.length - 1; index >= 0; index -= 1) {
+      const segment = runtime.segments[index];
+
+      if (segment === undefined) {
+        continue;
+      }
+
+      if (segment.startTimeMs <= timeMs) {
+        return cloneVector(segment.direction);
+      }
+    }
+
+    return cloneVector(runtime.segments[0]?.direction ?? { x: 0, y: 0 });
+  }
+
+  function evaluatePositionAt(runtime: ActorMovementRuntime, timeMs: number): Vector2 {
+    if (timeMs <= runtime.anchorTimeMs) {
+      return cloneVector(runtime.anchorPosition);
+    }
+
+    let position = cloneVector(runtime.anchorPosition);
+
+    for (let index = 0; index < runtime.segments.length; index += 1) {
+      const segment = runtime.segments[index];
+      const nextSegment = runtime.segments[index + 1];
+
+      if (segment === undefined) {
+        continue;
+      }
+
+      const startTimeMs = Math.max(segment.startTimeMs, runtime.anchorTimeMs);
+
+      if (startTimeMs >= timeMs) {
+        break;
+      }
+
+      const endTimeMs = Math.min(nextSegment?.startTimeMs ?? timeMs, timeMs);
+
+      if (endTimeMs <= startTimeMs) {
+        continue;
+      }
+
+      position = movePosition(position, segment.direction, endTimeMs - startTimeMs);
+    }
+
+    return position;
+  }
+
+  function pruneMovementRuntime(runtime: ActorMovementRuntime, currentTimeMs: number): void {
+    const pruneBeforeMs = currentTimeMs - MOVEMENT_HISTORY_WINDOW_MS;
+
+    if (pruneBeforeMs <= runtime.anchorTimeMs) {
+      return;
+    }
+
+    const nextAnchorPosition = evaluatePositionAt(runtime, pruneBeforeMs);
+    const activeDirection = getDirectionAt(runtime, pruneBeforeMs);
+    const remainingSegments = runtime.segments.filter(
+      (segment) => segment.startTimeMs > pruneBeforeMs,
+    );
+
+    runtime.anchorTimeMs = pruneBeforeMs;
+    runtime.anchorPosition = nextAnchorPosition;
+    runtime.segments = [
+      {
+        startTimeMs: pruneBeforeMs,
+        direction: activeDirection,
+      },
+    ];
+
+    for (const segment of remainingSegments) {
+      const lastSegment = runtime.segments[runtime.segments.length - 1];
+
+      if (lastSegment === undefined) {
+        runtime.segments.push({
+          startTimeMs: segment.startTimeMs,
+          direction: cloneVector(segment.direction),
+        });
+        continue;
+      }
+
+      if (sameDirection(lastSegment.direction, segment.direction)) {
+        continue;
+      }
+
+      runtime.segments.push({
+        startTimeMs: segment.startTimeMs,
+        direction: cloneVector(segment.direction),
+      });
+    }
+  }
+
+  function resetMovementRuntime(actor: BaseActorSnapshot, currentTimeMs: number): void {
+    const runtime = getMovementRuntime(actor.id);
+
+    runtime.anchorTimeMs = currentTimeMs;
+    runtime.anchorPosition = cloneVector(actor.position);
+    runtime.segments = [
+      {
+        startTimeMs: currentTimeMs,
+        direction: cloneVector(actor.moveState.direction),
+      },
+    ];
+  }
+
+  function emitActorMoved(actor: BaseActorSnapshot, correctionMode: 'smooth' | 'hard'): void {
+    emit({
+      type: 'actorMoved',
+      payload: {
+        actorId: actor.id,
+        position: cloneVector(actor.position),
+        facing: actor.facing,
+        correctionMode,
+      },
+    });
   }
 
   function applyInput(input: SimulationInput): void {
@@ -463,16 +644,91 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
 
     switch (input.type) {
       case 'move': {
+        const runtime = getMovementRuntime(actor.id);
+
+        if (input.inputSeq <= runtime.lastMoveInputSeq) {
+          break;
+        }
+
+        runtime.lastMoveInputSeq = input.inputSeq;
+        pruneMovementRuntime(runtime, currentState.timeMs);
+
         const direction = normalize(input.payload.direction);
+        const previousPosition = cloneVector(actor.position);
+        const previousDirection = cloneVector(actor.moveState.direction);
+        const replayTargetTimeMs =
+          currentState.phase === 'running'
+            ? Math.max(currentState.timeMs - tickMs, 0)
+            : currentState.timeMs;
+        const earliestCompensationTimeMs = Math.max(
+          runtime.anchorTimeMs,
+          currentState.timeMs - MAX_MOVEMENT_COMPENSATION_MS,
+        );
+        const estimatedTimeMs =
+          input.issuedAtServerTimeEstimate === undefined
+            ? currentState.timeMs
+            : input.issuedAtServerTimeEstimate;
+        const effectiveTimeMs = Math.max(
+          runtime.segments[runtime.segments.length - 1]?.startTimeMs ?? earliestCompensationTimeMs,
+          Math.min(currentState.timeMs, Math.max(earliestCompensationTimeMs, estimatedTimeMs)),
+        );
+
+        const lastSegment = runtime.segments[runtime.segments.length - 1];
+
+        if (lastSegment === undefined) {
+          runtime.segments.push({
+            startTimeMs: effectiveTimeMs,
+            direction: cloneVector(direction),
+          });
+          break;
+        }
+
+        if (!sameDirection(lastSegment.direction, direction)) {
+          if (Math.abs(effectiveTimeMs - lastSegment.startTimeMs) <= POSITION_EPSILON) {
+            lastSegment.direction = cloneVector(direction);
+          } else {
+            runtime.segments.push({
+              startTimeMs: effectiveTimeMs,
+              direction: cloneVector(direction),
+            });
+          }
+        }
+
         actor.moveState = {
           direction,
           moving: length(direction) > 0,
         };
+
+        const idealPosition = evaluatePositionAt(runtime, replayTargetTimeMs);
+        const error = distance(previousPosition, idealPosition);
+
+        actor.position = idealPosition;
+
+        if (
+          error > POSITION_EPSILON ||
+          !sameDirection(previousDirection, actor.moveState.direction)
+        ) {
+          emitActorMoved(actor, error >= HARD_CORRECTION_DISTANCE ? 'hard' : 'smooth');
+        }
         break;
       }
-      case 'face':
+      case 'face': {
+        const runtime = getMovementRuntime(actor.id);
+
+        if (input.inputSeq <= runtime.lastFacingInputSeq) {
+          break;
+        }
+
+        runtime.lastFacingInputSeq = input.inputSeq;
+
+        if (Math.abs(actor.facing - input.payload.facing) <= POSITION_EPSILON) {
+          break;
+        }
+
         actor.facing = input.payload.facing;
+        emitActorMoved(actor, 'smooth');
         break;
+      }
       case 'use-knockback-immune':
         if (
           actor.knockbackImmune ||
@@ -491,6 +747,8 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     const currentState = assertState(state);
 
     for (const actor of currentState.actors.values()) {
+      pruneMovementRuntime(getMovementRuntime(actor.id), currentState.timeMs);
+
       if (!actor.alive || !actor.moveState.moving) {
         continue;
       }
@@ -501,14 +759,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       checkOutOfBounds(actor);
 
       if (before.x !== actor.position.x || before.y !== actor.position.y) {
-        emit({
-          type: 'actorMoved',
-          payload: {
-            actorId: actor.id,
-            position: cloneVector(actor.position),
-            facing: actor.facing,
-          },
-        });
+        emitActorMoved(actor, 'smooth');
       }
     }
   }
@@ -811,10 +1062,11 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     },
     loadBattle({ battle, roomId, party }) {
       const actors = new Map<string, BaseActorSnapshot>();
+      const movementRuntime = new Map<string, ActorMovementRuntime>();
 
       for (const member of party) {
         const placement = battle.initialPartyPositions[member.slot];
-        actors.set(member.actorId, {
+        const actor = {
           id: member.actorId,
           kind: member.kind,
           slot: member.slot,
@@ -837,7 +1089,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           lastDamageSource: null,
           online: member.online ?? member.kind === 'bot',
           ready: member.ready ?? member.kind === 'bot',
-        });
+        } satisfies BaseActorSnapshot;
+        actors.set(member.actorId, actor);
+        movementRuntime.set(member.actorId, createMovementRuntime(actor.position));
       }
 
       state = {
@@ -884,6 +1138,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         failureReasons: [],
         latestResult: null,
         acknowledgedInputSeq: 0,
+        movementRuntime,
       };
       running = false;
       accumulatorMs = 0;

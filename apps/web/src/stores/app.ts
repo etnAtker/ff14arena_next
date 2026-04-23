@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import type { Socket } from 'socket.io-client';
 import type {
   BattleSummary,
+  NetTimeSyncResponsePayload,
   PartySlot,
   RoomStatePayload,
   RoomStateDto,
@@ -27,6 +28,11 @@ interface FacingPreviewState {
 
 const PROFILE_STORAGE_KEY = 'ff14arena:profile';
 const RESYNC_THROTTLE_MS = 500;
+const CONTINUOUS_INPUT_INTERVAL_MS = 50;
+const TIME_SYNC_INTERVAL_MS = 2_000;
+const TRANSPORT_PROBE_INTERVAL_MS = 1_500;
+const LOCAL_PLAYER_MOVE_SPEED = 6;
+const INPUT_LATENCY_STALE_MS = 3_000;
 
 function createDefaultProfile(): LocalProfile {
   return {
@@ -79,6 +85,27 @@ function normalizeAngleDifference(left: number, right: number): number {
   return Math.atan2(Math.sin(left - right), Math.cos(left - right));
 }
 
+function movePosition(position: Vector2, direction: Vector2, deltaMs: number): Vector2 {
+  if (deltaMs <= 0) {
+    return {
+      x: position.x,
+      y: position.y,
+    };
+  }
+
+  return {
+    x: position.x + direction.x * LOCAL_PLAYER_MOVE_SPEED * (deltaMs / 1_000),
+    y: position.y + direction.y * LOCAL_PLAYER_MOVE_SPEED * (deltaMs / 1_000),
+  };
+}
+
+interface PendingContinuousInput {
+  actorId: string;
+  issuedAt: number;
+  moveDirection: Vector2;
+  facing?: number;
+}
+
 export const useAppStore = defineStore('app', () => {
   const profile = ref<LocalProfile>(loadProfile());
   const socket = shallowRef<AppSocket | null>(null);
@@ -95,8 +122,16 @@ export const useAppStore = defineStore('app', () => {
   const lastAcknowledgedInputSeq = ref(0);
   const facingPreview = ref<FacingPreviewState | null>(null);
   const lastResyncRequestedAt = ref(0);
+  const serverClockOffsetMs = ref(0);
+  const timeSyncRoundTripLatencyMs = ref(0);
+  const transportProbeLatencyMs = ref(0);
+  const inputAcknowledgementLatencyMs = ref(0);
+  const lastInputLatencySampleAtMs = ref(0);
 
   const pendingInputIssuedAt = new Map<number, number>();
+  const pendingContinuousInputs = new Map<number, PendingContinuousInput>();
+  let timeSyncTimer: number | null = null;
+  let transportProbeTimer: number | null = null;
 
   const snapshot = computed<SimulationSnapshot | null>(() => {
     const baseSnapshot = authoritativeSnapshot.value;
@@ -132,6 +167,37 @@ export const useAppStore = defineStore('app', () => {
   });
 
   const page = computed<'home' | 'battle'>(() => (room.value === null ? 'home' : 'battle'));
+  const latencyDisplay = computed(() => {
+    const now = Date.now();
+
+    if (
+      inputAcknowledgementLatencyMs.value > 0 &&
+      now - lastInputLatencySampleAtMs.value <= INPUT_LATENCY_STALE_MS
+    ) {
+      return `${Math.round(inputAcknowledgementLatencyMs.value)} ms`;
+    }
+
+    if (transportProbeLatencyMs.value > 0) {
+      return `${Math.round(transportProbeLatencyMs.value)} ms`;
+    }
+
+    return '--';
+  });
+  const latencyLabel = computed(() => {
+    const now = Date.now();
+
+    if (
+      inputAcknowledgementLatencyMs.value > 0 &&
+      now - lastInputLatencySampleAtMs.value <= INPUT_LATENCY_STALE_MS
+    ) {
+      return '输入确认';
+    }
+
+    return '网络探测';
+  });
+  const networkLatencyDisplay = computed(() =>
+    transportProbeLatencyMs.value > 0 ? `${Math.round(transportProbeLatencyMs.value)} ms` : '--',
+  );
 
   async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     const response = await fetch(url, init);
@@ -161,11 +227,16 @@ export const useAppStore = defineStore('app', () => {
     facingPreview.value = null;
   }
 
+  function clearPendingContinuousInputs(): void {
+    pendingContinuousInputs.clear();
+  }
+
   function resetSyncState(options?: { clearInputSeq?: boolean }): void {
     authoritativeSnapshot.value = null;
     currentSyncId.value = 0;
     lastAcknowledgedInputSeq.value = 0;
     pendingInputIssuedAt.clear();
+    clearPendingContinuousInputs();
     clearFacingPreview();
 
     if (options?.clearInputSeq ?? true) {
@@ -193,15 +264,154 @@ export const useAppStore = defineStore('app', () => {
     return snapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
   }
 
+  function getCurrentPlayerAuthoritativeActor() {
+    const slot = currentPlayerSlot.value;
+
+    if (slot === null) {
+      return null;
+    }
+
+    return authoritativeSnapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
+  }
+
+  function getIssuedAtServerTimeEstimate(clientIssuedAt: number): number {
+    return clientIssuedAt + serverClockOffsetMs.value;
+  }
+
+  function requestTimeSync(): void {
+    if (socket.value === null) {
+      return;
+    }
+
+    socket.value.emit('net:time-sync:request', {
+      clientSendAt: Date.now(),
+    });
+  }
+
+  async function probeTransportLatency(): Promise<void> {
+    const startedAt = performance.now();
+
+    try {
+      const response = await fetch(`/health?latencyProbe=${Date.now()}`, {
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        return;
+      }
+
+      await response.arrayBuffer();
+      const latencyMs = performance.now() - startedAt;
+
+      if (transportProbeLatencyMs.value === 0) {
+        transportProbeLatencyMs.value = latencyMs;
+        return;
+      }
+
+      transportProbeLatencyMs.value = transportProbeLatencyMs.value * 0.65 + latencyMs * 0.35;
+    } catch {
+      // 忽略探测失败，保留最近一次成功值。
+    }
+  }
+
+  function startTimeSyncLoop(): void {
+    if (timeSyncTimer !== null) {
+      window.clearInterval(timeSyncTimer);
+    }
+
+    requestTimeSync();
+    timeSyncTimer = window.setInterval(() => {
+      requestTimeSync();
+    }, TIME_SYNC_INTERVAL_MS);
+  }
+
+  function startTransportProbeLoop(): void {
+    if (transportProbeTimer !== null) {
+      window.clearInterval(transportProbeTimer);
+    }
+
+    void probeTransportLatency();
+    transportProbeTimer = window.setInterval(() => {
+      void probeTransportLatency();
+    }, TRANSPORT_PROBE_INTERVAL_MS);
+  }
+
+  function stopTimeSyncLoop(): void {
+    if (timeSyncTimer === null) {
+      return;
+    }
+
+    window.clearInterval(timeSyncTimer);
+    timeSyncTimer = null;
+  }
+
+  function stopTransportProbeLoop(): void {
+    if (transportProbeTimer === null) {
+      return;
+    }
+
+    window.clearInterval(transportProbeTimer);
+    transportProbeTimer = null;
+  }
+
+  function applyTimeSyncResponse(payload: NetTimeSyncResponsePayload): void {
+    const clientReceivedAt = Date.now();
+    const rtt = Math.max(
+      clientReceivedAt - payload.clientSendAt - (payload.serverSendAt - payload.serverReceivedAt),
+      0,
+    );
+    const offset =
+      (payload.serverReceivedAt -
+        payload.clientSendAt +
+        (payload.serverSendAt - clientReceivedAt)) /
+      2;
+
+    if (timeSyncRoundTripLatencyMs.value === 0) {
+      timeSyncRoundTripLatencyMs.value = rtt;
+      serverClockOffsetMs.value = offset;
+      return;
+    }
+
+    timeSyncRoundTripLatencyMs.value = timeSyncRoundTripLatencyMs.value * 0.7 + rtt * 0.3;
+    serverClockOffsetMs.value = serverClockOffsetMs.value * 0.8 + offset * 0.2;
+  }
+
   function handleAcknowledgedInputSeq(acknowledgedInputSeq: number): void {
     if (acknowledgedInputSeq <= lastAcknowledgedInputSeq.value) {
       return;
     }
 
+    const now = Date.now();
+    let latestAcknowledgedIssuedAt: number | null = null;
+
     for (const seq of [...pendingInputIssuedAt.keys()]) {
       if (seq <= acknowledgedInputSeq) {
+        const issuedAt = pendingInputIssuedAt.get(seq);
+
+        if (issuedAt !== undefined) {
+          latestAcknowledgedIssuedAt = issuedAt;
+        }
         pendingInputIssuedAt.delete(seq);
       }
+    }
+
+    for (const seq of [...pendingContinuousInputs.keys()]) {
+      if (seq <= acknowledgedInputSeq) {
+        pendingContinuousInputs.delete(seq);
+      }
+    }
+
+    if (latestAcknowledgedIssuedAt !== null) {
+      const sampleLatencyMs = Math.max(now - latestAcknowledgedIssuedAt, 0);
+
+      if (inputAcknowledgementLatencyMs.value === 0) {
+        inputAcknowledgementLatencyMs.value = sampleLatencyMs;
+      } else {
+        inputAcknowledgementLatencyMs.value =
+          inputAcknowledgementLatencyMs.value * 0.6 + sampleLatencyMs * 0.4;
+      }
+
+      lastInputLatencySampleAtMs.value = now;
     }
 
     lastAcknowledgedInputSeq.value = acknowledgedInputSeq;
@@ -236,6 +446,7 @@ export const useAppStore = defineStore('app', () => {
     if (syncId > currentSyncId.value) {
       currentSyncId.value = syncId;
       pendingInputIssuedAt.clear();
+      clearPendingContinuousInputs();
       lastAcknowledgedInputSeq.value = 0;
       clearFacingPreview();
     }
@@ -341,12 +552,20 @@ export const useAppStore = defineStore('app', () => {
         connected.value = true;
         serverError.value = null;
         appendLog('已连接服务器');
+        startTimeSyncLoop();
+        startTransportProbeLoop();
         rejoinCurrentRoom();
       });
 
       nextSocket.on('disconnect', () => {
         connected.value = false;
+        stopTimeSyncLoop();
+        stopTransportProbeLoop();
         appendLog('与服务器断开连接');
+      });
+
+      nextSocket.on('net:time-sync:response', (payload) => {
+        applyTimeSyncResponse(payload);
       });
 
       nextSocket.on('server:error', (payload) => {
@@ -402,6 +621,7 @@ export const useAppStore = defineStore('app', () => {
         inputSeq.value = 0;
         lastAcknowledgedInputSeq.value = 0;
         pendingInputIssuedAt.clear();
+        clearPendingContinuousInputs();
         clearFacingPreview();
         logs.value = [];
         appendLog(`开始模拟：${payload.snapshot.battleName}`);
@@ -593,19 +813,52 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
+  function rememberPendingContinuousInput(seq: number, input: PendingContinuousInput): void {
+    pendingContinuousInputs.set(seq, input);
+  }
+
+  function applyOptimisticContinuousInput(frame: {
+    moveDirection: Vector2;
+    facing?: number;
+  }): void {
+    if (authoritativeSnapshot.value?.phase !== 'running') {
+      return;
+    }
+
+    const actor = getCurrentPlayerAuthoritativeActor();
+
+    if (actor === null) {
+      return;
+    }
+
+    const direction = normalizeDirection(frame.moveDirection);
+
+    actor.position = movePosition(actor.position, direction, CONTINUOUS_INPUT_INTERVAL_MS);
+    actor.moveState = {
+      direction,
+      moving: Math.hypot(direction.x, direction.y) > 0,
+    };
+
+    if (frame.facing !== undefined) {
+      actor.facing = frame.facing;
+    }
+  }
+
   function emitSimulationInput(
-    input: Omit<SimulationInput, 'roomId' | 'inputSeq' | 'issuedAt'>,
+    input: Omit<SimulationInput, 'roomId' | 'inputSeq' | 'issuedAt' | 'issuedAtServerTimeEstimate'>,
   ): void {
     if (room.value === null || socket.value === null) {
       return;
     }
 
     inputSeq.value += 1;
+    const issuedAt = Date.now();
     const payload = {
       ...input,
       roomId: room.value.roomId,
       inputSeq: inputSeq.value,
-      issuedAt: Date.now(),
+      issuedAt,
+      issuedAtServerTimeEstimate: getIssuedAtServerTimeEstimate(issuedAt),
     } as SimulationInput;
 
     rememberPendingInput(payload.inputSeq);
@@ -632,15 +885,28 @@ export const useAppStore = defineStore('app', () => {
 
     inputSeq.value += 1;
     const nextInputSeq = inputSeq.value;
+    const issuedAt = Date.now();
+    const moveDirection = normalizeDirection(frame.moveDirection);
     rememberPendingInput(nextInputSeq);
+    rememberPendingContinuousInput(nextInputSeq, {
+      actorId: actor.id,
+      issuedAt,
+      moveDirection,
+      ...(frame.facing !== undefined ? { facing: frame.facing } : {}),
+    });
+    applyOptimisticContinuousInput({
+      moveDirection,
+      ...(frame.facing !== undefined ? { facing: frame.facing } : {}),
+    });
 
     socket.value.emit('sim:input-frame', {
       roomId: room.value.roomId,
       actorId: actor.id,
       inputSeq: nextInputSeq,
-      issuedAt: Date.now(),
+      issuedAt,
+      issuedAtServerTimeEstimate: getIssuedAtServerTimeEstimate(issuedAt),
       payload: {
-        moveDirection: normalizeDirection(frame.moveDirection),
+        moveDirection,
         ...(frame.facing !== undefined ? { facing: frame.facing } : {}),
       },
     });
@@ -780,6 +1046,9 @@ export const useAppStore = defineStore('app', () => {
     snapshot,
     serverError,
     connected,
+    latencyDisplay,
+    latencyLabel,
+    networkLatencyDisplay,
     logs,
     currentPlayerSlot,
     page,

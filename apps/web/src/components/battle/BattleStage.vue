@@ -12,6 +12,8 @@ const MAX_ZOOM = 2.4;
 const DRAG_ROTATION_SENSITIVITY = 0.005;
 const PLAYER_SCREEN_OFFSET_RATIO = 1 / 10;
 const WORLD_VIEW_PADDING = 12;
+const REMOTE_SMOOTH_SPEED = 8;
+const HARD_SNAP_DISTANCE = 0.9;
 
 const props = defineProps<{
   snapshot: SimulationSnapshot | null;
@@ -29,6 +31,13 @@ const emit = defineEmits<{
 
 const stageRootRef = ref<HTMLDivElement | null>(null);
 
+interface RenderActorState {
+  position: Vector2;
+  facing: number;
+  targetPosition: Vector2;
+  targetFacing: number;
+}
+
 let app: Application | null = null;
 let dragButton: 0 | 2 | null = null;
 let lastDragClientX = 0;
@@ -36,6 +45,13 @@ let resizeObserver: ResizeObserver | null = null;
 let drawFrame: number | null = null;
 let isUnmounted = false;
 let isAppReady = false;
+let lastDrawAt = 0;
+const renderActors = new Map<string, RenderActorState>();
+let stageGraphics: Graphics | null = null;
+let bossLabel: Text | null = null;
+const actorLabels = new Map<string, Text>();
+let pendingYawDelta = 0;
+let dragUpdateFrame: number | null = null;
 
 function clampZoom(zoom: number): number {
   return Math.min(Math.max(zoom, MIN_ZOOM), MAX_ZOOM);
@@ -59,8 +75,18 @@ function getControlledActor() {
   return props.snapshot.actors.find((actor) => actor.id === props.controlledActorId) ?? null;
 }
 
+function getRenderActorState(actorId: string): RenderActorState | null {
+  return renderActors.get(actorId) ?? null;
+}
+
 function getCameraFocus(): Vector2 {
-  return getControlledActor()?.position ?? { x: 0, y: 0 };
+  const controlledActor = getControlledActor();
+
+  if (controlledActor === null) {
+    return { x: 0, y: 0 };
+  }
+
+  return getRenderActorState(controlledActor.id)?.position ?? controlledActor.position;
 }
 
 function getScreenAnchor(width: number, height: number): Vector2 {
@@ -99,13 +125,167 @@ function toStagePoint(point: Vector2, width: number, height: number, arenaRadius
 }
 
 function clearStage(): void {
+  if (stageGraphics === null) {
+    return;
+  }
+
+  stageGraphics.clear();
+}
+
+function createStagePrimitives(): void {
+  if (app === null || stageGraphics !== null || bossLabel !== null) {
+    return;
+  }
+
+  stageGraphics = new Graphics();
+  app.stage.addChild(stageGraphics);
+
+  bossLabel = new Text({
+    text: 'B',
+    style: new TextStyle({
+      fill: '#1a120d',
+      fontSize: 14,
+      fontWeight: '700',
+    }),
+  });
+  bossLabel.anchor.set(0.5);
+  app.stage.addChild(bossLabel);
+}
+
+function syncActorLabels(snapshot: SimulationSnapshot): void {
   if (app === null) {
     return;
   }
 
-  for (const child of [...app.stage.children]) {
-    child.destroy();
+  const activeActorIds = new Set(snapshot.actors.map((actor) => actor.id));
+
+  for (const actor of snapshot.actors) {
+    if (actorLabels.has(actor.id)) {
+      continue;
+    }
+
+    const label = new Text({
+      text: actor.slot === null ? '?' : getSlotStageText(actor.slot),
+      style: new TextStyle({
+        fill: '#f8f5ff',
+        fontSize: 12,
+        fontWeight: '700',
+      }),
+    });
+    label.anchor.set(0.5);
+    actorLabels.set(actor.id, label);
+    app.stage.addChild(label);
   }
+
+  for (const [actorId, label] of actorLabels) {
+    if (activeActorIds.has(actorId)) {
+      continue;
+    }
+
+    label.destroy();
+    actorLabels.delete(actorId);
+  }
+}
+
+function hideLabels(): void {
+  if (bossLabel !== null) {
+    bossLabel.visible = false;
+  }
+
+  for (const label of actorLabels.values()) {
+    label.visible = false;
+  }
+}
+
+function syncRenderActors(): void {
+  const snapshot = props.snapshot;
+
+  if (snapshot === null) {
+    renderActors.clear();
+    return;
+  }
+
+  const activeActorIds = new Set(snapshot.actors.map((actor) => actor.id));
+
+  for (const actor of snapshot.actors) {
+    const existing = renderActors.get(actor.id);
+    const isControlled = actor.id === props.controlledActorId;
+
+    if (existing === undefined) {
+      renderActors.set(actor.id, {
+        position: { x: actor.position.x, y: actor.position.y },
+        facing: actor.facing,
+        targetPosition: { x: actor.position.x, y: actor.position.y },
+        targetFacing: actor.facing,
+      });
+      continue;
+    }
+
+    existing.targetPosition = {
+      x: actor.position.x,
+      y: actor.position.y,
+    };
+    existing.targetFacing = actor.facing;
+
+    const distanceToTarget = Math.hypot(
+      existing.position.x - actor.position.x,
+      existing.position.y - actor.position.y,
+    );
+
+    if (isControlled || distanceToTarget >= HARD_SNAP_DISTANCE) {
+      existing.position = {
+        x: actor.position.x,
+        y: actor.position.y,
+      };
+      existing.facing = actor.facing;
+    }
+  }
+
+  for (const actorId of [...renderActors.keys()]) {
+    if (!activeActorIds.has(actorId)) {
+      renderActors.delete(actorId);
+    }
+  }
+}
+
+function advanceRenderActors(deltaMs: number): boolean {
+  let hasAnimatingActor = false;
+
+  for (const [actorId, state] of renderActors) {
+    const isControlled = actorId === props.controlledActorId;
+    state.facing = state.targetFacing;
+
+    if (isControlled) {
+      state.position = {
+        x: state.targetPosition.x,
+        y: state.targetPosition.y,
+      };
+      continue;
+    }
+
+    const dx = state.targetPosition.x - state.position.x;
+    const dy = state.targetPosition.y - state.position.y;
+    const distanceToTarget = Math.hypot(dx, dy);
+
+    if (distanceToTarget <= 1e-4) {
+      state.position = {
+        x: state.targetPosition.x,
+        y: state.targetPosition.y,
+      };
+      continue;
+    }
+
+    const maxStep = REMOTE_SMOOTH_SPEED * (deltaMs / 1_000);
+    const step = Math.min(distanceToTarget, maxStep);
+
+    state.position = {
+      x: state.position.x + (dx / distanceToTarget) * step,
+      y: state.position.y + (dy / distanceToTarget) * step,
+    };
+    hasAnimatingActor = true;
+  }
+
+  return hasAnimatingActor;
 }
 
 function scheduleDraw(): void {
@@ -144,17 +324,31 @@ function draw(): void {
     app.renderer.resize(width, height);
   }
 
+  const now = performance.now();
+  const deltaMs = lastDrawAt === 0 ? 16 : Math.min(now - lastDrawAt, 50);
+  lastDrawAt = now;
+
+  createStagePrimitives();
   clearStage();
+  syncRenderActors();
 
   if (props.snapshot === null) {
+    hideLabels();
     return;
   }
+
+  const shouldContinueAnimating = advanceRenderActors(deltaMs);
 
   const { arenaRadius, bossTargetRingRadius } = props.snapshot;
   const scale = getWorldScale(width, height, arenaRadius);
   const arenaCenter = toStagePoint({ x: 0, y: 0 }, width, height, arenaRadius);
-  const graphics = new Graphics();
-  app.stage.addChild(graphics);
+  const graphics = stageGraphics;
+
+  if (graphics === null) {
+    return;
+  }
+
+  syncActorLabels(props.snapshot);
 
   graphics
     .circle(arenaCenter.x, arenaCenter.y, arenaRadius * scale)
@@ -216,25 +410,21 @@ function draw(): void {
     alpha: 0.7,
   });
 
-  const bossLabel = new Text({
-    text: 'B',
-    style: new TextStyle({
-      fill: '#1a120d',
-      fontSize: 14,
-      fontWeight: '700',
-    }),
-  });
-  bossLabel.anchor.set(0.5);
-  bossLabel.x = bossPoint.x;
-  bossLabel.y = bossPoint.y;
-  app.stage.addChild(bossLabel);
+  if (bossLabel !== null) {
+    bossLabel.visible = true;
+    bossLabel.x = bossPoint.x;
+    bossLabel.y = bossPoint.y;
+  }
 
   for (const actor of props.snapshot.actors) {
-    const point = toStagePoint(actor.position, width, height, arenaRadius);
+    const renderState = getRenderActorState(actor.id);
+    const renderPosition = renderState?.position ?? actor.position;
+    const renderFacing = renderState?.facing ?? actor.facing;
+    const point = toStagePoint(renderPosition, width, height, arenaRadius);
     const lineEnd = toStagePoint(
       {
-        x: actor.position.x + Math.cos(actor.facing) * 1.3,
-        y: actor.position.y + Math.sin(actor.facing) * 1.3,
+        x: renderPosition.x + Math.cos(renderFacing) * 1.3,
+        y: renderPosition.y + Math.sin(renderFacing) * 1.3,
       },
       width,
       height,
@@ -264,67 +454,20 @@ function draw(): void {
       alpha,
     });
 
-    const label = new Text({
-      text: actor.slot === null ? '?' : getSlotStageText(actor.slot),
-      style: new TextStyle({
-        fill: '#f8f5ff',
-        fontSize: 12,
-        fontWeight: '700',
-      }),
-    });
-    label.anchor.set(0.5);
-    label.x = point.x;
-    label.y = point.y;
-    label.alpha = alpha;
-    app.stage.addChild(label);
-  }
-}
+    const label = actorLabels.get(actor.id);
 
-function createRenderSignature(): string {
-  const snapshot = props.snapshot;
-
-  if (snapshot === null) {
-    return [
-      'empty',
-      props.controlledActorId ?? '',
-      props.cameraYaw.toFixed(4),
-      props.cameraZoom.toFixed(3),
-      props.operationMode,
-    ].join('|');
+    if (label !== undefined) {
+      label.visible = true;
+      label.text = actor.slot === null ? '?' : getSlotStageText(actor.slot);
+      label.x = point.x;
+      label.y = point.y;
+      label.alpha = alpha;
+    }
   }
 
-  const actorPart = snapshot.actors
-    .map((actor) =>
-      [
-        actor.id,
-        actor.position.x.toFixed(3),
-        actor.position.y.toFixed(3),
-        actor.facing.toFixed(3),
-        actor.alive ? '1' : '0',
-      ].join(':'),
-    )
-    .join(';');
-
-  const mechanicPart = snapshot.mechanics
-    .map((mechanic) => `${mechanic.id}:${mechanic.kind}`)
-    .join(';');
-
-  const castPart =
-    snapshot.hud.bossCastBar === null
-      ? 'none'
-      : `${snapshot.hud.bossCastBar.actionId}:${snapshot.hud.bossCastBar.startedAt}:${snapshot.hud.bossCastBar.totalDurationMs}`;
-
-  return [
-    snapshot.phase,
-    snapshot.tick,
-    actorPart,
-    mechanicPart,
-    castPart,
-    props.controlledActorId ?? '',
-    props.cameraYaw.toFixed(4),
-    props.cameraZoom.toFixed(3),
-    props.operationMode,
-  ].join('|');
+  if (shouldContinueAnimating) {
+    scheduleDraw();
+  }
 }
 
 function handleMouseDown(event: MouseEvent): void {
@@ -348,14 +491,29 @@ function handleMouseMove(event: MouseEvent): void {
     return;
   }
 
-  const nextYaw = props.cameraYaw + deltaX * DRAG_ROTATION_SENSITIVITY;
-  emit('cameraYawChange', nextYaw);
+  pendingYawDelta += deltaX * DRAG_ROTATION_SENSITIVITY;
 
-  if (dragButton !== 2 || props.operationMode !== 'standard') {
+  if (dragUpdateFrame !== null) {
     return;
   }
 
-  emit('faceAngle', getFacingForCameraYaw(nextYaw));
+  dragUpdateFrame = requestAnimationFrame(() => {
+    dragUpdateFrame = null;
+
+    if (pendingYawDelta === 0) {
+      return;
+    }
+
+    const nextYaw = props.cameraYaw + pendingYawDelta;
+    pendingYawDelta = 0;
+    emit('cameraYawChange', nextYaw);
+
+    if (dragButton !== 2 || props.operationMode !== 'standard') {
+      return;
+    }
+
+    emit('faceAngle', getFacingForCameraYaw(nextYaw));
+  });
 }
 
 function endDrag(): void {
@@ -376,6 +534,7 @@ function handleDoubleClick(): void {
 onMounted(async () => {
   isUnmounted = false;
   isAppReady = false;
+  lastDrawAt = 0;
 
   if (stageRootRef.value === null) {
     return;
@@ -389,6 +548,7 @@ onMounted(async () => {
   });
   isAppReady = true;
   stageRootRef.value.appendChild(app.canvas);
+  createStagePrimitives();
   resizeObserver = new ResizeObserver(() => {
     scheduleDraw();
   });
@@ -399,7 +559,18 @@ onMounted(async () => {
 });
 
 watch(
-  () => createRenderSignature(),
+  () => [
+    props.snapshot?.phase ?? 'none',
+    props.snapshot?.tick ?? -1,
+    props.snapshot?.timeMs ?? -1,
+    props.snapshot?.actors.length ?? 0,
+    props.snapshot?.mechanics.length ?? 0,
+    props.snapshot?.hud.bossCastBar?.startedAt ?? -1,
+    props.controlledActorId ?? '',
+    props.cameraYaw,
+    props.cameraZoom,
+    props.operationMode,
+  ],
   () => {
     scheduleDraw();
   },
@@ -419,10 +590,19 @@ onBeforeUnmount(() => {
     drawFrame = null;
   }
 
+  if (dragUpdateFrame !== null) {
+    cancelAnimationFrame(dragUpdateFrame);
+    dragUpdateFrame = null;
+  }
+
   app?.destroy(true, {
     children: true,
     texture: true,
   });
+  renderActors.clear();
+  actorLabels.clear();
+  stageGraphics = null;
+  bossLabel = null;
 });
 </script>
 

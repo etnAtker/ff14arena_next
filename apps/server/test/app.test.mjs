@@ -87,6 +87,12 @@ function waitForPayload(socket, eventName, predicate, timeoutMs = 4000) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, ms);
+  });
+}
+
 test('房间全流程：创建、立即加入、等待态快照、开始、结算回到待开始', async () => {
   const server = await startServer({
     host: '127.0.0.1',
@@ -434,6 +440,98 @@ test('客户端请求重同步时，服务端会回送当前权威快照', async
     const resyncPayload = await resyncPromise;
     assert.equal(resyncPayload.snapshot.phase, 'waiting');
     assert.equal(typeof resyncPayload.syncId, 'number');
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
+test('高延迟移动输入会按 issuedAtServerTimeEstimate 补偿权威位置', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '高延迟移动测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'opening_two_rounds',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(
+      owner,
+      (nextRoom) => nextRoom.roomId === roomId && nextRoom.phase === 'waiting',
+    );
+    await waitingSnapshotPromise;
+
+    const startPromise = waitForEvent(owner, 'sim:start');
+    owner.emit('room:start', {
+      roomId,
+    });
+    const startPayload = await startPromise;
+    const ownerActor = startPayload.snapshot.actors.find((actor) => actor.slot === 'MT');
+    assert.ok(ownerActor, '应找到房主控制的 MT 角色');
+
+    await sleep(220);
+
+    const movedEventPromise = waitForPayload(
+      owner,
+      'sim:events',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.events.some(
+          (event) => event.type === 'actorMoved' && event.payload.actorId === ownerActor.id,
+        ),
+      8_000,
+    );
+
+    owner.emit('sim:input-frame', {
+      roomId,
+      actorId: ownerActor.id,
+      inputSeq: 1,
+      issuedAt: Date.now() - 100,
+      issuedAtServerTimeEstimate: Date.now() - 100,
+      payload: {
+        moveDirection: { x: 1, y: 0 },
+      },
+    });
+
+    const movedPayload = await movedEventPromise;
+    const actorMovedEvent = movedPayload.events
+      .filter((event) => event.type === 'actorMoved' && event.payload.actorId === ownerActor.id)
+      .at(-1);
+    assert.ok(actorMovedEvent, '应收到房主角色的移动事件');
+
+    const movedDistance = Math.hypot(
+      actorMovedEvent.payload.position.x - ownerActor.position.x,
+      actorMovedEvent.payload.position.y - ownerActor.position.y,
+    );
+
+    assert.ok(
+      movedDistance >= 0.55,
+      `补偿后首次权威位移应至少接近 0.6m，实际为 ${movedDistance.toFixed(3)}m`,
+    );
   } finally {
     owner.close();
     await server.close();

@@ -69,7 +69,7 @@
   - `sim:request-resync`
 
 当前连续覆盖型输入统一通过 `sim:input-frame` 发送。  
-该输入帧可同时携带移动方向、可选朝向、`inputSeq` 和 `issuedAt`。
+该输入帧可同时携带移动方向、可选朝向、`inputSeq`、`issuedAt` 和可选 `issuedAtServerTimeEstimate`。
 
 ### 当前下行事件
 
@@ -98,7 +98,10 @@
 
 - 位置与状态以服务端权威结果为准
 - `acknowledgedInputSeq` 只表示服务端已处理到的连续输入序号
-- 当前尚未实现完整的本地位置预测或“影子追逐式”高延迟移动优化
+- 服务端会把 `issuedAtServerTimeEstimate` 从墙钟时间换算到当前战斗时间轴
+- `packages/core` 会保留最近一小段移动历史，并在新移动输入到达时按估计生效时刻补算当前位置
+- 服务端不会采纳客户端上报的绝对坐标作为权威位置
+- 击退、越界修正等强位移会直接发硬修正位置事件
 
 ## 6. 当前边界
 
