@@ -704,11 +704,6 @@ export const useAppStore = defineStore('app', () => {
           return;
         }
 
-        if (authoritativeSnapshot.value.phase !== 'running') {
-          requestResync('phase_mismatch');
-          return;
-        }
-
         handleAcknowledgedInputSeq(payload.acknowledgedInputSeq);
 
         const acceptedEvents = payload.events.filter(

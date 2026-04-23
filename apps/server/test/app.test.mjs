@@ -546,6 +546,79 @@ test('高延迟移动输入会按 issuedAtServerTimeEstimate 补偿权威位置'
   }
 });
 
+test('等待态连续移动通过统一事件链返回 ack 与位移事件', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '等待态事件链测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'opening_two_rounds',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    const waitingSnapshot = await waitingSnapshotPromise;
+    const ownerActor = waitingSnapshot.snapshot.actors.find((actor) => actor.slot === 'MT');
+    assert.ok(ownerActor, '应找到房主控制的 MT 角色');
+
+    const movedEventPromise = waitForPayload(
+      owner,
+      'sim:events',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.acknowledgedInputSeq >= 1 &&
+        payload.events.some(
+          (event) => event.type === 'actorMoved' && event.payload.actorId === ownerActor.id,
+        ),
+      4000,
+    );
+
+    owner.emit('sim:input-frame', {
+      roomId,
+      actorId: ownerActor.id,
+      inputSeq: 1,
+      issuedAt: Date.now(),
+      issuedAtServerTimeEstimate: Date.now(),
+      payload: {
+        moveDirection: { x: 1, y: 0 },
+      },
+    });
+
+    const movedPayload = await movedEventPromise;
+    const actorMovedEvent = movedPayload.events.find(
+      (event) => event.type === 'actorMoved' && event.payload.actorId === ownerActor.id,
+    );
+    assert.ok(actorMovedEvent, '等待态输入后应收到位移事件');
+    assert.equal(movedPayload.acknowledgedInputSeq, 1);
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
 test('准备态与战斗态连续移动使用同一套位移规则', async () => {
   const server = await startServer({
     host: '127.0.0.1',
@@ -593,9 +666,9 @@ test('准备态与战斗态连续移动使用同一套位移规则', async () =>
     };
 
     for (let seq = 1; seq <= 3; seq += 1) {
-      const snapshotPromise = waitForPayload(
+      const eventPromise = waitForPayload(
         owner,
-        'sim:snapshot',
+        'sim:events',
         (payload) => payload.roomId === roomId && payload.acknowledgedInputSeq >= seq,
         4000,
       );
@@ -611,9 +684,27 @@ test('准备态与战斗态连续移动使用同一套位移规则', async () =>
         },
       });
 
-      await snapshotPromise;
+      await eventPromise;
       await sleep(60);
     }
+
+    const waitingStopPromise = waitForPayload(
+      owner,
+      'sim:events',
+      (payload) => payload.roomId === roomId && payload.acknowledgedInputSeq >= 4,
+      4000,
+    );
+    owner.emit('sim:input-frame', {
+      roomId,
+      actorId: ownerSlot.id,
+      inputSeq: 4,
+      issuedAt: Date.now(),
+      issuedAtServerTimeEstimate: Date.now(),
+      payload: {
+        moveDirection: { x: 0, y: 0 },
+      },
+    });
+    await waitingStopPromise;
 
     const waitingResyncPromise = waitForPayload(
       owner,
@@ -643,6 +734,16 @@ test('准备态与战斗态连续移动使用同一套位移规则', async () =>
     };
 
     for (let seq = 1; seq <= 3; seq += 1) {
+      const runningEventPromise = waitForPayload(
+        owner,
+        'sim:events',
+        (payload) =>
+          payload.roomId === roomId &&
+          payload.snapshot === undefined &&
+          payload.acknowledgedInputSeq >= seq,
+        4000,
+      );
+
       owner.emit('sim:input-frame', {
         roomId,
         actorId: ownerSlot.id,
@@ -654,8 +755,27 @@ test('准备态与战斗态连续移动使用同一套位移规则', async () =>
         },
       });
 
+      await runningEventPromise;
       await sleep(60);
     }
+
+    const runningStopPromise = waitForPayload(
+      owner,
+      'sim:events',
+      (payload) => payload.roomId === roomId && payload.acknowledgedInputSeq >= 4,
+      4000,
+    );
+    owner.emit('sim:input-frame', {
+      roomId,
+      actorId: ownerSlot.id,
+      inputSeq: 4,
+      issuedAt: Date.now(),
+      issuedAtServerTimeEstimate: Date.now(),
+      payload: {
+        moveDirection: { x: 0, y: 0 },
+      },
+    });
+    await runningStopPromise;
 
     const runningResyncPromise = waitForPayload(
       owner,

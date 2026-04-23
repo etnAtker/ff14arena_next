@@ -241,6 +241,10 @@ export class RoomManager {
     },
   ): void {
     if (room.battle === null || room.battleId === null) {
+      if (room.loopHandle !== null) {
+        clearInterval(room.loopHandle);
+        room.loopHandle = null;
+      }
       room.simulation = null;
       room.simulationTimeOriginMs = null;
       room.phase = 'waiting';
@@ -270,6 +274,121 @@ export class RoomManager {
     room.simulation = simulation;
     room.phase = 'waiting';
     this.updateSimulationTimeOrigin(room);
+    this.ensureSimulationLoop(room);
+  }
+
+  private ensureSimulationLoop(room: RoomRecord): void {
+    if (room.simulation === null || room.loopHandle !== null) {
+      return;
+    }
+
+    room.loopHandle = setInterval(() => {
+      this.tickRoom(room);
+    }, FIXED_TICK_MS);
+  }
+
+  private tickRoom(room: RoomRecord): void {
+    if (room.simulation === null) {
+      return;
+    }
+
+    if (room.phase === 'running' && room.battle !== null) {
+      const preTickSnapshot = room.simulation.getSnapshot();
+
+      for (const slot of PARTY_SLOT_ORDER) {
+        const occupant = room.slots[slot];
+
+        if (occupant.type !== 'bot') {
+          continue;
+        }
+
+        const actor = preTickSnapshot.actors.find((candidate) => candidate.id === occupant.actorId);
+
+        if (actor === undefined || !actor.alive) {
+          continue;
+        }
+
+        const directive = room.battle.getBotDirective({
+          snapshot: preTickSnapshot,
+          slot,
+          actor,
+          botContext: preTickSnapshot.botContext,
+        });
+        const nextSeq = (room.inputSeqByActorId.get(actor.id) ?? 0) + 1;
+        room.inputSeqByActorId.set(actor.id, nextSeq);
+
+        if (directive.moveDirection !== undefined) {
+          room.simulation.dispatchInput({
+            roomId: room.roomId,
+            actorId: actor.id,
+            inputSeq: nextSeq,
+            issuedAt: Date.now(),
+            type: 'move',
+            payload: {
+              direction: directive.moveDirection,
+            },
+          });
+        }
+
+        if (directive.faceAngle !== undefined) {
+          room.simulation.dispatchInput({
+            roomId: room.roomId,
+            actorId: actor.id,
+            inputSeq: nextSeq + 1,
+            issuedAt: Date.now(),
+            type: 'face',
+            payload: {
+              facing: directive.faceAngle,
+            },
+          });
+          room.inputSeqByActorId.set(actor.id, nextSeq + 1);
+        }
+
+        if (directive.useKnockbackImmune) {
+          const lastSeq = (room.inputSeqByActorId.get(actor.id) ?? nextSeq + 1) + 1;
+          room.simulation.dispatchInput({
+            roomId: room.roomId,
+            actorId: actor.id,
+            inputSeq: lastSeq,
+            issuedAt: Date.now(),
+            type: 'use-knockback-immune',
+            payload: {
+              issuedBy: 'bot',
+            },
+          });
+          room.inputSeqByActorId.set(actor.id, lastSeq);
+        }
+      }
+    }
+
+    room.simulation.tick(FIXED_TICK_MS);
+    room.snapshotBroadcastCounter += 1;
+    const events = room.simulation.drainEvents();
+    const acknowledgedInputSeq = room.simulation.getAcknowledgedInputSeq();
+
+    if (events.length > 0) {
+      this.io.to(room.roomId).emit('sim:events', {
+        roomId: room.roomId,
+        syncId: room.syncId,
+        events,
+        acknowledgedInputSeq,
+      });
+    }
+
+    if (room.snapshotBroadcastCounter >= 10) {
+      room.snapshotBroadcastCounter = 0;
+      this.emitSnapshot(room, {
+        acknowledgedInputSeq,
+        reason: 'tick',
+      });
+      this.emitRoomSlots(room);
+    }
+
+    const snapshot = room.simulation.getSnapshot();
+
+    if (room.phase === 'running' && snapshot.latestResult !== null) {
+      this.finishSimulation(room, snapshot);
+    }
   }
 
   joinRoom(
@@ -567,14 +686,6 @@ export class RoomManager {
     }
 
     room.simulation.dispatchInput(input);
-
-    if (room.phase === 'waiting') {
-      this.emitSnapshot(room, {
-        acknowledgedInputSeq: room.simulation.getAcknowledgedInputSeq(),
-        reason: 'waiting-state',
-      });
-      this.emitRoomSlots(room);
-    }
   }
 
   enqueueContinuousInput(socket: TypedSocket, inputFrame: ContinuousSimulationInputFrame): void {
@@ -617,13 +728,6 @@ export class RoomManager {
     room.simulation.dispatchInput(moveInput);
 
     if (inputFrame.payload.facing === undefined) {
-      if (room.phase === 'waiting') {
-        this.emitSnapshot(room, {
-          acknowledgedInputSeq: room.simulation.getAcknowledgedInputSeq(),
-          reason: 'waiting-state',
-        });
-        this.emitRoomSlots(room);
-      }
       return;
     }
 
@@ -640,14 +744,6 @@ export class RoomManager {
     };
 
     room.simulation.dispatchInput(faceInput);
-
-    if (room.phase === 'waiting') {
-      this.emitSnapshot(room, {
-        acknowledgedInputSeq: room.simulation.getAcknowledgedInputSeq(),
-        reason: 'waiting-state',
-      });
-      this.emitRoomSlots(room);
-    }
   }
 
   requestResync(socket: TypedSocket, payload: SimResyncRequestPayload): void {
@@ -715,11 +811,6 @@ export class RoomManager {
   }
 
   private startSimulation(room: RoomRecord): void {
-    if (room.loopHandle !== null) {
-      clearInterval(room.loopHandle);
-      room.loopHandle = null;
-    }
-
     room.latestResult = null;
     room.snapshotBroadcastCounter = 0;
     room.inputSeqByActorId.clear();
@@ -740,6 +831,7 @@ export class RoomManager {
     room.simulation = simulation;
     room.phase = 'running';
     this.updateSimulationTimeOrigin(room);
+    this.ensureSimulationLoop(room);
 
     const startSnapshot = simulation.getSnapshot();
 
@@ -750,117 +842,9 @@ export class RoomManager {
     });
     this.emitRoomState(room);
     this.emitRoomSlots(room);
-
-    room.loopHandle = setInterval(() => {
-      if (room.simulation === null || room.battle === null) {
-        return;
-      }
-
-      const preTickSnapshot = room.simulation.getSnapshot();
-
-      for (const slot of PARTY_SLOT_ORDER) {
-        const occupant = room.slots[slot];
-
-        if (occupant.type !== 'bot') {
-          continue;
-        }
-
-        const actor = preTickSnapshot.actors.find((candidate) => candidate.id === occupant.actorId);
-
-        if (actor === undefined || !actor.alive) {
-          continue;
-        }
-
-        const directive = room.battle.getBotDirective({
-          snapshot: preTickSnapshot,
-          slot,
-          actor,
-          botContext: preTickSnapshot.botContext,
-        });
-        const nextSeq = (room.inputSeqByActorId.get(actor.id) ?? 0) + 1;
-        room.inputSeqByActorId.set(actor.id, nextSeq);
-
-        if (directive.moveDirection !== undefined) {
-          room.simulation.dispatchInput({
-            roomId: room.roomId,
-            actorId: actor.id,
-            inputSeq: nextSeq,
-            issuedAt: Date.now(),
-            type: 'move',
-            payload: {
-              direction: directive.moveDirection,
-            },
-          });
-        }
-
-        if (directive.faceAngle !== undefined) {
-          room.simulation.dispatchInput({
-            roomId: room.roomId,
-            actorId: actor.id,
-            inputSeq: nextSeq + 1,
-            issuedAt: Date.now(),
-            type: 'face',
-            payload: {
-              facing: directive.faceAngle,
-            },
-          });
-          room.inputSeqByActorId.set(actor.id, nextSeq + 1);
-        }
-
-        if (directive.useKnockbackImmune) {
-          const lastSeq = (room.inputSeqByActorId.get(actor.id) ?? nextSeq + 1) + 1;
-          room.simulation.dispatchInput({
-            roomId: room.roomId,
-            actorId: actor.id,
-            inputSeq: lastSeq,
-            issuedAt: Date.now(),
-            type: 'use-knockback-immune',
-            payload: {
-              issuedBy: 'bot',
-            },
-          });
-          room.inputSeqByActorId.set(actor.id, lastSeq);
-        }
-      }
-
-      room.simulation.tick(FIXED_TICK_MS);
-      room.snapshotBroadcastCounter += 1;
-      const events = room.simulation.drainEvents();
-      const acknowledgedInputSeq = room.simulation.getAcknowledgedInputSeq();
-
-      if (events.length > 0) {
-        this.io.to(room.roomId).emit('sim:events', {
-          roomId: room.roomId,
-          syncId: room.syncId,
-          events,
-          acknowledgedInputSeq,
-        });
-      }
-
-      if (room.snapshotBroadcastCounter >= 10) {
-        room.snapshotBroadcastCounter = 0;
-        this.emitSnapshot(room, {
-          acknowledgedInputSeq,
-          reason: 'tick',
-        });
-        this.emitRoomSlots(room);
-      }
-
-      const snapshot = room.simulation.getSnapshot();
-
-      if (snapshot.latestResult !== null) {
-        this.finishSimulation(room, snapshot);
-      }
-    }, FIXED_TICK_MS);
   }
 
   private finishSimulation(room: RoomRecord, endSnapshot: SimulationSnapshot): void {
-    if (room.loopHandle !== null) {
-      clearInterval(room.loopHandle);
-      room.loopHandle = null;
-    }
-
-    room.simulation = null;
     room.phase = 'waiting';
     room.latestResult = endSnapshot.latestResult;
     room.syncId += 1;
@@ -896,7 +880,7 @@ export class RoomManager {
     this.emitRoomState(room);
     this.emitRoomSlots(room);
     this.emitSnapshot(room, {
-      acknowledgedInputSeq: 0,
+      acknowledgedInputSeq: room.simulation?.getAcknowledgedInputSeq() ?? 0,
       reason,
     });
   }

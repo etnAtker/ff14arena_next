@@ -665,10 +665,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         const direction = normalize(input.payload.direction);
         const previousPosition = cloneVector(actor.position);
         const previousDirection = cloneVector(actor.moveState.direction);
-        const replayTargetTimeMs =
-          currentState.phase === 'running'
-            ? Math.max(currentState.timeMs - tickMs, 0)
-            : currentState.timeMs;
+        const replayTargetTimeMs = Math.max(currentState.timeMs - tickMs, 0);
         const earliestCompensationTimeMs = Math.max(
           runtime.anchorTimeMs,
           currentState.timeMs - MAX_MOVEMENT_COMPENSATION_MS,
@@ -1229,13 +1226,13 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     tick(deltaMs) {
       const currentState = assertState(state);
 
-      if (!running || currentState.phase !== 'running') {
+      if (currentState.phase === 'running' && !running) {
         return;
       }
 
       accumulatorMs += deltaMs;
 
-      while (accumulatorMs >= tickMs && running) {
+      while (accumulatorMs >= tickMs && (currentState.phase !== 'running' || running)) {
         accumulatorMs -= tickMs;
         currentState.tick += 1;
         currentState.timeMs += tickMs;
@@ -1248,30 +1245,20 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         }
 
         advanceMovement(tickMs);
-        drainDueScheduler();
         refreshStatuses();
 
-        if (currentState.latestResult !== null) {
-          running = false;
-          break;
+        if (currentState.phase === 'running') {
+          drainDueScheduler();
+
+          if (currentState.latestResult !== null) {
+            running = false;
+            break;
+          }
         }
       }
     },
     dispatchInput(input) {
-      const currentState = assertState(state);
-
-      if (currentState.phase === 'waiting') {
-        if (input.type === 'move') {
-          currentState.tick += 1;
-          currentState.timeMs += FIXED_TICK_MS;
-        }
-
-        applyInput(input);
-        refreshStatuses();
-        return;
-      }
-
-      currentState.inputQueue.push(input);
+      assertState(state).inputQueue.push(input);
     },
     getSnapshot() {
       return createSnapshot();
