@@ -382,6 +382,12 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
+.result-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .battle-sidebar {
   min-height: 0;
 }
@@ -489,27 +495,32 @@ onBeforeUnmount(() => {
 .result-card :deep(.n-card__content) {
   display: flex;
   flex-direction: column;
-  height: calc(100% - 4px);
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 
 .result-stack {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(220px, 36%);
+  display: flex;
+  flex-direction: column;
   gap: 12px;
-  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
 }
 
 .result-reasons,
 .log-panel {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
   min-height: 0;
 }
 
 .reason-list,
 .log-list {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
@@ -528,13 +539,13 @@ onBeforeUnmount(() => {
 }
 
 .log-panel {
+  flex: 1 1 auto;
   min-height: 220px;
 }
 
 .log-scrollbar {
+  flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
-  max-height: 100%;
 }
 
 .stage-header {
