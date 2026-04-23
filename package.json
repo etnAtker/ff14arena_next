@@ -8,9 +8,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev --filter=@ff14arena/web --filter=@ff14arena/server",
-    "dev:web": "pnpm --filter @ff14arena/web dev",
-    "dev:server": "pnpm --filter @ff14arena/server dev",
+    "dev": "node ./scripts/dev-orchestrator.mjs",
     "lint": "eslint . --max-warnings=0",
     "typecheck": "turbo run typecheck",
     "format": "prettier --write .",

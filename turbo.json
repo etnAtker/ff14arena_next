@@ -5,20 +5,6 @@
       "dependsOn": ["^build"],
       "outputs": ["dist/**"]
     },
-    "dev": {
-      "cache": false,
-      "persistent": true
-    },
-    "@ff14arena/web#dev": {
-      "cache": false,
-      "persistent": true,
-      "with": ["@ff14arena/content#dev", "@ff14arena/core#dev", "@ff14arena/shared#dev"]
-    },
-    "@ff14arena/server#dev": {
-      "cache": false,
-      "persistent": true,
-      "with": ["@ff14arena/content#dev", "@ff14arena/core#dev", "@ff14arena/shared#dev"]
-    },
     "typecheck": {
       "dependsOn": ["^typecheck"],
       "outputs": []
