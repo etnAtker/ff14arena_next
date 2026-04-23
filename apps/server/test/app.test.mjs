@@ -257,6 +257,189 @@ test('房主离开后立即销毁房间并通知其他玩家', async () => {
   }
 });
 
+test('运行中断线后允许按原槽位重连，并向重连玩家下发权威快照', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+  let reconnectedGuest = null;
+
+  try {
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '重连测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'opening_two_rounds',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(
+      owner,
+      (nextRoom) => nextRoom.roomId === roomId && nextRoom.phase === 'waiting',
+    );
+    await ownerWaitingSnapshotPromise;
+
+    await waitForConnect(guest);
+    const guestWaitingSnapshotPromise = waitForEvent(guest, 'sim:snapshot');
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      slot: 'ST',
+    });
+    await waitForRoomState(
+      guest,
+      (nextRoom) => nextRoom.roomId === roomId && nextRoom.phase === 'waiting',
+    );
+    await guestWaitingSnapshotPromise;
+
+    const readyPromise = waitForPayload(
+      owner,
+      'room:slots',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.slots.find((slot) => slot.slot === 'ST')?.ready === true,
+    );
+    guest.emit('room:ready', {
+      roomId,
+      ready: true,
+    });
+    await readyPromise;
+
+    const startPromise = waitForEvent(owner, 'sim:start');
+    owner.emit('room:start', {
+      roomId,
+    });
+    const startPayload = await startPromise;
+
+    const offlinePromise = waitForPayload(
+      owner,
+      'room:slots',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.slots.find((slot) => slot.slot === 'ST')?.online === false,
+      8000,
+    );
+    guest.close();
+    await offlinePromise;
+
+    reconnectedGuest = io(baseUrl, { transports: ['websocket'] });
+    await waitForConnect(reconnectedGuest);
+
+    const onlineAgainPromise = waitForPayload(
+      owner,
+      'room:slots',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.slots.find((slot) => slot.slot === 'ST')?.online === true,
+      8000,
+    );
+    const resyncSnapshotPromise = waitForPayload(
+      reconnectedGuest,
+      'sim:snapshot',
+      (payload) => payload.roomId === roomId && payload.snapshot.phase === 'running',
+      8000,
+    );
+
+    reconnectedGuest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+    });
+
+    const resyncSnapshot = await resyncSnapshotPromise;
+    await onlineAgainPromise;
+
+    assert.equal(resyncSnapshot.syncId, startPayload.syncId);
+    assert.equal(resyncSnapshot.reason, 'rejoin');
+    assert.equal(resyncSnapshot.snapshot.phase, 'running');
+  } finally {
+    owner.close();
+    guest.close();
+    reconnectedGuest?.close();
+    await server.close();
+  }
+});
+
+test('客户端请求重同步时，服务端会回送当前权威快照', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '重同步测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'opening_two_rounds',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(
+      owner,
+      (nextRoom) => nextRoom.roomId === roomId && nextRoom.phase === 'waiting',
+    );
+    await waitingSnapshotPromise;
+
+    const resyncPromise = waitForPayload(
+      owner,
+      'sim:snapshot',
+      (payload) => payload.roomId === roomId && payload.reason === 'resync',
+      4000,
+    );
+
+    owner.emit('sim:request-resync', {
+      roomId,
+      reason: 'test_resync',
+    });
+
+    const resyncPayload = await resyncPromise;
+    assert.equal(resyncPayload.snapshot.phase, 'waiting');
+    assert.equal(typeof resyncPayload.syncId, 'number');
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
 test('生产静态托管：返回前端资源并仅对页面请求执行 SPA 回退', async () => {
   const staticRoot = await mkdtemp(join(tmpdir(), 'ff14arena-static-'));
   await mkdir(join(staticRoot, 'assets'));

@@ -222,6 +222,11 @@ export interface UseKnockbackImmunePayload {
   issuedBy: 'player' | 'bot';
 }
 
+export interface ContinuousInputFramePayload {
+  moveDirection: Vector2;
+  facing?: number;
+}
+
 export type SimulationInputPayload =
   | MoveInputPayload
   | FaceInputPayload
@@ -242,6 +247,14 @@ export type UseKnockbackImmuneSimulationInput = SimulationInputBase<
   'use-knockback-immune',
   UseKnockbackImmunePayload
 >;
+
+export interface ContinuousSimulationInputFrame {
+  roomId: string;
+  actorId: string;
+  inputSeq: number;
+  issuedAt: number;
+  payload: ContinuousInputFramePayload;
+}
 
 export type SimulationInput =
   | MoveSimulationInput
@@ -389,17 +402,21 @@ export interface RoomSlotsPayload {
 
 export interface SimStartPayload {
   roomId: string;
+  syncId: number;
   snapshot: SimulationSnapshot;
 }
 
 export interface SimSnapshotPayload {
   roomId: string;
+  syncId: number;
   snapshot: SimulationSnapshot;
   acknowledgedInputSeq: number;
+  reason: 'join' | 'rejoin' | 'resync' | 'waiting-state' | 'tick' | 'battle-end' | 'battle-start';
 }
 
 export interface SimEventsPayload {
   roomId: string;
+  syncId: number;
   events: SimulationEvent[];
   acknowledgedInputSeq: number;
 }
@@ -412,6 +429,11 @@ export interface SimEndPayload {
 export interface RoomClosedPayload {
   roomId: string;
   reason: string;
+}
+
+export interface SimResyncRequestPayload {
+  roomId: string;
+  reason?: string;
 }
 
 export interface ServerErrorPayload {
@@ -437,7 +459,7 @@ export interface ClientToServerEvents {
   'room:select-battle': (payload: RoomSelectBattlePayload) => void;
   'room:switch-slot': (payload: RoomSwitchSlotPayload) => void;
   'room:start': (payload: RoomStartPayload) => void;
-  'sim:move': (payload: MoveSimulationInput) => void;
-  'sim:face': (payload: FaceSimulationInput) => void;
+  'sim:input-frame': (payload: ContinuousSimulationInputFrame) => void;
   'sim:use-knockback-immune': (payload: UseKnockbackImmuneSimulationInput) => void;
+  'sim:request-resync': (payload: SimResyncRequestPayload) => void;
 }

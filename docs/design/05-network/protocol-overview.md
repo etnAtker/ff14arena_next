@@ -17,9 +17,9 @@
 - `room:select-battle`
 - `room:switch-slot`
 - `room:start`
-- `sim:move`
-- `sim:face`
+- `sim:input-frame`
 - `sim:use-knockback-immune`
+- `sim:request-resync`
 
 ## 服务端到客户端
 
@@ -38,6 +38,9 @@
 - 所有房间内消息都带 `roomId`
 - 所有输入都带 `inputSeq`
 - 服务端返回最近已处理的 `inputSeq`
-- 第一版不实现回滚，但保留输入确认字段
+- 连续覆盖型输入统一通过 `sim:input-frame` 发送
+- 一次性指令仍保持独立事件，例如防击退
+- 客户端在检测到快照缺失、相位错位或旧包覆盖风险时，可主动请求重同步
+- 第一版不实现回滚，但保留输入确认字段与重同步入口
 - 房间内显示与等待态同步统一使用 `sim:snapshot`
 - `sim:end` 只携带上一轮结果，不再单独进入结算页

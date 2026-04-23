@@ -20,7 +20,13 @@ interface LocalProfile {
   userName: string;
 }
 
+interface FacingPreviewState {
+  actorId: string;
+  facing: number;
+}
+
 const PROFILE_STORAGE_KEY = 'ff14arena:profile';
+const RESYNC_THROTTLE_MS = 500;
 
 function createDefaultProfile(): LocalProfile {
   return {
@@ -69,6 +75,10 @@ function normalizeDirection(direction: Vector2): Vector2 {
   };
 }
 
+function normalizeAngleDifference(left: number, right: number): number {
+  return Math.atan2(Math.sin(left - right), Math.cos(left - right));
+}
+
 export const useAppStore = defineStore('app', () => {
   const profile = ref<LocalProfile>(loadProfile());
   const socket = shallowRef<AppSocket | null>(null);
@@ -76,11 +86,39 @@ export const useAppStore = defineStore('app', () => {
   const battles = ref<BattleSummary[]>([]);
   const rooms = ref<RoomSummaryDto[]>([]);
   const room = ref<RoomStateDto | null>(null);
-  const snapshot = ref<SimulationSnapshot | null>(null);
+  const authoritativeSnapshot = ref<SimulationSnapshot | null>(null);
   const serverError = ref<string | null>(null);
   const connected = ref(false);
   const inputSeq = ref(0);
   const logs = ref<string[]>([]);
+  const currentSyncId = ref(0);
+  const lastAcknowledgedInputSeq = ref(0);
+  const facingPreview = ref<FacingPreviewState | null>(null);
+  const lastResyncRequestedAt = ref(0);
+
+  const pendingInputIssuedAt = new Map<number, number>();
+
+  const snapshot = computed<SimulationSnapshot | null>(() => {
+    const baseSnapshot = authoritativeSnapshot.value;
+    const preview = facingPreview.value;
+
+    if (baseSnapshot === null || preview === null) {
+      return baseSnapshot;
+    }
+
+    const actorIndex = baseSnapshot.actors.findIndex((actor) => actor.id === preview.actorId);
+
+    if (actorIndex < 0) {
+      return baseSnapshot;
+    }
+
+    return {
+      ...baseSnapshot,
+      actors: baseSnapshot.actors.map((actor, index) =>
+        index === actorIndex ? { ...actor, facing: preview.facing } : actor,
+      ),
+    };
+  });
 
   const currentPlayerSlot = computed<PartySlot | null>(() => {
     const currentRoom = room.value;
@@ -119,9 +157,26 @@ export const useAppStore = defineStore('app', () => {
     logs.value = [message, ...logs.value].slice(0, 80);
   }
 
-  function resetBattleState(options?: { clearLogs?: boolean }): void {
-    snapshot.value = null;
-    inputSeq.value = 0;
+  function clearFacingPreview(): void {
+    facingPreview.value = null;
+  }
+
+  function resetSyncState(options?: { clearInputSeq?: boolean }): void {
+    authoritativeSnapshot.value = null;
+    currentSyncId.value = 0;
+    lastAcknowledgedInputSeq.value = 0;
+    pendingInputIssuedAt.clear();
+    clearFacingPreview();
+
+    if (options?.clearInputSeq ?? true) {
+      inputSeq.value = 0;
+    }
+  }
+
+  function resetBattleState(options?: { clearLogs?: boolean; clearInputSeq?: boolean }): void {
+    resetSyncState(
+      options?.clearInputSeq === undefined ? undefined : { clearInputSeq: options.clearInputSeq },
+    );
 
     if (options?.clearLogs ?? true) {
       logs.value = [];
@@ -136,6 +191,112 @@ export const useAppStore = defineStore('app', () => {
     }
 
     return snapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
+  }
+
+  function handleAcknowledgedInputSeq(acknowledgedInputSeq: number): void {
+    if (acknowledgedInputSeq <= lastAcknowledgedInputSeq.value) {
+      return;
+    }
+
+    for (const seq of [...pendingInputIssuedAt.keys()]) {
+      if (seq <= acknowledgedInputSeq) {
+        pendingInputIssuedAt.delete(seq);
+      }
+    }
+
+    lastAcknowledgedInputSeq.value = acknowledgedInputSeq;
+  }
+
+  function rememberPendingInput(seq: number): void {
+    pendingInputIssuedAt.set(seq, Date.now());
+  }
+
+  function reconcileFacingPreview(nextSnapshot: SimulationSnapshot): void {
+    const preview = facingPreview.value;
+
+    if (preview === null) {
+      return;
+    }
+
+    const actor = nextSnapshot.actors.find((candidate) => candidate.id === preview.actorId);
+
+    if (
+      actor === undefined ||
+      Math.abs(normalizeAngleDifference(actor.facing, preview.facing)) < 0.05
+    ) {
+      clearFacingPreview();
+    }
+  }
+
+  function acceptSyncId(syncId: number): boolean {
+    if (syncId < currentSyncId.value) {
+      return false;
+    }
+
+    if (syncId > currentSyncId.value) {
+      currentSyncId.value = syncId;
+      pendingInputIssuedAt.clear();
+      lastAcknowledgedInputSeq.value = 0;
+      clearFacingPreview();
+    }
+
+    return true;
+  }
+
+  function acceptSnapshot(options: {
+    syncId: number;
+    snapshot: SimulationSnapshot;
+    acknowledgedInputSeq: number;
+  }): void {
+    if (!acceptSyncId(options.syncId)) {
+      return;
+    }
+
+    handleAcknowledgedInputSeq(options.acknowledgedInputSeq);
+
+    const currentSnapshot = authoritativeSnapshot.value;
+
+    if (
+      currentSnapshot !== null &&
+      options.syncId === currentSyncId.value &&
+      currentSnapshot.phase === options.snapshot.phase &&
+      options.snapshot.tick < currentSnapshot.tick
+    ) {
+      return;
+    }
+
+    authoritativeSnapshot.value = options.snapshot;
+    reconcileFacingPreview(options.snapshot);
+  }
+
+  function requestResync(reason: string): void {
+    if (room.value === null || socket.value === null) {
+      return;
+    }
+
+    const now = Date.now();
+
+    if (now - lastResyncRequestedAt.value < RESYNC_THROTTLE_MS) {
+      return;
+    }
+
+    lastResyncRequestedAt.value = now;
+    socket.value.emit('sim:request-resync', {
+      roomId: room.value.roomId,
+      reason,
+    });
+  }
+
+  function rejoinCurrentRoom(): void {
+    if (room.value === null || socket.value === null) {
+      return;
+    }
+
+    socket.value.emit('room:join', {
+      roomId: room.value.roomId,
+      userId: profile.value.userId,
+      userName: profile.value.userName,
+    });
   }
 
   async function waitForRoomState(roomId: string, timeoutMs = 3000): Promise<RoomStateDto> {
@@ -180,6 +341,7 @@ export const useAppStore = defineStore('app', () => {
         connected.value = true;
         serverError.value = null;
         appendLog('已连接服务器');
+        rejoinCurrentRoom();
       });
 
       nextSocket.on('disconnect', () => {
@@ -232,8 +394,15 @@ export const useAppStore = defineStore('app', () => {
           return;
         }
 
-        snapshot.value = payload.snapshot;
+        if (!acceptSyncId(payload.syncId)) {
+          return;
+        }
+
+        authoritativeSnapshot.value = payload.snapshot;
         inputSeq.value = 0;
+        lastAcknowledgedInputSeq.value = 0;
+        pendingInputIssuedAt.clear();
+        clearFacingPreview();
         logs.value = [];
         appendLog(`开始模拟：${payload.snapshot.battleName}`);
       });
@@ -243,17 +412,53 @@ export const useAppStore = defineStore('app', () => {
           return;
         }
 
-        snapshot.value = payload.snapshot;
+        acceptSnapshot({
+          syncId: payload.syncId,
+          snapshot: payload.snapshot,
+          acknowledgedInputSeq: payload.acknowledgedInputSeq,
+        });
       });
 
       nextSocket.on('sim:events', (payload) => {
-        if (snapshot.value === null || snapshot.value.roomId !== payload.roomId) {
+        if (room.value?.roomId !== payload.roomId) {
           return;
         }
 
-        for (const event of payload.events) {
+        if (!acceptSyncId(payload.syncId)) {
+          return;
+        }
+
+        if (authoritativeSnapshot.value === null) {
+          requestResync('missing_snapshot');
+          return;
+        }
+
+        if (authoritativeSnapshot.value.phase !== 'running') {
+          requestResync('phase_mismatch');
+          return;
+        }
+
+        handleAcknowledgedInputSeq(payload.acknowledgedInputSeq);
+
+        const acceptedEvents = payload.events.filter(
+          (event: SimulationEvent) =>
+            event.tick > authoritativeSnapshot.value!.tick ||
+            (event.tick === authoritativeSnapshot.value!.tick &&
+              event.timeMs > authoritativeSnapshot.value!.timeMs),
+        );
+
+        if (acceptedEvents.length === 0) {
+          return;
+        }
+
+        for (const event of acceptedEvents) {
           applySimulationEvent(event);
         }
+
+        const latestEvent = acceptedEvents[acceptedEvents.length - 1];
+        authoritativeSnapshot.value.tick = latestEvent.tick;
+        authoritativeSnapshot.value.timeMs = latestEvent.timeMs;
+        reconcileFacingPreview(authoritativeSnapshot.value);
       });
 
       nextSocket.on('sim:end', (payload) => {
@@ -317,7 +522,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function joinRoom(roomId: string, slot?: PartySlot): Promise<void> {
-    const currentSocket = await ensureSocket();
+    const currentSocket = socket.value ?? (await ensureSocket());
     resetBattleState();
     room.value = null;
     currentSocket.emit('room:join', {
@@ -403,43 +608,42 @@ export const useAppStore = defineStore('app', () => {
       issuedAt: Date.now(),
     } as SimulationInput;
 
+    rememberPendingInput(payload.inputSeq);
+
     switch (payload.type) {
-      case 'move':
-        socket.value.emit('sim:move', payload);
-        break;
-      case 'face':
-        socket.value.emit('sim:face', payload);
-        break;
       case 'use-knockback-immune':
         socket.value.emit('sim:use-knockback-immune', payload);
         break;
+      default:
+        return;
     }
   }
 
-  function sendMove(direction: Vector2): void {
+  function sendContinuousInputFrame(frame: { moveDirection: Vector2; facing?: number }): void {
+    if (room.value === null || socket.value === null) {
+      return;
+    }
+
     const actor = getCurrentPlayerActor();
 
     if (actor === null) {
       return;
     }
 
-    emitSimulationInput({
+    inputSeq.value += 1;
+    const nextInputSeq = inputSeq.value;
+    rememberPendingInput(nextInputSeq);
+
+    socket.value.emit('sim:input-frame', {
+      roomId: room.value.roomId,
       actorId: actor.id,
-      type: 'move',
+      inputSeq: nextInputSeq,
+      issuedAt: Date.now(),
       payload: {
-        direction: normalizeDirection(direction),
+        moveDirection: normalizeDirection(frame.moveDirection),
+        ...(frame.facing !== undefined ? { facing: frame.facing } : {}),
       },
     });
-  }
-
-  function sendFace(position: Vector2): void {
-    const actor = getCurrentPlayerActor();
-
-    if (actor === null) {
-      return;
-    }
-
-    sendFaceAngle(Math.atan2(position.y - actor.position.y, position.x - actor.position.x));
   }
 
   function previewFaceAngle(facing: number): void {
@@ -449,25 +653,10 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
-    actor.facing = facing;
-  }
-
-  function sendFaceAngle(facing: number): void {
-    const actor = getCurrentPlayerActor();
-
-    if (actor === null) {
-      return;
-    }
-
-    actor.facing = facing;
-
-    emitSimulationInput({
+    facingPreview.value = {
       actorId: actor.id,
-      type: 'face',
-      payload: {
-        facing,
-      },
-    });
+      facing,
+    };
   }
 
   function useKnockbackImmune(): void {
@@ -491,13 +680,13 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function applySimulationEvent(event: SimulationEvent): void {
-    if (snapshot.value === null) {
+    if (authoritativeSnapshot.value === null) {
       return;
     }
 
     switch (event.type) {
       case 'actorMoved': {
-        const actor = snapshot.value.actors.find(
+        const actor = authoritativeSnapshot.value.actors.find(
           (candidate) => candidate.id === event.payload.actorId,
         );
 
@@ -508,36 +697,35 @@ export const useAppStore = defineStore('app', () => {
         break;
       }
       case 'bossCastStarted':
-        snapshot.value.boss.castBar = {
+        authoritativeSnapshot.value.boss.castBar = {
           actionId: event.payload.actionId,
           actionName: event.payload.actionName,
           startedAt: event.payload.startedAt,
           totalDurationMs: event.payload.totalDurationMs,
         };
-        snapshot.value.hud.bossCastBar = snapshot.value.boss.castBar;
+        authoritativeSnapshot.value.hud.bossCastBar = authoritativeSnapshot.value.boss.castBar;
         appendLog(`Boss 读条：${event.payload.actionName}`);
         break;
       case 'bossCastResolved':
-        snapshot.value.boss.castBar = null;
-        snapshot.value.hud.bossCastBar = null;
+        authoritativeSnapshot.value.boss.castBar = null;
+        authoritativeSnapshot.value.hud.bossCastBar = null;
         appendLog(`Boss 结算：${event.payload.actionName}`);
         break;
-      case 'aoeSpawned': {
-        snapshot.value.mechanics = snapshot.value.mechanics.filter(
+      case 'aoeSpawned':
+        authoritativeSnapshot.value.mechanics = authoritativeSnapshot.value.mechanics.filter(
           (mechanic) => mechanic.id !== event.payload.id,
         );
-        snapshot.value.mechanics.push(event.payload);
+        authoritativeSnapshot.value.mechanics.push(event.payload);
         appendLog(`AOE 出现：${event.payload.label}`);
         break;
-      }
       case 'aoeResolved':
-        snapshot.value.mechanics = snapshot.value.mechanics.filter(
+        authoritativeSnapshot.value.mechanics = authoritativeSnapshot.value.mechanics.filter(
           (mechanic) => mechanic.id !== event.payload.mechanicId,
         );
         appendLog(`AOE 结算：${event.payload.mechanicId}`);
         break;
       case 'damageApplied': {
-        const actor = snapshot.value.actors.find(
+        const actor = authoritativeSnapshot.value.actors.find(
           (candidate) => candidate.id === event.payload.targetId,
         );
 
@@ -549,7 +737,7 @@ export const useAppStore = defineStore('app', () => {
         break;
       }
       case 'statusApplied': {
-        const actor = snapshot.value.actors.find(
+        const actor = authoritativeSnapshot.value.actors.find(
           (candidate) => candidate.id === event.payload.targetId,
         );
 
@@ -561,7 +749,7 @@ export const useAppStore = defineStore('app', () => {
         break;
       }
       case 'actorDied': {
-        const actor = snapshot.value.actors.find(
+        const actor = authoritativeSnapshot.value.actors.find(
           (candidate) => candidate.id === event.payload.actorId,
         );
 
@@ -574,12 +762,12 @@ export const useAppStore = defineStore('app', () => {
         break;
       }
       case 'battleFailureMarked':
-        snapshot.value.failureMarked = true;
-        snapshot.value.failureReasons = event.payload.failureReasons;
+        authoritativeSnapshot.value.failureMarked = true;
+        authoritativeSnapshot.value.failureReasons = event.payload.failureReasons;
         appendLog(`失败原因：${event.payload.failureReasons.join(' / ')}`);
         break;
       case 'encounterCompleted':
-        snapshot.value.latestResult = event.payload;
+        authoritativeSnapshot.value.latestResult = event.payload;
         break;
     }
   }
@@ -604,10 +792,8 @@ export const useAppStore = defineStore('app', () => {
     selectBattle,
     switchSlot,
     startBattle,
-    sendMove,
-    sendFace,
+    sendContinuousInputFrame,
     previewFaceAngle,
-    sendFaceAngle,
     useKnockbackImmune,
   };
 });

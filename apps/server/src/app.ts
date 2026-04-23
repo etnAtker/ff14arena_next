@@ -174,16 +174,16 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       roomManager.startRoom(socket, payload.roomId);
     });
 
-    socket.on('sim:move', (payload) => {
-      roomManager.enqueueInput(socket, payload);
-    });
-
-    socket.on('sim:face', (payload) => {
-      roomManager.enqueueInput(socket, payload);
+    socket.on('sim:input-frame', (payload) => {
+      roomManager.enqueueContinuousInput(socket, payload);
     });
 
     socket.on('sim:use-knockback-immune', (payload) => {
       roomManager.enqueueInput(socket, payload);
+    });
+
+    socket.on('sim:request-resync', (payload) => {
+      roomManager.requestResync(socket, payload);
     });
 
     socket.on('disconnect', () => {

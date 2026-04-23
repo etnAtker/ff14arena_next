@@ -311,7 +311,7 @@ onMounted(async () => {
     }
 
     const direction = movementVector();
-    store.sendMove(direction);
+    let facing: number | undefined;
 
     if (operationMode.value !== 'traditional') {
       lastTraditionalFacing.value = null;
@@ -323,28 +323,28 @@ onMounted(async () => {
             normalizeAngleDifference(pendingPointerFacing.value, lastSentPointerFacing.value),
           ) >= 0.03
         ) {
-          store.sendFaceAngle(pendingPointerFacing.value);
+          facing = pendingPointerFacing.value;
           lastSentPointerFacing.value = pendingPointerFacing.value;
         }
       }
-
-      return;
-    }
-
-    if (direction.x === 0 && direction.y === 0) {
+    } else if (direction.x === 0 && direction.y === 0) {
       lastTraditionalFacing.value = null;
-      return;
+    } else {
+      const nextFacing = Math.atan2(direction.y, direction.x);
+
+      if (
+        lastTraditionalFacing.value === null ||
+        Math.abs(normalizeAngleDifference(nextFacing, lastTraditionalFacing.value)) >= 0.05
+      ) {
+        facing = nextFacing;
+        lastTraditionalFacing.value = nextFacing;
+      }
     }
 
-    const facing = Math.atan2(direction.y, direction.x);
-
-    if (
-      lastTraditionalFacing.value === null ||
-      Math.abs(normalizeAngleDifference(facing, lastTraditionalFacing.value)) >= 0.05
-    ) {
-      store.sendFaceAngle(facing);
-      lastTraditionalFacing.value = facing;
-    }
+    store.sendContinuousInputFrame({
+      moveDirection: direction,
+      ...(facing !== undefined ? { facing } : {}),
+    });
   }, 50);
 });
 
