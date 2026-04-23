@@ -457,13 +457,14 @@ onBeforeUnmount(() => {
   height: 100dvh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .shell-content {
   box-sizing: border-box;
-  height: 100%;
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   gap: 12px;
   min-height: 0;
   padding: 0 20px 16px;
@@ -475,7 +476,8 @@ onBeforeUnmount(() => {
 
 .battle-content {
   box-sizing: border-box;
-  height: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -487,7 +489,6 @@ onBeforeUnmount(() => {
 .battle-page-shell {
   flex: 1 1 auto;
   display: flex;
-  height: 100%;
   min-height: 0;
   overflow: hidden;
 }

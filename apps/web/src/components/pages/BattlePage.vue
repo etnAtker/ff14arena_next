@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SelectOption } from 'naive-ui';
-import { NButton, NCard, NEmpty, NInputNumber, NScrollbar, NSelect, NText } from 'naive-ui';
+import { NButton, NCard, NEmpty, NInputNumber, NSelect, NText } from 'naive-ui';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type {
@@ -322,39 +322,51 @@ onBeforeUnmount(() => {
 
     <aside class="result-sidebar">
       <n-card embedded class="result-card">
-        <template #header>
-          <div>
+        <div class="result-panel">
+          <div class="result-header">
             <p class="eyebrow">结果</p>
             <h2 class="section-title">{{ getResultTitle(props.latestResult) }}</h2>
           </div>
-        </template>
 
-        <div class="result-stack">
-          <div v-if="props.latestResult !== null" class="result-reasons">
-            <div class="panel-title">失败原因</div>
-            <div v-if="props.latestResult.failureReasons.length > 0" class="reason-list">
-              <div
-                v-for="reason in props.latestResult.failureReasons"
-                :key="reason"
-                class="reason-item"
-              >
-                {{ reason }}
-              </div>
-            </div>
-            <n-empty v-else description="没有失败原因，本轮为成功。" />
-          </div>
-          <n-empty v-else description="开始一轮模拟后，这里会展示上一轮结果。" />
-
-          <div class="log-panel">
-            <div class="panel-title">实时日志</div>
-            <n-scrollbar class="log-scrollbar">
-              <div v-if="props.logs.length > 0" class="log-list">
-                <div v-for="(line, index) in props.logs" :key="`${index}-${line}`" class="log-item">
-                  {{ line }}
+          <div class="result-stack">
+            <div class="result-reasons">
+              <div class="panel-title">失败原因</div>
+              <div class="panel-body">
+                <div class="panel-scroll">
+                  <template v-if="props.latestResult !== null">
+                    <div v-if="props.latestResult.failureReasons.length > 0" class="reason-list">
+                      <div
+                        v-for="reason in props.latestResult.failureReasons"
+                        :key="reason"
+                        class="reason-item"
+                      >
+                        {{ reason }}
+                      </div>
+                    </div>
+                    <n-empty v-else description="没有失败原因，本轮为成功。" />
+                  </template>
+                  <n-empty v-else description="开始一轮模拟后，这里会展示上一轮结果。" />
                 </div>
               </div>
-              <n-empty v-else description="当前没有日志。" />
-            </n-scrollbar>
+            </div>
+
+            <div class="log-panel">
+              <div class="panel-title">实时日志</div>
+              <div class="panel-body">
+                <div class="panel-scroll">
+                  <div v-if="props.logs.length > 0" class="log-list">
+                    <div
+                      v-for="(line, index) in props.logs"
+                      :key="`${index}-${line}`"
+                      class="log-item"
+                    >
+                      {{ line }}
+                    </div>
+                  </div>
+                  <n-empty v-else description="当前没有日志。" />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </n-card>
@@ -367,24 +379,29 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: 286px minmax(0, 1fr) 320px;
   gap: 14px;
-  height: 100%;
+  flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
 }
 
 .battle-sidebar,
 .result-sidebar,
 .battle-main {
   min-height: 0;
+  overflow: hidden;
+}
+
+.battle-sidebar,
+.result-sidebar {
+  display: flex;
+  flex-direction: column;
 }
 
 .result-card,
 .stage-card {
-  height: 100%;
-}
-
-.result-card {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
   min-height: 0;
 }
 
@@ -395,8 +412,8 @@ onBeforeUnmount(() => {
 .slot-list {
   display: grid;
   grid-template-rows: repeat(8, minmax(0, 1fr));
+  flex: 1 1 auto;
   gap: 8px;
-  height: 100%;
   min-height: 0;
 }
 
@@ -456,11 +473,16 @@ onBeforeUnmount(() => {
 
 .battle-main {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .stage-card :deep(.n-card__content) {
-  height: 100%;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   padding-top: 12px;
   padding-bottom: 12px;
 }
@@ -468,8 +490,8 @@ onBeforeUnmount(() => {
 .stage-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  flex: 1 1 auto;
   gap: 8px;
-  height: 100%;
   min-height: 0;
 }
 
@@ -497,8 +519,22 @@ onBeforeUnmount(() => {
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
   padding-top: 12px;
   padding-bottom: 12px;
+}
+
+.result-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.result-header {
+  min-height: 0;
 }
 
 .result-stack {
@@ -512,9 +548,17 @@ onBeforeUnmount(() => {
 .result-reasons,
 .log-panel {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  overflow: hidden;
+}
+
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .reason-list,
@@ -538,14 +582,35 @@ onBeforeUnmount(() => {
   color: rgba(246, 239, 228, 0.68);
 }
 
-.log-panel {
-  flex: 1 1 auto;
-  min-height: 220px;
+.panel-scroll {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(201, 139, 90, 0.7) rgba(255, 255, 255, 0.05);
 }
 
-.log-scrollbar {
-  flex: 1 1 auto;
-  min-height: 0;
+.panel-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.panel-scroll::-webkit-scrollbar-track {
+  margin: 6px 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.panel-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(240, 208, 139, 0.88) 0%, rgba(201, 139, 90, 0.82) 100%)
+    padding-box;
+  box-shadow: inset 0 0 0 1px rgba(255, 244, 220, 0.12);
+}
+
+.panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(244, 218, 153, 0.96) 0%, rgba(214, 118, 82, 0.9) 100%)
+    padding-box;
 }
 
 .stage-header {
