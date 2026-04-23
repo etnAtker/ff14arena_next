@@ -1,14 +1,8 @@
 import { getBattleDefinition } from '@ff14arena/content';
-import {
-  createSimulation,
-  DEFAULT_PLAYER_MAX_HP,
-  DEFAULT_PLAYER_MOVE_SPEED,
-  FIXED_TICK_MS,
-} from '@ff14arena/core';
+import { createSimulation, DEFAULT_PLAYER_MAX_HP, FIXED_TICK_MS } from '@ff14arena/core';
 import type { BattleDefinition, PartyMemberBlueprint, SimulationInstance } from '@ff14arena/core';
 import type { Server as SocketServer, Socket } from 'socket.io';
 import type {
-  BaseActorSnapshot,
   ClientToServerEvents,
   ContinuousSimulationInputFrame,
   EncounterResult,
@@ -56,30 +50,13 @@ interface RoomRecord {
   battleId: string | null;
   battle: BattleDefinition | null;
   slots: Record<PartySlot, SlotOccupant>;
-  waitingSnapshot: SimulationSnapshot | null;
   simulation: SimulationInstance | null;
   loopHandle: NodeJS.Timeout | null;
   snapshotBroadcastCounter: number;
   latestResult: EncounterResult | null;
   inputSeqByActorId: Map<string, number>;
   syncId: number;
-  simulationStartedAtMs: number | null;
-}
-
-function normalizeDirection(direction: { x: number; y: number }): { x: number; y: number } {
-  const vectorLength = Math.hypot(direction.x, direction.y);
-
-  if (vectorLength === 0) {
-    return {
-      x: 0,
-      y: 0,
-    };
-  }
-
-  return {
-    x: direction.x / vectorLength,
-    y: direction.y / vectorLength,
-  };
+  simulationTimeOriginMs: number | null;
 }
 
 function createBotOccupant(roomId: string, slot: PartySlot): BotSlotOccupant {
@@ -134,18 +111,17 @@ export class RoomManager {
       battleId: battle?.id ?? null,
       battle,
       slots: createFilledBotSlots(roomId),
-      waitingSnapshot: null,
       simulation: null,
       loopHandle: null,
       snapshotBroadcastCounter: 0,
       latestResult: null,
       inputSeqByActorId: new Map(),
       syncId: 1,
-      simulationStartedAtMs: null,
+      simulationTimeOriginMs: null,
     };
 
     this.rooms.set(roomId, room);
-    this.rebuildWaitingSnapshot(room, {
+    this.rebuildWaitingSimulation(room, {
       resetAllActors: true,
       keepTimeMs: false,
       sourceSnapshot: null,
@@ -168,8 +144,7 @@ export class RoomManager {
   }
 
   toRoomSlots(room: RoomRecord): RoomSlotState[] {
-    const snapshot =
-      room.phase === 'running' ? room.simulation?.getSnapshot() : room.waitingSnapshot;
+    const snapshot = room.simulation?.getSnapshot();
     const actorById = new Map(snapshot?.actors.map((actor) => [actor.id, actor]) ?? []);
 
     return PARTY_SLOT_ORDER.map((slot) => {
@@ -206,6 +181,97 @@ export class RoomManager {
     });
   }
 
+  private buildPartyBlueprint(room: RoomRecord): PartyMemberBlueprint[] {
+    return PARTY_SLOT_ORDER.map((slot) => {
+      const occupant = room.slots[slot];
+
+      if (occupant.type === 'bot') {
+        return {
+          slot,
+          name: occupant.name,
+          kind: 'bot',
+          actorId: occupant.actorId,
+          online: true,
+          ready: true,
+        };
+      }
+
+      return {
+        slot,
+        name: occupant.name,
+        kind: 'player',
+        actorId: occupant.actorId,
+        ownerUserId: occupant.userId,
+        online: occupant.online,
+        ready: occupant.ready,
+      };
+    });
+  }
+
+  private updateSimulationTimeOrigin(room: RoomRecord): void {
+    const snapshot = room.simulation?.getSnapshot();
+
+    if (snapshot === undefined) {
+      room.simulationTimeOriginMs = null;
+      return;
+    }
+
+    room.simulationTimeOriginMs = Date.now() - snapshot.timeMs;
+  }
+
+  private toSimulationTimeMs(
+    room: RoomRecord,
+    issuedAtServerTimeEstimate?: number,
+  ): number | undefined {
+    if (issuedAtServerTimeEstimate === undefined || room.simulationTimeOriginMs === null) {
+      return undefined;
+    }
+
+    return Math.max(0, issuedAtServerTimeEstimate - room.simulationTimeOriginMs);
+  }
+
+  private rebuildWaitingSimulation(
+    room: RoomRecord,
+    options?: {
+      sourceSnapshot?: SimulationSnapshot | null;
+      keepTimeMs?: boolean;
+      resetAllActors?: boolean;
+      resetStateActorIds?: Set<string>;
+      resetPositionActorIds?: Set<string>;
+    },
+  ): void {
+    if (room.battle === null || room.battleId === null) {
+      room.simulation = null;
+      room.simulationTimeOriginMs = null;
+      room.phase = 'waiting';
+      return;
+    }
+
+    const simulation = room.simulation ?? createSimulation({ tickRate: 20 });
+    const sourceSnapshot = options?.sourceSnapshot ?? room.simulation?.getSnapshot() ?? null;
+
+    simulation.stop();
+    simulation.loadBattle({
+      battle: room.battle,
+      roomId: room.roomId,
+      party: this.buildPartyBlueprint(room),
+      sourceSnapshot,
+      latestResult: room.latestResult,
+      ...(options?.keepTimeMs === undefined ? {} : { keepTimeMs: options.keepTimeMs }),
+      ...(options?.resetAllActors === undefined ? {} : { resetAllActors: options.resetAllActors }),
+      ...(options?.resetStateActorIds === undefined
+        ? {}
+        : { resetStateActorIds: options.resetStateActorIds }),
+      ...(options?.resetPositionActorIds === undefined
+        ? {}
+        : { resetPositionActorIds: options.resetPositionActorIds }),
+    });
+
+    room.simulation = simulation;
+    room.phase = 'waiting';
+    this.updateSimulationTimeOrigin(room);
+  }
+
   joinRoom(
     socket: TypedSocket,
     payload: { roomId: string; userId: string; userName?: string; slot?: PartySlot },
@@ -237,8 +303,8 @@ export class RoomManager {
       socket.join(room.roomId);
 
       if (room.phase === 'waiting') {
-        this.rebuildWaitingSnapshot(room, {
-          sourceSnapshot: room.waitingSnapshot,
+        this.rebuildWaitingSimulation(room, {
+          sourceSnapshot: room.simulation?.getSnapshot() ?? null,
           keepTimeMs: true,
         });
         this.broadcastWaitingState(room, 'rejoin');
@@ -285,8 +351,8 @@ export class RoomManager {
 
     this.userRooms.set(payload.userId, room.roomId);
     socket.join(room.roomId);
-    this.rebuildWaitingSnapshot(room, {
-      sourceSnapshot: room.waitingSnapshot,
+    this.rebuildWaitingSimulation(room, {
+      sourceSnapshot: room.simulation?.getSnapshot() ?? null,
       keepTimeMs: true,
     });
     this.broadcastWaitingState(room, 'join');
@@ -350,8 +416,8 @@ export class RoomManager {
       occupant.ready = ready;
     }
 
-    this.rebuildWaitingSnapshot(room, {
-      sourceSnapshot: room.waitingSnapshot,
+    this.rebuildWaitingSimulation(room, {
+      sourceSnapshot: room.simulation?.getSnapshot() ?? null,
       keepTimeMs: true,
     });
     this.broadcastWaitingState(room, 'waiting-state');
@@ -389,7 +455,7 @@ export class RoomManager {
     room.latestResult = null;
     room.syncId += 1;
     this.resetReadyStates(room);
-    this.rebuildWaitingSnapshot(room, {
+    this.rebuildWaitingSimulation(room, {
       resetAllActors: true,
       keepTimeMs: false,
       sourceSnapshot: null,
@@ -427,8 +493,8 @@ export class RoomManager {
     room.slots[currentSlot] = targetOccupant;
     room.slots[payload.targetSlot] = currentOccupant;
     this.resetReadyStates(room);
-    this.rebuildWaitingSnapshot(room, {
-      sourceSnapshot: room.waitingSnapshot,
+    this.rebuildWaitingSimulation(room, {
+      sourceSnapshot: room.simulation?.getSnapshot() ?? null,
       keepTimeMs: true,
       resetPositionActorIds: new Set([currentOccupant.actorId, targetOccupant.actorId]),
     });
@@ -495,17 +561,20 @@ export class RoomManager {
       return;
     }
 
-    if (room.phase === 'waiting') {
-      this.applyWaitingInput(room, input);
-      return;
-    }
-
     if (room.simulation === null) {
-      this.emitError(socket, 'room_not_running', '当前房间未处于模拟中');
+      this.emitError(socket, 'room_not_running', '当前房间当前不可处理输入');
       return;
     }
 
     room.simulation.dispatchInput(input);
+
+    if (room.phase === 'waiting') {
+      this.emitSnapshot(room, {
+        acknowledgedInputSeq: room.simulation.getAcknowledgedInputSeq(),
+        reason: 'waiting-state',
+      });
+      this.emitRoomSlots(room);
+    }
   }
 
   enqueueContinuousInput(socket: TypedSocket, inputFrame: ContinuousSimulationInputFrame): void {
@@ -523,29 +592,22 @@ export class RoomManager {
       return;
     }
 
-    if (room.phase === 'waiting') {
-      this.applyWaitingContinuousInput(room, inputFrame);
+    if (room.simulation === null) {
+      this.emitError(socket, 'room_not_running', '当前房间当前不可处理输入');
       return;
     }
 
-    if (room.simulation === null) {
-      this.emitError(socket, 'room_not_running', '当前房间未处于模拟中');
-      return;
-    }
+    const issuedAtServerTimeEstimate = this.toSimulationTimeMs(
+      room,
+      inputFrame.issuedAtServerTimeEstimate,
+    );
 
     const moveInput: SimulationInput = {
       roomId: inputFrame.roomId,
       actorId: inputFrame.actorId,
       inputSeq: inputFrame.inputSeq,
       issuedAt: inputFrame.issuedAt,
-      ...(inputFrame.issuedAtServerTimeEstimate === undefined || room.simulationStartedAtMs === null
-        ? {}
-        : {
-            issuedAtServerTimeEstimate: Math.max(
-              0,
-              inputFrame.issuedAtServerTimeEstimate - room.simulationStartedAtMs,
-            ),
-          }),
+      ...(issuedAtServerTimeEstimate === undefined ? {} : { issuedAtServerTimeEstimate }),
       type: 'move',
       payload: {
         direction: inputFrame.payload.moveDirection,
@@ -555,6 +617,13 @@ export class RoomManager {
     room.simulation.dispatchInput(moveInput);
 
     if (inputFrame.payload.facing === undefined) {
+      if (room.phase === 'waiting') {
+        this.emitSnapshot(room, {
+          acknowledgedInputSeq: room.simulation.getAcknowledgedInputSeq(),
+          reason: 'waiting-state',
+        });
+        this.emitRoomSlots(room);
+      }
       return;
     }
 
@@ -563,14 +632,7 @@ export class RoomManager {
       actorId: inputFrame.actorId,
       inputSeq: inputFrame.inputSeq,
       issuedAt: inputFrame.issuedAt,
-      ...(inputFrame.issuedAtServerTimeEstimate === undefined || room.simulationStartedAtMs === null
-        ? {}
-        : {
-            issuedAtServerTimeEstimate: Math.max(
-              0,
-              inputFrame.issuedAtServerTimeEstimate - room.simulationStartedAtMs,
-            ),
-          }),
+      ...(issuedAtServerTimeEstimate === undefined ? {} : { issuedAtServerTimeEstimate }),
       type: 'face',
       payload: {
         facing: inputFrame.payload.facing,
@@ -578,6 +640,14 @@ export class RoomManager {
     };
 
     room.simulation.dispatchInput(faceInput);
+
+    if (room.phase === 'waiting') {
+      this.emitSnapshot(room, {
+        acknowledgedInputSeq: room.simulation.getAcknowledgedInputSeq(),
+        reason: 'waiting-state',
+      });
+      this.emitRoomSlots(room);
+    }
   }
 
   requestResync(socket: TypedSocket, payload: SimResyncRequestPayload): void {
@@ -599,8 +669,7 @@ export class RoomManager {
     this.emitRoomSlots(room, socket);
     this.emitSnapshot(room, {
       target: socket,
-      acknowledgedInputSeq:
-        room.phase === 'running' ? (room.simulation?.getAcknowledgedInputSeq() ?? 0) : 0,
+      acknowledgedInputSeq: room.simulation?.getAcknowledgedInputSeq() ?? 0,
       reason: 'resync',
     });
   }
@@ -624,8 +693,8 @@ export class RoomManager {
         occupant.departed = false;
       }
 
-      this.rebuildWaitingSnapshot(room, {
-        sourceSnapshot: room.waitingSnapshot,
+      this.rebuildWaitingSimulation(room, {
+        sourceSnapshot: room.simulation?.getSnapshot() ?? null,
         keepTimeMs: true,
       });
       this.broadcastWaitingState(room, 'waiting-state');
@@ -655,46 +724,22 @@ export class RoomManager {
     room.snapshotBroadcastCounter = 0;
     room.inputSeqByActorId.clear();
     room.syncId += 1;
-    room.waitingSnapshot = null;
+    const simulation = room.simulation ?? createSimulation({ tickRate: 20 });
 
-    const simulation = createSimulation({
-      tickRate: 20,
-    });
-    const partyBlueprint: PartyMemberBlueprint[] = PARTY_SLOT_ORDER.map((slot) => {
-      const occupant = room.slots[slot];
-
-      if (occupant.type === 'bot') {
-        return {
-          slot,
-          name: occupant.name,
-          kind: 'bot',
-          actorId: occupant.actorId,
-          online: true,
-          ready: true,
-        };
-      }
-
-      return {
-        slot,
-        name: occupant.name,
-        kind: 'player',
-        actorId: occupant.actorId,
-        ownerUserId: occupant.userId,
-        online: occupant.online,
-        ready: occupant.ready,
-      };
-    });
-
+    simulation.stop();
     simulation.loadBattle({
       battle: room.battle!,
       roomId: room.roomId,
-      party: partyBlueprint,
+      party: this.buildPartyBlueprint(room),
+      resetAllActors: true,
+      keepTimeMs: false,
+      latestResult: null,
     });
     simulation.start();
 
     room.simulation = simulation;
     room.phase = 'running';
-    room.simulationStartedAtMs = Date.now();
+    this.updateSimulationTimeOrigin(room);
 
     const startSnapshot = simulation.getSnapshot();
 
@@ -817,7 +862,6 @@ export class RoomManager {
 
     room.simulation = null;
     room.phase = 'waiting';
-    room.simulationStartedAtMs = null;
     room.latestResult = endSnapshot.latestResult;
     room.syncId += 1;
     const resetActorIds = new Set<string>();
@@ -832,7 +876,7 @@ export class RoomManager {
     }
 
     this.resetReadyStates(room);
-    this.rebuildWaitingSnapshot(room, {
+    this.rebuildWaitingSimulation(room, {
       sourceSnapshot: endSnapshot,
       keepTimeMs: true,
       resetStateActorIds: resetActorIds,
@@ -843,262 +887,6 @@ export class RoomManager {
       latestResult: room.latestResult!,
     });
     this.broadcastWaitingState(room, 'battle-end');
-  }
-
-  private rebuildWaitingSnapshot(
-    room: RoomRecord,
-    options?: {
-      sourceSnapshot?: SimulationSnapshot | null;
-      keepTimeMs?: boolean;
-      resetAllActors?: boolean;
-      resetStateActorIds?: Set<string>;
-      resetPositionActorIds?: Set<string>;
-    },
-  ): void {
-    if (room.battle === null || room.battleId === null) {
-      room.waitingSnapshot = null;
-      return;
-    }
-
-    const sourceSnapshot = options?.sourceSnapshot ?? room.waitingSnapshot;
-    const previousActors = new Map(sourceSnapshot?.actors.map((actor) => [actor.id, actor]) ?? []);
-    const resetStateActorIds = options?.resetStateActorIds ?? new Set<string>();
-    const resetPositionActorIds = options?.resetPositionActorIds ?? new Set<string>();
-
-    const actors: BaseActorSnapshot[] = PARTY_SLOT_ORDER.map((slot) => {
-      const occupant = room.slots[slot];
-      const placement = room.battle!.initialPartyPositions[slot];
-      const previousActor = previousActors.get(occupant.actorId);
-      const shouldResetState =
-        options?.resetAllActors === true || resetStateActorIds.has(occupant.actorId);
-      const actorBase: BaseActorSnapshot =
-        previousActor === undefined || shouldResetState
-          ? {
-              id: occupant.actorId,
-              kind: occupant.type === 'bot' ? 'bot' : 'player',
-              slot,
-              name: occupant.name,
-              position: {
-                x: placement.position.x,
-                y: placement.position.y,
-              },
-              facing: placement.facing,
-              moveState: {
-                direction: { x: 0, y: 0 },
-                moving: false,
-              },
-              maxHp: DEFAULT_PLAYER_MAX_HP,
-              currentHp: DEFAULT_PLAYER_MAX_HP,
-              alive: true,
-              statuses: [],
-              knockbackImmune: false,
-              knockbackImmuneCooldown: {
-                readyAt: 0,
-              },
-              deathReason: null,
-              lastDamageSource: null,
-            }
-          : structuredClone(previousActor);
-
-      const actor: BaseActorSnapshot = {
-        ...actorBase,
-        id: occupant.actorId,
-        kind: occupant.type === 'bot' ? 'bot' : 'player',
-        slot,
-        name: occupant.name,
-        online: occupant.type === 'bot' ? true : occupant.online,
-        ready: occupant.type === 'bot' ? true : occupant.ready,
-      };
-
-      if (
-        resetPositionActorIds.has(occupant.actorId) ||
-        previousActor === undefined ||
-        shouldResetState
-      ) {
-        actor.position = {
-          x: placement.position.x,
-          y: placement.position.y,
-        };
-        actor.facing = placement.facing;
-        actor.moveState = {
-          direction: { x: 0, y: 0 },
-          moving: false,
-        };
-      }
-
-      if (occupant.type === 'bot' && shouldResetState) {
-        actor.currentHp = DEFAULT_PLAYER_MAX_HP;
-        actor.maxHp = DEFAULT_PLAYER_MAX_HP;
-        actor.alive = true;
-        actor.statuses = [];
-        actor.knockbackImmune = false;
-        actor.knockbackImmuneCooldown = {
-          readyAt: 0,
-        };
-        actor.deathReason = null;
-        actor.lastDamageSource = null;
-      }
-
-      return actor;
-    });
-
-    room.waitingSnapshot = {
-      battleId: room.battle.id,
-      battleName: room.battle.name,
-      roomId: room.roomId,
-      phase: 'waiting',
-      tick:
-        options?.resetAllActors === true
-          ? 0
-          : (sourceSnapshot?.tick ?? room.waitingSnapshot?.tick ?? 0) + 1,
-      timeMs: options?.keepTimeMs ? (sourceSnapshot?.timeMs ?? 0) : 0,
-      arenaRadius: room.battle.arenaRadius,
-      bossTargetRingRadius: room.battle.bossTargetRingRadius,
-      actors,
-      boss: {
-        id: 'boss',
-        kind: 'boss',
-        slot: null,
-        name: room.battle.bossName,
-        position: { x: 0, y: 0 },
-        facing: Math.PI / 2,
-        moveState: {
-          direction: { x: 0, y: 0 },
-          moving: false,
-        },
-        maxHp: 1,
-        currentHp: 1,
-        alive: true,
-        statuses: [],
-        knockbackImmune: true,
-        knockbackImmuneCooldown: {
-          readyAt: Number.MAX_SAFE_INTEGER,
-        },
-        deathReason: null,
-        lastDamageSource: null,
-        castBar: null,
-        targetRingRadius: room.battle.bossTargetRingRadius,
-      },
-      mechanics: [],
-      hud: {
-        bossCastBar: null,
-      },
-      botContext: null,
-      failureMarked: room.latestResult?.outcome === 'failure',
-      failureReasons: room.latestResult?.failureReasons ?? [],
-      latestResult: room.latestResult,
-    };
-  }
-
-  private applyWaitingInput(room: RoomRecord, input: SimulationInput): void {
-    if (room.waitingSnapshot === null) {
-      return;
-    }
-
-    const actor = room.waitingSnapshot.actors.find((candidate) => candidate.id === input.actorId);
-
-    if (actor === undefined || !actor.alive) {
-      return;
-    }
-
-    room.waitingSnapshot.tick += 1;
-
-    switch (input.type) {
-      case 'move': {
-        const direction = normalizeDirection(input.payload.direction);
-        actor.moveState = {
-          direction,
-          moving: direction.x !== 0 || direction.y !== 0,
-        };
-
-        if (!actor.moveState.moving) {
-          break;
-        }
-
-        const delta = DEFAULT_PLAYER_MOVE_SPEED * (FIXED_TICK_MS / 1000);
-        const nextPosition = {
-          x: actor.position.x + direction.x * delta,
-          y: actor.position.y + direction.y * delta,
-        };
-        const length = Math.hypot(nextPosition.x, nextPosition.y);
-
-        if (length > room.waitingSnapshot.arenaRadius) {
-          const clamped = normalizeDirection(nextPosition);
-          actor.position = {
-            x: clamped.x * room.waitingSnapshot.arenaRadius,
-            y: clamped.y * room.waitingSnapshot.arenaRadius,
-          };
-        } else {
-          actor.position = nextPosition;
-        }
-        break;
-      }
-      case 'face':
-        actor.facing = input.payload.facing;
-        break;
-      case 'use-knockback-immune':
-        break;
-    }
-
-    this.emitSnapshot(room, {
-      acknowledgedInputSeq: input.inputSeq,
-      reason: 'waiting-state',
-    });
-    this.emitRoomSlots(room);
-  }
-
-  private applyWaitingContinuousInput(
-    room: RoomRecord,
-    inputFrame: ContinuousSimulationInputFrame,
-  ): void {
-    if (room.waitingSnapshot === null) {
-      return;
-    }
-
-    const actor = room.waitingSnapshot.actors.find(
-      (candidate) => candidate.id === inputFrame.actorId,
-    );
-
-    if (actor === undefined || !actor.alive) {
-      return;
-    }
-
-    room.waitingSnapshot.tick += 1;
-
-    const direction = normalizeDirection(inputFrame.payload.moveDirection);
-    actor.moveState = {
-      direction,
-      moving: direction.x !== 0 || direction.y !== 0,
-    };
-
-    if (actor.moveState.moving) {
-      const delta = DEFAULT_PLAYER_MOVE_SPEED * (FIXED_TICK_MS / 1000);
-      const nextPosition = {
-        x: actor.position.x + direction.x * delta,
-        y: actor.position.y + direction.y * delta,
-      };
-      const length = Math.hypot(nextPosition.x, nextPosition.y);
-
-      if (length > room.waitingSnapshot.arenaRadius) {
-        const clamped = normalizeDirection(nextPosition);
-        actor.position = {
-          x: clamped.x * room.waitingSnapshot.arenaRadius,
-          y: clamped.y * room.waitingSnapshot.arenaRadius,
-        };
-      } else {
-        actor.position = nextPosition;
-      }
-    }
-
-    if (inputFrame.payload.facing !== undefined) {
-      actor.facing = inputFrame.payload.facing;
-    }
-
-    this.emitSnapshot(room, {
-      acknowledgedInputSeq: inputFrame.inputSeq,
-      reason: 'waiting-state',
-    });
-    this.emitRoomSlots(room);
   }
 
   private broadcastWaitingState(
@@ -1151,8 +939,7 @@ export class RoomManager {
       target?: TypedSocket;
     },
   ): void {
-    const snapshot =
-      room.phase === 'running' ? room.simulation?.getSnapshot() : room.waitingSnapshot;
+    const snapshot = room.simulation?.getSnapshot();
 
     if (snapshot === null || snapshot === undefined) {
       return;

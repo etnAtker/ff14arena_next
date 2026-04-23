@@ -104,14 +104,23 @@ function sameDirection(left: Vector2, right: Vector2): boolean {
   );
 }
 
-function createMovementRuntime(position: Vector2): ActorMovementRuntime {
+function createMovementRuntime(
+  position: Vector2,
+  options?: {
+    timeMs?: number;
+    direction?: Vector2;
+  },
+): ActorMovementRuntime {
+  const timeMs = options?.timeMs ?? 0;
+  const direction = cloneVector(options?.direction ?? { x: 0, y: 0 });
+
   return {
-    anchorTimeMs: 0,
+    anchorTimeMs: timeMs,
     anchorPosition: cloneVector(position),
     segments: [
       {
-        startTimeMs: 0,
-        direction: { x: 0, y: 0 },
+        startTimeMs: timeMs,
+        direction,
       },
     ],
     lastMoveInputSeq: 0,
@@ -1060,46 +1069,108 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     get running() {
       return running;
     },
-    loadBattle({ battle, roomId, party }) {
+    loadBattle({
+      battle,
+      roomId,
+      party,
+      sourceSnapshot = null,
+      keepTimeMs = false,
+      resetAllActors = false,
+      resetStateActorIds,
+      resetPositionActorIds,
+      latestResult = null,
+    }) {
       const actors = new Map<string, BaseActorSnapshot>();
       const movementRuntime = new Map<string, ActorMovementRuntime>();
+      const previousActors = new Map(
+        sourceSnapshot?.actors.map((actor) => [actor.id, actor]) ?? [],
+      );
+      const nextResetStateActorIds = resetStateActorIds ?? new Set<string>();
+      const nextResetPositionActorIds = resetPositionActorIds ?? new Set<string>();
+      const initialTimeMs = keepTimeMs ? (sourceSnapshot?.timeMs ?? 0) : 0;
+      const initialTick = resetAllActors ? 0 : (sourceSnapshot?.tick ?? 0);
 
       for (const member of party) {
         const placement = battle.initialPartyPositions[member.slot];
-        const actor = {
+        const previousActor = previousActors.get(member.actorId);
+        const shouldResetState = resetAllActors || nextResetStateActorIds.has(member.actorId);
+        const actorBase: BaseActorSnapshot =
+          previousActor === undefined || shouldResetState
+            ? {
+                id: member.actorId,
+                kind: member.kind,
+                slot: member.slot,
+                name: member.name,
+                position: cloneVector(placement.position),
+                facing: placement.facing,
+                moveState: {
+                  direction: { x: 0, y: 0 },
+                  moving: false,
+                },
+                maxHp: DEFAULT_PLAYER_MAX_HP,
+                currentHp: DEFAULT_PLAYER_MAX_HP,
+                alive: true,
+                statuses: [],
+                knockbackImmune: false,
+                knockbackImmuneCooldown: {
+                  readyAt: 0,
+                },
+                deathReason: null,
+                lastDamageSource: null,
+              }
+            : structuredClone(previousActor);
+        const actor: BaseActorSnapshot = {
+          ...actorBase,
           id: member.actorId,
           kind: member.kind,
           slot: member.slot,
           name: member.name,
-          position: cloneVector(placement.position),
-          facing: placement.facing,
-          moveState: {
-            direction: { x: 0, y: 0 },
-            moving: false,
-          },
-          maxHp: DEFAULT_PLAYER_MAX_HP,
-          currentHp: DEFAULT_PLAYER_MAX_HP,
-          alive: true,
-          statuses: [],
-          knockbackImmune: false,
-          knockbackImmuneCooldown: {
-            readyAt: 0,
-          },
-          deathReason: null,
-          lastDamageSource: null,
           online: member.online ?? member.kind === 'bot',
           ready: member.ready ?? member.kind === 'bot',
-        } satisfies BaseActorSnapshot;
+        };
+
+        if (
+          previousActor === undefined ||
+          shouldResetState ||
+          nextResetPositionActorIds.has(member.actorId)
+        ) {
+          actor.position = cloneVector(placement.position);
+          actor.facing = placement.facing;
+          actor.moveState = {
+            direction: { x: 0, y: 0 },
+            moving: false,
+          };
+        }
+
+        if (member.kind === 'bot' && shouldResetState) {
+          actor.currentHp = DEFAULT_PLAYER_MAX_HP;
+          actor.maxHp = DEFAULT_PLAYER_MAX_HP;
+          actor.alive = true;
+          actor.statuses = [];
+          actor.knockbackImmune = false;
+          actor.knockbackImmuneCooldown = {
+            readyAt: 0,
+          };
+          actor.deathReason = null;
+          actor.lastDamageSource = null;
+        }
+
         actors.set(member.actorId, actor);
-        movementRuntime.set(member.actorId, createMovementRuntime(actor.position));
+        movementRuntime.set(
+          member.actorId,
+          createMovementRuntime(actor.position, {
+            timeMs: initialTimeMs,
+            direction: actor.moveState.direction,
+          }),
+        );
       }
 
       state = {
         battle,
         roomId,
         phase: 'waiting',
-        tick: 0,
-        timeMs: 0,
+        tick: initialTick,
+        timeMs: initialTimeMs,
         arenaRadius: battle.arenaRadius,
         bossTargetRingRadius: battle.bossTargetRingRadius,
         actors,
@@ -1131,12 +1202,15 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         scheduler: [],
         schedulerOrder: 0,
         scriptCursorTimeMs: 0,
-        scriptState: new Map(),
+        scriptState:
+          sourceSnapshot?.botContext === null || sourceSnapshot?.botContext === undefined
+            ? new Map()
+            : new Map([['bot:context', structuredClone(sourceSnapshot.botContext)]]),
         inputQueue: [],
         events: [],
-        failureMarked: false,
-        failureReasons: [],
-        latestResult: null,
+        failureMarked: latestResult?.outcome === 'failure',
+        failureReasons: latestResult?.failureReasons ?? [],
+        latestResult,
         acknowledgedInputSeq: 0,
         movementRuntime,
       };
@@ -1187,8 +1261,12 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       const currentState = assertState(state);
 
       if (currentState.phase === 'waiting') {
+        if (input.type === 'move') {
+          currentState.tick += 1;
+          currentState.timeMs += FIXED_TICK_MS;
+        }
+
         applyInput(input);
-        advanceMovement(FIXED_TICK_MS);
         refreshStatuses();
         return;
       }

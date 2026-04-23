@@ -27,9 +27,9 @@
 
 1. Socket 收到输入
 2. 服务端校验房间、玩家、槽位和权限
-3. 对连续移动输入，把 `issuedAtServerTimeEstimate` 从墙钟时间换算到战斗时间轴
-4. 服务端将输入压入房间输入队列
-5. 下一个 Tick 开始时批量消费输入
+3. 对连续移动输入，把 `issuedAtServerTimeEstimate` 从墙钟时间换算到当前权威模拟时间轴
+4. 服务端统一将输入交给同一个 `SimulationInstance`
+5. `waiting` 阶段直接在该实例上立即应用输入；`running` 阶段在下一个 Tick 批量消费输入
 6. 输入转换为具体动作意图
 7. `core` 结合最近移动历史做受控补偿并推进权威状态
 8. `core` 产出状态变化与事件

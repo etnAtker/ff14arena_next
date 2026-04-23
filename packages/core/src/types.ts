@@ -2,6 +2,7 @@ import type {
   BaseActorSnapshot,
   BossSnapshot,
   DamageType,
+  EncounterResult,
   MechanicSnapshot,
   PartySlot,
   SimulationEvent,
@@ -160,6 +161,12 @@ export interface SimulationInstance {
     battle: BattleDefinition;
     roomId: string;
     party: PartyMemberBlueprint[];
+    sourceSnapshot?: SimulationSnapshot | null;
+    keepTimeMs?: boolean;
+    resetAllActors?: boolean;
+    resetStateActorIds?: Set<string>;
+    resetPositionActorIds?: Set<string>;
+    latestResult?: EncounterResult | null;
   }): void;
   start(): void;
   stop(): void;

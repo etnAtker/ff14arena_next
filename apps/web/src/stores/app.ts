@@ -106,6 +106,13 @@ interface PendingContinuousInput {
   facing?: number;
 }
 
+function cloneVector(vector: Vector2): Vector2 {
+  return {
+    x: vector.x,
+    y: vector.y,
+  };
+}
+
 export const useAppStore = defineStore('app', () => {
   const profile = ref<LocalProfile>(loadProfile());
   const socket = shallowRef<AppSocket | null>(null);
@@ -438,6 +445,49 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  function reconcileControlledActorPrediction(): void {
+    if (authoritativeSnapshot.value === null) {
+      return;
+    }
+
+    const actor = getCurrentPlayerAuthoritativeActor();
+
+    if (actor === null) {
+      return;
+    }
+
+    const pendingInputs = [...pendingContinuousInputs.entries()]
+      .filter(([, input]) => input.actorId === actor.id)
+      .sort(([leftSeq], [rightSeq]) => leftSeq - rightSeq)
+      .map(([, input]) => input);
+
+    if (pendingInputs.length === 0) {
+      return;
+    }
+
+    let position = cloneVector(actor.position);
+    let facing = actor.facing;
+    let direction = cloneVector(actor.moveState.direction);
+    let moving = actor.moveState.moving;
+
+    for (const input of pendingInputs) {
+      direction = normalizeDirection(input.moveDirection);
+      moving = Math.hypot(direction.x, direction.y) > 0;
+      position = movePosition(position, direction, CONTINUOUS_INPUT_INTERVAL_MS);
+
+      if (input.facing !== undefined) {
+        facing = input.facing;
+      }
+    }
+
+    actor.position = position;
+    actor.facing = facing;
+    actor.moveState = {
+      direction,
+      moving,
+    };
+  }
+
   function acceptSyncId(syncId: number): boolean {
     if (syncId < currentSyncId.value) {
       return false;
@@ -477,6 +527,7 @@ export const useAppStore = defineStore('app', () => {
     }
 
     authoritativeSnapshot.value = options.snapshot;
+    reconcileControlledActorPrediction();
     reconcileFacingPreview(options.snapshot);
   }
 
@@ -678,6 +729,7 @@ export const useAppStore = defineStore('app', () => {
         const latestEvent = acceptedEvents[acceptedEvents.length - 1];
         authoritativeSnapshot.value.tick = latestEvent.tick;
         authoritativeSnapshot.value.timeMs = latestEvent.timeMs;
+        reconcileControlledActorPrediction();
         reconcileFacingPreview(authoritativeSnapshot.value);
       });
 
@@ -821,7 +873,7 @@ export const useAppStore = defineStore('app', () => {
     moveDirection: Vector2;
     facing?: number;
   }): void {
-    if (authoritativeSnapshot.value?.phase !== 'running') {
+    if (authoritativeSnapshot.value === null) {
       return;
     }
 

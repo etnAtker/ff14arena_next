@@ -93,6 +93,14 @@ function sleep(ms) {
   });
 }
 
+function findActor(snapshot, actorId) {
+  return snapshot.actors.find((actor) => actor.id === actorId);
+}
+
+function displacementBetween(from, to) {
+  return Math.hypot(to.x - from.x, to.y - from.y);
+}
+
 test('房间全流程：创建、立即加入、等待态快照、开始、结算回到待开始', async () => {
   const server = await startServer({
     host: '127.0.0.1',
@@ -531,6 +539,148 @@ test('高延迟移动输入会按 issuedAtServerTimeEstimate 补偿权威位置'
     assert.ok(
       movedDistance >= 0.55,
       `补偿后首次权威位移应至少接近 0.6m，实际为 ${movedDistance.toFixed(3)}m`,
+    );
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
+test('准备态与战斗态连续移动使用同一套位移规则', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '统一移动链路测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'opening_two_rounds',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(
+      owner,
+      (nextRoom) => nextRoom.roomId === roomId && nextRoom.phase === 'waiting',
+    );
+    const waitingSnapshot = await waitingSnapshotPromise;
+    const ownerSlot = waitingSnapshot.snapshot.actors.find((actor) => actor.slot === 'MT');
+    assert.ok(ownerSlot, '应找到房主控制的 MT 角色');
+
+    const waitingStartPosition = {
+      x: ownerSlot.position.x,
+      y: ownerSlot.position.y,
+    };
+
+    for (let seq = 1; seq <= 3; seq += 1) {
+      const snapshotPromise = waitForPayload(
+        owner,
+        'sim:snapshot',
+        (payload) => payload.roomId === roomId && payload.acknowledgedInputSeq >= seq,
+        4000,
+      );
+
+      owner.emit('sim:input-frame', {
+        roomId,
+        actorId: ownerSlot.id,
+        inputSeq: seq,
+        issuedAt: Date.now(),
+        issuedAtServerTimeEstimate: Date.now(),
+        payload: {
+          moveDirection: { x: 0, y: 1 },
+        },
+      });
+
+      await snapshotPromise;
+      await sleep(60);
+    }
+
+    const waitingResyncPromise = waitForPayload(
+      owner,
+      'sim:snapshot',
+      (payload) => payload.roomId === roomId && payload.reason === 'resync',
+      4000,
+    );
+    owner.emit('sim:request-resync', {
+      roomId,
+      reason: 'waiting-parity-check',
+    });
+    const waitingResyncSnapshot = await waitingResyncPromise;
+    const waitingEndActor = findActor(waitingResyncSnapshot.snapshot, ownerSlot.id);
+    assert.ok(waitingEndActor, '等待态重同步时应找到房主角色');
+    const waitingDistance = displacementBetween(waitingStartPosition, waitingEndActor.position);
+
+    const startPromise = waitForEvent(owner, 'sim:start');
+    owner.emit('room:start', {
+      roomId,
+    });
+    const startPayload = await startPromise;
+    const runningStartActor = findActor(startPayload.snapshot, ownerSlot.id);
+    assert.ok(runningStartActor, '进入战斗后应找到房主角色');
+    const runningStartPosition = {
+      x: runningStartActor.position.x,
+      y: runningStartActor.position.y,
+    };
+
+    for (let seq = 1; seq <= 3; seq += 1) {
+      owner.emit('sim:input-frame', {
+        roomId,
+        actorId: ownerSlot.id,
+        inputSeq: seq,
+        issuedAt: Date.now(),
+        issuedAtServerTimeEstimate: Date.now(),
+        payload: {
+          moveDirection: { x: 0, y: 1 },
+        },
+      });
+
+      await sleep(60);
+    }
+
+    const runningResyncPromise = waitForPayload(
+      owner,
+      'sim:snapshot',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.reason === 'resync' &&
+        payload.snapshot.phase === 'running' &&
+        payload.acknowledgedInputSeq >= 3,
+      6000,
+    );
+    owner.emit('sim:request-resync', {
+      roomId,
+      reason: 'running-parity-check',
+    });
+    const runningResyncSnapshot = await runningResyncPromise;
+    const runningEndActor = findActor(runningResyncSnapshot.snapshot, ownerSlot.id);
+    assert.ok(runningEndActor, '战斗态重同步时应找到房主角色');
+    const runningDistance = displacementBetween(runningStartPosition, runningEndActor.position);
+
+    assert.ok(
+      Math.abs(waitingDistance - runningDistance) <= 0.05,
+      `准备态位移 ${waitingDistance.toFixed(3)}m 与战斗态位移 ${runningDistance.toFixed(
+        3,
+      )}m 应基本一致`,
     );
   } finally {
     owner.close();
