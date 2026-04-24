@@ -34,6 +34,7 @@
 13. [房间生命周期](./05-network/room-lifecycle.md)
 14. [MVP 范围](./08-mvp/mvp-scope.md)
 15. [首个战斗定义](./09-battle-baseline/first-battle.md)
+16. [欧米茄绝境战 P1：循环程序](./10-content/top-p1-program-loop.md)
 
 文档术语：
 

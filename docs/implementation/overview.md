@@ -17,10 +17,12 @@
 - 运行中断线后按原槽位重连
 - 客户端主动请求重同步
 
-当前演示战斗为：
+当前已登记战斗为：
 
 - `opening_two_rounds`
 - 名称：`双轮组合练习`
+- `top_p1_program_loop`
+- 名称：`欧米茄绝境战 P1：循环程序`
 
 ## 2. 模块入口
 
@@ -30,7 +32,7 @@
   [packages/shared/src/index.ts](/home/etnatker/workspace/code/ff14arena_next/packages/shared/src/index.ts)
 
 - `packages/core`
-  战斗模拟内核，负责 Tick 推进、输入消费、移动、AOE、伤害、状态和结果结算
+  战斗模拟内核，负责 Tick 推进、输入消费、移动、通用机制 primitive、伤害、状态和结果聚合
   入口：
   [simulation.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/simulation.ts),
   [types.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/types.ts),
@@ -38,7 +40,7 @@
   [math.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/math.ts)
 
 - `packages/content`
-  战斗内容定义，当前包含演示战斗脚本、Bot 跑法与失败原因文本
+  战斗内容定义，当前包含战斗脚本、机制私有结算、Bot 跑法与失败原因文本
   入口：
   [packages/content/src/index.ts](/home/etnatker/workspace/code/ff14arena_next/packages/content/src/index.ts)
 
@@ -68,6 +70,7 @@
 服务端集成测试位于：
 
 - [apps/server/test/app.test.mjs](/home/etnatker/workspace/code/ff14arena_next/apps/server/test/app.test.mjs)
+- [apps/server/test/top-program-loop.test.mjs](/home/etnatker/workspace/code/ff14arena_next/apps/server/test/top-program-loop.test.mjs)
 
 当前测试覆盖的关键链路：
 
@@ -78,6 +81,7 @@
 - 房主离开后销毁房间
 - 运行中断线后按原槽位重连
 - 客户端主动请求重同步
+- TOP P1 循环程序随机点名、持久连线、Bot 固定跑法与成功结算
 
 ## 4. 当前边界
 
@@ -88,6 +92,7 @@
 - 完整回放
 - 复杂 Bot 系统
 - 复杂状态系统
+- 完整副本随机策略与通用内容编辑器
 
 具体待办、待优化项与后续可选方向请查看：
 

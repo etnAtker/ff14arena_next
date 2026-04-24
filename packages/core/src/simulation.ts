@@ -10,6 +10,7 @@ import type {
   DamageAppliedEvent,
   EncounterCompletedEvent,
   EncounterResult,
+  MapMarker,
   MechanicSnapshot,
   SimulationEvent,
   SimulationSnapshot,
@@ -58,6 +59,13 @@ interface ActorMovementRuntime {
 const MOVEMENT_HISTORY_WINDOW_MS = 1_000;
 const HARD_CORRECTION_DISTANCE = 0.9;
 const POSITION_EPSILON = 0.001;
+const DEFAULT_TETHER_TRANSFER_RADIUS = 0.6;
+const DEFAULT_TETHER_TRANSFER_COOLDOWN_MS = 500;
+const DEFAULT_TETHER_MIN_SOURCE_DISTANCE = 3;
+const BUILTIN_STATUS_NAMES: Record<string, string> = {
+  injury_up: '受伤加重',
+  knockback_immune: '防击退',
+};
 
 interface RuntimeState {
   battle: BattleDefinition;
@@ -67,9 +75,11 @@ interface RuntimeState {
   timeMs: number;
   arenaRadius: number;
   bossTargetRingRadius: number;
+  mapMarkers: MapMarker[];
   actors: Map<string, BaseActorSnapshot>;
   boss: BossSnapshot;
   mechanics: Map<string, MechanicSnapshot>;
+  tetherReadyAt: Map<string, number>;
   scheduler: SchedulerEntry[];
   schedulerOrder: number;
   scriptCursorTimeMs: number;
@@ -108,6 +118,27 @@ function sameMoveState(
   right: BaseActorSnapshot['moveState'],
 ): boolean {
   return left.moving === right.moving && sameDirection(left.direction, right.direction);
+}
+
+function distanceToSegment(point: Vector2, start: Vector2, end: Vector2): number {
+  const segment = subtract(end, start);
+  const segmentLengthSquared = segment.x * segment.x + segment.y * segment.y;
+
+  if (segmentLengthSquared <= POSITION_EPSILON) {
+    return distance(point, start);
+  }
+
+  const relative = subtract(point, start);
+  const progress = Math.max(
+    0,
+    Math.min(1, (relative.x * segment.x + relative.y * segment.y) / segmentLengthSquared),
+  );
+  const projection = {
+    x: start.x + segment.x * progress,
+    y: start.y + segment.y * progress,
+  };
+
+  return distance(point, projection);
 }
 
 function createMovementRuntime(
@@ -262,15 +293,15 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     statusId: StatusId,
     durationMs: number,
     multiplier?: number,
+    name?: string,
   ): void {
     const currentState = assertState(state);
     const expiresAt = currentState.timeMs + durationMs;
     const statusIndex = target.statuses.findIndex((status) => status.id === statusId);
-    const name = statusId === 'injury_up' ? '受伤加重' : '防击退';
 
     const nextStatus = {
       id: statusId,
-      name,
+      name: name ?? BUILTIN_STATUS_NAMES[statusId] ?? statusId,
       sourceId: currentState.boss.id,
       expiresAt,
       ...(multiplier !== undefined ? { multiplier } : {}),
@@ -455,6 +486,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         break;
       case 'spread':
         resolveSpread(mechanic);
+        break;
+      case 'tower':
+      case 'tether':
         break;
     }
 
@@ -729,6 +763,104 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     }
   }
 
+  function updateTethers(): void {
+    const currentState = assertState(state);
+
+    for (const mechanic of currentState.mechanics.values()) {
+      if (mechanic.kind !== 'tether') {
+        continue;
+      }
+
+      if (
+        !mechanic.allowTransfer ||
+        (currentState.tetherReadyAt.get(mechanic.id) ?? 0) > currentState.timeMs
+      ) {
+        continue;
+      }
+
+      const source =
+        mechanic.sourceId === currentState.boss.id
+          ? currentState.boss
+          : currentState.actors.get(mechanic.sourceId);
+      let target = currentState.actors.get(mechanic.targetId);
+
+      if (source === undefined || target === undefined) {
+        continue;
+      }
+
+      const heldTargetIds = mechanic.preventTargetHoldingOtherTether
+        ? new Set(
+            [...currentState.mechanics.values()]
+              .filter(
+                (candidate): candidate is Extract<MechanicSnapshot, { kind: 'tether' }> =>
+                  candidate.kind === 'tether' && candidate.id !== mechanic.id,
+              )
+              .map((candidate) => candidate.targetId),
+          )
+        : new Set<string>();
+
+      if (!target.alive && mechanic.allowDeadRetarget) {
+        const fallback = [...currentState.actors.values()].filter(
+          (actor) =>
+            actor.alive &&
+            !heldTargetIds.has(actor.id) &&
+            (mechanic.allowedTargetIds === undefined ||
+              mechanic.allowedTargetIds.includes(actor.id)),
+        )[0];
+
+        if (fallback === undefined) {
+          continue;
+        }
+
+        mechanic.targetId = fallback.id;
+        target = fallback;
+        currentState.tetherReadyAt.set(
+          mechanic.id,
+          currentState.timeMs + mechanic.transferCooldownMs,
+        );
+        continue;
+      }
+
+      if (!target.alive) {
+        continue;
+      }
+
+      const nextTarget = [...currentState.actors.values()]
+        .filter(
+          (actor) =>
+            actor.alive &&
+            actor.id !== target.id &&
+            !heldTargetIds.has(actor.id) &&
+            (mechanic.allowedTargetIds === undefined ||
+              mechanic.allowedTargetIds.includes(actor.id)) &&
+            distance(actor.position, source.position) > mechanic.minSourceDistance &&
+            distance(actor.position, target.position) > mechanic.transferRadius,
+        )
+        .map((actor) => ({
+          actor,
+          lineDistance: distanceToSegment(actor.position, source.position, target.position),
+        }))
+        .filter((entry) => entry.lineDistance <= mechanic.transferRadius)
+        .sort((left, right) => {
+          if (left.lineDistance === right.lineDistance) {
+            return (left.actor.slot ?? '').localeCompare(right.actor.slot ?? '');
+          }
+
+          return left.lineDistance - right.lineDistance;
+        })[0]?.actor;
+
+      if (nextTarget === undefined) {
+        continue;
+      }
+
+      mechanic.targetId = nextTarget.id;
+      currentState.tetherReadyAt.set(
+        mechanic.id,
+        currentState.timeMs + mechanic.transferCooldownMs,
+      );
+    }
+  }
+
   function createScriptContext(): BattleScriptContext {
     return {
       timeline: {
@@ -920,6 +1052,38 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             }),
           );
         },
+        tower(options) {
+          const currentState = assertState(state);
+          return spawnMechanic({
+            id: nextMechanicId(),
+            kind: 'tower',
+            label: options.label,
+            sourceId: options.sourceId ?? currentState.boss.id,
+            center: cloneVector(options.center),
+            radius: options.radius,
+            resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
+          });
+        },
+        tether(options) {
+          const currentState = assertState(state);
+          return spawnMechanic({
+            id: nextMechanicId(),
+            kind: 'tether',
+            label: options.label,
+            sourceId: options.sourceId ?? currentState.boss.id,
+            targetId: options.target.id,
+            ...(options.allowedTargets === undefined
+              ? {}
+              : { allowedTargetIds: options.allowedTargets.map((target) => target.id) }),
+            transferRadius: options.transferRadius ?? DEFAULT_TETHER_TRANSFER_RADIUS,
+            transferCooldownMs: options.transferCooldownMs ?? DEFAULT_TETHER_TRANSFER_COOLDOWN_MS,
+            minSourceDistance: options.minSourceDistance ?? DEFAULT_TETHER_MIN_SOURCE_DISTANCE,
+            allowTransfer: options.allowTransfer ?? true,
+            allowDeadRetarget: options.allowDeadRetarget ?? true,
+            preventTargetHoldingOtherTether: options.preventTargetHoldingOtherTether ?? true,
+            resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
+          });
+        },
       },
       status: {
         apply(targetIds, statusId, durationMs, options) {
@@ -930,7 +1094,18 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
               continue;
             }
 
-            applyStatus(actor, statusId, durationMs, options?.multiplier);
+            applyStatus(actor, statusId, durationMs, options?.multiplier, options?.name);
+          }
+        },
+        remove(targetIds, statusId) {
+          for (const targetId of targetIds) {
+            const actor = getActor(targetId);
+
+            if (actor === undefined) {
+              continue;
+            }
+
+            actor.statuses = actor.statuses.filter((status) => status.id !== statusId);
           }
         },
         grantKnockbackImmunity(targetIds, durationMs) {
@@ -948,6 +1123,39 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       displacement: {
         knockback(targetIds, source, knockbackDistance) {
           applyKnockback(targetIds, source, knockbackDistance);
+        },
+      },
+      mechanics: {
+        all() {
+          return [...assertState(state).mechanics.values()].map((mechanic) =>
+            structuredClone(mechanic),
+          );
+        },
+      },
+      damage: {
+        apply(targetIds, amount, sourceLabel) {
+          for (const targetId of targetIds) {
+            const actor = getActor(targetId);
+
+            if (actor === undefined || !actor.alive) {
+              continue;
+            }
+
+            applyDamage(actor, amount, sourceLabel);
+          }
+        },
+        kill(targetIds, sourceLabel) {
+          for (const targetId of targetIds) {
+            const actor = getActor(targetId);
+
+            if (actor === undefined || !actor.alive) {
+              continue;
+            }
+
+            actor.currentHp = 0;
+            actor.lastDamageSource = sourceLabel;
+            markActorDeath(actor, sourceLabel, false);
+          }
         },
       },
       state: {
@@ -997,6 +1205,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       timeMs: currentState.timeMs,
       arenaRadius: currentState.arenaRadius,
       bossTargetRingRadius: currentState.bossTargetRingRadius,
+      mapMarkers: structuredClone(currentState.mapMarkers),
       actors: [...currentState.actors.values()].map((actor) => structuredClone(actor)),
       boss: structuredClone(currentState.boss),
       mechanics: [...currentState.mechanics.values()].map((mechanic) => structuredClone(mechanic)),
@@ -1126,6 +1335,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         timeMs: initialTimeMs,
         arenaRadius: battle.arenaRadius,
         bossTargetRingRadius: battle.bossTargetRingRadius,
+        mapMarkers: structuredClone(battle.mapMarkers ?? []),
         actors,
         boss: {
           id: 'boss',
@@ -1152,6 +1362,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           targetRingRadius: battle.bossTargetRingRadius,
         },
         mechanics: new Map(),
+        tetherReadyAt: new Map(),
         scheduler: [],
         schedulerOrder: 0,
         scriptCursorTimeMs: 0,
@@ -1205,6 +1416,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         }
 
         advanceMovement();
+        updateTethers();
         refreshStatuses();
 
         if (currentState.phase === 'running') {

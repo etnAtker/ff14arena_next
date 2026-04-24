@@ -831,20 +831,20 @@ export const useAppStore = defineStore('app', () => {
       case 'bossCastResolved':
         authoritativeSnapshot.value.boss.castBar = null;
         authoritativeSnapshot.value.hud.bossCastBar = null;
-        appendLog(`Boss 结算：${event.payload.actionName}`);
+        appendLog(`首领结算：${event.payload.actionName}`);
         break;
       case 'aoeSpawned':
         authoritativeSnapshot.value.mechanics = authoritativeSnapshot.value.mechanics.filter(
           (mechanic) => mechanic.id !== event.payload.id,
         );
         authoritativeSnapshot.value.mechanics.push(event.payload);
-        appendLog(`AOE 出现：${event.payload.label}`);
+        appendLog(`机制出现：${event.payload.label}`);
         break;
       case 'aoeResolved':
         authoritativeSnapshot.value.mechanics = authoritativeSnapshot.value.mechanics.filter(
           (mechanic) => mechanic.id !== event.payload.mechanicId,
         );
-        appendLog(`AOE 结算：${event.payload.mechanicId}`);
+        appendLog(`机制结算：${event.payload.mechanicId}`);
         break;
       case 'damageApplied': {
         const actor = authoritativeSnapshot.value.actors.find(

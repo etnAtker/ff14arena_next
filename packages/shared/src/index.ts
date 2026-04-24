@@ -12,12 +12,24 @@ export type ActorKind = 'player' | 'bot' | 'boss';
 export type DamageType = 'raidwide' | 'avoidable' | 'punishment';
 export type EncounterOutcome = 'success' | 'failure';
 export type SimulationInputType = 'move' | 'face' | 'use-knockback-immune';
-export type StatusId = 'injury_up' | 'knockback_immune';
-export type MechanicKind = 'circle' | 'donut' | 'share' | 'spread';
+export type StatusId = string;
+export type MechanicKind = 'circle' | 'donut' | 'share' | 'spread' | 'tower' | 'tether';
 
 export interface Vector2 {
   x: number;
   y: number;
+}
+
+export type MapMarkerLabel = 'A' | 'B' | 'C' | 'D' | '1' | '2' | '3' | '4';
+export type MapMarkerShape = 'circle' | 'square';
+
+export interface MapMarker {
+  label: MapMarkerLabel;
+  shape: MapMarkerShape;
+  position: Vector2;
+  color: string;
+  radius?: number;
+  size?: number;
 }
 
 export interface MoveState {
@@ -125,11 +137,39 @@ export interface SpreadMechanicSnapshot {
   resolveAt: number;
 }
 
+export interface TowerMechanicSnapshot {
+  id: string;
+  kind: 'tower';
+  label: string;
+  sourceId: string;
+  center: Vector2;
+  radius: number;
+  resolveAt: number;
+}
+
+export interface TetherMechanicSnapshot {
+  id: string;
+  kind: 'tether';
+  label: string;
+  sourceId: string;
+  targetId: string;
+  allowedTargetIds?: string[];
+  transferRadius: number;
+  transferCooldownMs: number;
+  minSourceDistance: number;
+  allowTransfer: boolean;
+  allowDeadRetarget: boolean;
+  preventTargetHoldingOtherTether: boolean;
+  resolveAt: number;
+}
+
 export type MechanicSnapshot =
   | CircleMechanicSnapshot
   | DonutMechanicSnapshot
   | ShareMechanicSnapshot
-  | SpreadMechanicSnapshot;
+  | SpreadMechanicSnapshot
+  | TowerMechanicSnapshot
+  | TetherMechanicSnapshot;
 
 export interface EncounterResult {
   outcome: EncounterOutcome;
@@ -145,6 +185,7 @@ export interface SimulationSnapshot {
   timeMs: number;
   arenaRadius: number;
   bossTargetRingRadius: number;
+  mapMarkers: MapMarker[];
   actors: BaseActorSnapshot[];
   boss: BossSnapshot;
   mechanics: MechanicSnapshot[];
@@ -166,6 +207,7 @@ export interface BattleStaticData {
   bossName: string;
   arenaRadius: number;
   bossTargetRingRadius: number;
+  mapMarkers: MapMarker[];
   defaultPlayerMaxHp: number;
   initialPartyPositions: Record<
     PartySlot,

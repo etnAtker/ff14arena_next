@@ -97,6 +97,21 @@ function getActor(slot: PartySlot) {
   return actorMap.value.get(slot) ?? null;
 }
 
+function getMechanicStatusRows(slot: PartySlot): string[] {
+  const actor = getActor(slot);
+
+  if (actor === null) {
+    return [];
+  }
+
+  return actor.statuses
+    .map((status) => status.name)
+    .filter((name) =>
+      ['一号', '二号', '三号', '四号', '衰减', '破灭', '死宣', '遗忘'].includes(name),
+    )
+    .slice(0, 10);
+}
+
 function getSlotButtonLabel(slot: PartySlot): string {
   if (slot === props.currentPlayerSlot) {
     if (props.isOwner) {
@@ -234,11 +249,21 @@ onBeforeUnmount(() => {
                 slot === props.currentPlayerSlot
                   ? '自己'
                   : getSlotState(slot)?.occupantType === 'bot'
-                    ? 'Bot'
+                    ? '机器人'
                     : '玩家'
               }}
               ·
               {{ getSlotRole(slot).toUpperCase() }}
+            </span>
+          </div>
+
+          <div class="slot-row status-row">
+            <span
+              v-for="statusName in getMechanicStatusRows(slot)"
+              :key="statusName"
+              class="status-pill"
+            >
+              {{ statusName }}
             </span>
           </div>
         </div>
@@ -435,6 +460,31 @@ onBeforeUnmount(() => {
   margin-top: 6px;
   font-size: 12px;
   color: rgba(246, 239, 228, 0.86);
+}
+
+.slot-row.status-row {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-auto-rows: minmax(19px, auto);
+  gap: 4px;
+  margin-top: 6px;
+  min-height: 42px;
+  align-items: start;
+}
+
+.status-pill {
+  min-width: 0;
+  border: 1px solid rgba(246, 239, 228, 0.18);
+  border-radius: 4px;
+  padding: 2px 3px;
+  color: rgba(246, 239, 228, 0.88);
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .slot-title {

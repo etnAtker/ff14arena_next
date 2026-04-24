@@ -6,6 +6,7 @@
 ## 文档索引
 
 - [实现概览](./overview.md)
+- [战斗内容与机制边界](./content-and-mechanics.md)
 - [服务端运行与同步](./server-runtime.md)
 - [Web 客户端当前实现说明](./web-client.md)
 - [部署说明](./deployment.md)
@@ -13,6 +14,7 @@
 ## 使用约定
 
 - 需要了解当前主链路、模块入口与验证方式时，先看 [实现概览](./overview.md)
+- 需要了解 `core` 与 `content` 的机制边界、TOP P1 当前实现时，查看 [战斗内容与机制边界](./content-and-mechanics.md)
 - 需要了解房间生命周期、HTTP 接口与实时同步时，查看 [服务端运行与同步](./server-runtime.md)
 - 需要了解页面结构、输入发送、镜头与 HUD 时，查看 [Web 客户端当前实现说明](./web-client.md)
 - 需要了解开发与生产部署方式时，查看 [部署说明](./deployment.md)

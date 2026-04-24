@@ -5,6 +5,7 @@ import type {
   DamageType,
   EncounterResult,
   MechanicSnapshot,
+  MapMarker,
   PartySlot,
   SimulationEvent,
   SimulationSnapshot,
@@ -92,18 +93,46 @@ export interface BattleScriptContext {
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot[];
+    tower(options: {
+      label: string;
+      center: Vector2;
+      radius: number;
+      resolveAfterMs?: number;
+      sourceId?: string;
+    }): MechanicSnapshot;
+    tether(options: {
+      label: string;
+      target: BaseActorSnapshot;
+      allowedTargets?: BaseActorSnapshot[];
+      transferRadius?: number;
+      transferCooldownMs?: number;
+      minSourceDistance?: number;
+      allowTransfer?: boolean;
+      allowDeadRetarget?: boolean;
+      preventTargetHoldingOtherTether?: boolean;
+      resolveAfterMs?: number;
+      sourceId?: string;
+    }): MechanicSnapshot;
   };
   readonly status: {
     apply(
       targetIds: string[],
       statusId: StatusId,
       durationMs: number,
-      options?: { multiplier?: number },
+      options?: { multiplier?: number; name?: string },
     ): void;
+    remove(targetIds: string[], statusId: StatusId): void;
     grantKnockbackImmunity(targetIds: string[], durationMs: number): void;
   };
   readonly displacement: {
     knockback(targetIds: string[], source: Vector2, distance: number): void;
+  };
+  readonly mechanics: {
+    all(): MechanicSnapshot[];
+  };
+  readonly damage: {
+    apply(targetIds: string[], amount: number, sourceLabel: string): void;
+    kill(targetIds: string[], sourceLabel: string): void;
   };
   readonly state: {
     getBattleTime(): number;
@@ -123,6 +152,7 @@ export interface BattleDefinition {
   name: string;
   arenaRadius: number;
   bossTargetRingRadius: number;
+  mapMarkers?: MapMarker[];
   slots: readonly PartySlot[];
   bossName: string;
   initialPartyPositions: Record<

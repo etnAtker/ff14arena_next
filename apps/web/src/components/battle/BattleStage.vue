@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Application, Graphics, Text, TextStyle } from 'pixi.js';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import type { SimulationSnapshot, Vector2 } from '@ff14arena/shared';
+import type { MapMarker, SimulationSnapshot, Vector2 } from '@ff14arena/shared';
 import { getFacingForCameraYaw } from './camera';
 import { getSlotColor, getSlotStageText } from '../../utils/ui';
 
@@ -49,6 +49,7 @@ const renderActors = new Map<string, RenderActorState>();
 let stageGraphics: Graphics | null = null;
 let bossLabel: Text | null = null;
 const actorLabels = new Map<string, Text>();
+const markerLabels = new Map<string, Text>();
 let pendingYawDelta = 0;
 let dragUpdateFrame: number | null = null;
 
@@ -123,6 +124,10 @@ function toStagePoint(point: Vector2, width: number, height: number, arenaRadius
   };
 }
 
+function parseHexColor(color: string): number {
+  return Number.parseInt(color.replace('#', ''), 16);
+}
+
 function clearStage(): void {
   if (stageGraphics === null) {
     return;
@@ -140,7 +145,7 @@ function createStagePrimitives(): void {
   app.stage.addChild(stageGraphics);
 
   bossLabel = new Text({
-    text: 'B',
+    text: '首',
     style: new TextStyle({
       fill: '#1a120d',
       fontSize: 14,
@@ -186,12 +191,51 @@ function syncActorLabels(snapshot: SimulationSnapshot): void {
   }
 }
 
+function syncMapMarkerLabels(markers: MapMarker[]): void {
+  if (app === null) {
+    return;
+  }
+
+  const activeMarkerLabels = new Set<string>(markers.map((marker) => marker.label));
+
+  for (const marker of markers) {
+    if (markerLabels.has(marker.label)) {
+      continue;
+    }
+
+    const label = new Text({
+      text: marker.label,
+      style: new TextStyle({
+        fill: '#111827',
+        fontSize: 13,
+        fontWeight: '800',
+      }),
+    });
+    label.anchor.set(0.5);
+    markerLabels.set(marker.label, label);
+    app.stage.addChild(label);
+  }
+
+  for (const [labelText, label] of markerLabels) {
+    if (activeMarkerLabels.has(labelText)) {
+      continue;
+    }
+
+    label.destroy();
+    markerLabels.delete(labelText);
+  }
+}
+
 function hideLabels(): void {
   if (bossLabel !== null) {
     bossLabel.visible = false;
   }
 
   for (const label of actorLabels.values()) {
+    label.visible = false;
+  }
+
+  for (const label of markerLabels.values()) {
     label.visible = false;
   }
 }
@@ -287,6 +331,53 @@ function advanceRenderActors(deltaMs: number): boolean {
   return hasAnimatingActor;
 }
 
+function drawMapMarker(
+  graphics: Graphics,
+  marker: MapMarker,
+  width: number,
+  height: number,
+  arenaRadius: number,
+  scale: number,
+): void {
+  const point = toStagePoint(marker.position, width, height, arenaRadius);
+  const color = parseHexColor(marker.color);
+
+  if (marker.shape === 'circle') {
+    const radius = (marker.radius ?? 2) * scale;
+    graphics.circle(point.x, point.y, radius).fill({ color, alpha: 0.88 });
+    graphics.circle(point.x, point.y, radius).stroke({
+      width: 2,
+      color: 0xffffff,
+      alpha: 0.78,
+    });
+  } else {
+    const halfSize = (marker.size ?? 3) / 2;
+    const corners = [
+      { x: marker.position.x - halfSize, y: marker.position.y - halfSize },
+      { x: marker.position.x + halfSize, y: marker.position.y - halfSize },
+      { x: marker.position.x + halfSize, y: marker.position.y + halfSize },
+      { x: marker.position.x - halfSize, y: marker.position.y + halfSize },
+    ].map((corner) => toStagePoint(corner, width, height, arenaRadius));
+    const points = corners.flatMap((corner) => [corner.x, corner.y]);
+
+    graphics.poly(points).fill({ color, alpha: 0.88 });
+    graphics.poly(points).stroke({
+      width: 2,
+      color: 0xffffff,
+      alpha: 0.78,
+    });
+  }
+
+  const label = markerLabels.get(marker.label);
+
+  if (label !== undefined) {
+    label.visible = true;
+    label.text = marker.label;
+    label.x = point.x;
+    label.y = point.y;
+  }
+}
+
 function draw(now: number): void {
   if (stageRootRef.value === null || app === null || !isAppReady) {
     return;
@@ -327,6 +418,7 @@ function draw(now: number): void {
   }
 
   syncActorLabels(props.snapshot);
+  syncMapMarkerLabels(props.snapshot.mapMarkers);
 
   graphics
     .circle(arenaCenter.x, arenaCenter.y, arenaRadius * scale)
@@ -340,8 +432,43 @@ function draw(now: number): void {
     alpha: 0.9,
   });
 
+  for (const marker of props.snapshot.mapMarkers) {
+    drawMapMarker(graphics, marker, width, height, arenaRadius, scale);
+  }
+
   for (const mechanic of props.snapshot.mechanics) {
+    if (mechanic.kind === 'tether') {
+      const source =
+        mechanic.sourceId === props.snapshot.boss.id
+          ? props.snapshot.boss
+          : props.snapshot.actors.find((actor) => actor.id === mechanic.sourceId);
+      const target = props.snapshot.actors.find((actor) => actor.id === mechanic.targetId);
+
+      if (source !== undefined && target !== undefined) {
+        const sourcePoint = toStagePoint(source.position, width, height, arenaRadius);
+        const targetPoint = toStagePoint(target.position, width, height, arenaRadius);
+        graphics.moveTo(sourcePoint.x, sourcePoint.y);
+        graphics.lineTo(targetPoint.x, targetPoint.y);
+        graphics.stroke({ width: 3, color: 0xff6b6b, alpha: 0.9 });
+      }
+
+      continue;
+    }
+
     const point = toStagePoint(mechanic.center, width, height, arenaRadius);
+
+    if (mechanic.kind === 'tower') {
+      graphics.circle(point.x, point.y, mechanic.radius * scale).fill({
+        color: 0xf4d35e,
+        alpha: 0.2,
+      });
+      graphics.circle(point.x, point.y, mechanic.radius * scale).stroke({
+        width: 3,
+        color: 0xf4d35e,
+        alpha: 0.92,
+      });
+      continue;
+    }
 
     if (mechanic.kind === 'circle') {
       graphics
@@ -559,6 +686,7 @@ onBeforeUnmount(() => {
   });
   renderActors.clear();
   actorLabels.clear();
+  markerLabels.clear();
   stageGraphics = null;
   bossLabel = null;
 });
