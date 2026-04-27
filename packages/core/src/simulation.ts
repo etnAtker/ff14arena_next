@@ -141,6 +141,87 @@ function distanceToSegment(point: Vector2, start: Vector2, end: Vector2): number
   return distance(point, projection);
 }
 
+function cross(left: Vector2, right: Vector2): number {
+  return left.x * right.y - left.y * right.x;
+}
+
+function isPointOnSegment(point: Vector2, start: Vector2, end: Vector2): boolean {
+  return (
+    Math.abs(cross(subtract(point, start), subtract(end, start))) <= POSITION_EPSILON &&
+    point.x >= Math.min(start.x, end.x) - POSITION_EPSILON &&
+    point.x <= Math.max(start.x, end.x) + POSITION_EPSILON &&
+    point.y >= Math.min(start.y, end.y) - POSITION_EPSILON &&
+    point.y <= Math.max(start.y, end.y) + POSITION_EPSILON
+  );
+}
+
+function segmentsIntersect(
+  firstStart: Vector2,
+  firstEnd: Vector2,
+  secondStart: Vector2,
+  secondEnd: Vector2,
+): boolean {
+  const first = subtract(firstEnd, firstStart);
+  const second = subtract(secondEnd, secondStart);
+  const firstToSecondStart = subtract(secondStart, firstStart);
+  const firstToSecondEnd = subtract(secondEnd, firstStart);
+  const secondToFirstStart = subtract(firstStart, secondStart);
+  const secondToFirstEnd = subtract(firstEnd, secondStart);
+
+  const firstSideStart = cross(first, firstToSecondStart);
+  const firstSideEnd = cross(first, firstToSecondEnd);
+  const secondSideStart = cross(second, secondToFirstStart);
+  const secondSideEnd = cross(second, secondToFirstEnd);
+
+  if (
+    Math.abs(firstSideStart) <= POSITION_EPSILON &&
+    isPointOnSegment(secondStart, firstStart, firstEnd)
+  ) {
+    return true;
+  }
+
+  if (
+    Math.abs(firstSideEnd) <= POSITION_EPSILON &&
+    isPointOnSegment(secondEnd, firstStart, firstEnd)
+  ) {
+    return true;
+  }
+
+  if (
+    Math.abs(secondSideStart) <= POSITION_EPSILON &&
+    isPointOnSegment(firstStart, secondStart, secondEnd)
+  ) {
+    return true;
+  }
+
+  if (
+    Math.abs(secondSideEnd) <= POSITION_EPSILON &&
+    isPointOnSegment(firstEnd, secondStart, secondEnd)
+  ) {
+    return true;
+  }
+
+  return firstSideStart * firstSideEnd < 0 && secondSideStart * secondSideEnd < 0;
+}
+
+function distanceBetweenSegments(
+  firstStart: Vector2,
+  firstEnd: Vector2,
+  secondStart: Vector2,
+  secondEnd: Vector2,
+): number {
+  if (segmentsIntersect(firstStart, firstEnd, secondStart, secondEnd)) {
+    return 0;
+  }
+
+  return Math.min(
+    distanceToSegment(firstStart, secondStart, secondEnd),
+    distanceToSegment(firstEnd, secondStart, secondEnd),
+    distanceToSegment(secondStart, firstStart, firstEnd),
+    distanceToSegment(secondEnd, firstStart, firstEnd),
+  );
+}
+
 function createMovementRuntime(
   position: Vector2,
   options?: {
@@ -763,7 +844,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     }
   }
 
-  function updateTethers(): void {
+  function updateTethers(previousActorPositions: Map<string, Vector2>): void {
     const currentState = assertState(state);
 
     for (const mechanic of currentState.mechanics.values()) {
@@ -836,10 +917,22 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             distance(actor.position, source.position) > mechanic.minSourceDistance &&
             distance(actor.position, target.position) > mechanic.transferRadius,
         )
-        .map((actor) => ({
-          actor,
-          lineDistance: distanceToSegment(actor.position, source.position, target.position),
-        }))
+        .map((actor) => {
+          const previousPosition = previousActorPositions.get(actor.id) ?? actor.position;
+
+          return {
+            actor,
+            lineDistance: Math.min(
+              distanceToSegment(actor.position, source.position, target.position),
+              distanceBetweenSegments(
+                previousPosition,
+                actor.position,
+                source.position,
+                target.position,
+              ),
+            ),
+          };
+        })
         .filter((entry) => entry.lineDistance <= mechanic.transferRadius)
         .sort((left, right) => {
           if (left.lineDistance === right.lineDistance) {
@@ -1408,6 +1501,12 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         currentState.tick += 1;
         currentState.timeMs += tickMs;
 
+        const actorPositionsBeforeTick = new Map(
+          [...currentState.actors.entries()].map(([actorId, actor]) => [
+            actorId,
+            cloneVector(actor.position),
+          ]),
+        );
         const pendingInputs = [...currentState.inputQueue];
         currentState.inputQueue.length = 0;
 
@@ -1416,7 +1515,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         }
 
         advanceMovement();
-        updateTethers();
+        updateTethers(actorPositionsBeforeTick);
         refreshStatuses();
 
         if (currentState.phase === 'running') {

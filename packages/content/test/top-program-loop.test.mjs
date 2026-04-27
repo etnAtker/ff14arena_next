@@ -60,6 +60,82 @@ function submitPose(simulation, actor, position, inputSeq) {
   });
 }
 
+test('通用连线：玩家单 tick 穿过连线时也能完成传递', () => {
+  const battle = {
+    id: 'tether_sweep_test',
+    name: '连线扫掠测试',
+    arenaRadius: 30,
+    bossTargetRingRadius: 15,
+    slots: ['MT', 'ST'],
+    bossName: '测试首领',
+    initialPartyPositions: {
+      MT: { position: { x: 0, y: 10 }, facing: 0 },
+      ST: { position: { x: -1, y: 5 }, facing: 0 },
+    },
+    failureTexts: {
+      outOfBounds(actorName) {
+        return `${actorName} 触碰死亡墙`;
+      },
+      mechanicDeath(actorName, sourceLabel) {
+        return `${actorName} 因 ${sourceLabel} 死亡`;
+      },
+    },
+    buildScript(ctx) {
+      ctx.timeline.at(0, () => {
+        const actors = ctx.select.allPlayers();
+        const holder = actors.find((actor) => actor.slot === 'MT');
+        const receiver = actors.find((actor) => actor.slot === 'ST');
+        assert.ok(holder);
+        assert.ok(receiver);
+
+        ctx.spawn.tether({
+          label: '测试连线',
+          target: holder,
+          allowedTargets: [receiver],
+          transferRadius: 0.6,
+          transferCooldownMs: 500,
+          minSourceDistance: 3,
+          allowTransfer: true,
+          allowDeadRetarget: true,
+          preventTargetHoldingOtherTether: true,
+          resolveAfterMs: 10_000,
+        });
+      });
+    },
+  };
+  const simulation = createSimulation();
+
+  simulation.loadBattle({
+    battle,
+    roomId: 'tether-sweep-test-room',
+    party: [
+      {
+        slot: 'MT',
+        name: 'MT',
+        kind: 'player',
+        actorId: 'player_MT',
+      },
+      {
+        slot: 'ST',
+        name: 'ST',
+        kind: 'player',
+        actorId: 'player_ST',
+      },
+    ],
+  });
+  simulation.start();
+  simulation.tick(50);
+
+  const receiver = simulation.getSnapshot().actors.find((actor) => actor.slot === 'ST');
+  assert.ok(receiver);
+  submitPose(simulation, receiver, { x: 1, y: 5 }, 1);
+  simulation.tick(50);
+
+  const tether = simulation.getSnapshot().mechanics.find((mechanic) => mechanic.kind === 'tether');
+  assert.ok(tether);
+  assert.equal(tether.targetId, receiver.id);
+});
+
 test('欧米茄绝境战 P1 循环程序：全机器人按固定脚本完成机制', () => {
   const randomValues = [0.91, 0.17, 0.73, 0.44, 0.28, 0.62, 0.05];
   withMockedRandom(randomValues, () => {
