@@ -482,6 +482,18 @@ function draw(now: number): void {
       continue;
     }
 
+    if (mechanic.kind === 'circleTelegraph') {
+      graphics
+        .circle(point.x, point.y, mechanic.radius * scale)
+        .fill({ color: 0xf47262, alpha: 0.14 });
+      graphics.circle(point.x, point.y, mechanic.radius * scale).stroke({
+        width: 2,
+        color: 0xffd1ca,
+        alpha: 0.9,
+      });
+      continue;
+    }
+
     if (mechanic.kind === 'donut') {
       graphics.circle(point.x, point.y, mechanic.outerRadius * scale).fill({
         color: 0xc45779,

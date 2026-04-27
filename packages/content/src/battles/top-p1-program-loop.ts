@@ -15,16 +15,25 @@ import { createMoveDirection, createPose } from '../runtime/bot';
 type ProgramNumber = 1 | 2 | 3 | 4;
 type ShockwaveTether = Extract<MechanicSnapshot, { kind: 'tether' }>;
 type ProgramAssignments = Record<ProgramNumber, [PartySlot, PartySlot]>;
+type BotTetherLane = [PartySlot, PartySlot, PartySlot, PartySlot];
+type BotTetherLanes = [BotTetherLane, BotTetherLane];
 
 interface ProgramRound {
   index: ProgramNumber;
   towerNumber: ProgramNumber;
   tetherNumber: ProgramNumber;
-  towerPositions: [Vector2, Vector2];
-  tetherPositions: [Vector2, Vector2];
   startAt: number;
   resolveAt: number;
 }
+
+interface ActiveProgramRound extends ProgramRound {
+  towerPositions: [Vector2, Vector2];
+  tetherPositions: [Vector2, Vector2];
+}
+
+const PROGRAM_NUMBERS = [1, 2, 3, 4] as const;
+const TETHER_LANES = [0, 1] as const;
+const TOWER_ASSIGNMENT_SLOT_PRIORITY = ['H1', 'MT', 'ST', 'D1', 'D2', 'D3', 'D4', 'H2'] as const;
 
 const STATUS_BY_NUMBER: Record<ProgramNumber, StatusId> = {
   1: 'program_loop_1',
@@ -46,9 +55,10 @@ const STATUS_NAME_BY_ID: Record<StatusId, string> = {
   memory_loss: '遗忘',
 };
 
-const TOP_TETHER_TRANSFER_RADIUS = 0.6;
+// 通用连线仍按真实穿线结算；这里的冷却只用于避免 Bot 固定脚本同轮连续传线。
 const TOP_TETHER_TRANSFER_COOLDOWN_MS = 500;
-const TOP_TETHER_MIN_SOURCE_DISTANCE = 3;
+const TOP_BOT_TETHER_TRANSFER_COOLDOWN_MS = 8_000;
+const GEOMETRY_EPSILON = 0.001;
 
 const DEFAULT_ASSIGNMENTS: ProgramAssignments = {
   1: ['MT', 'ST'],
@@ -57,36 +67,90 @@ const DEFAULT_ASSIGNMENTS: ProgramAssignments = {
   4: ['D3', 'D4'],
 };
 
-const TOWER_RADIUS = 5;
+const TOWER_RADIUS = 3;
 const SHOCKWAVE_RADIUS = 15;
 const SHOCKWAVE_DAMAGE = 1;
 const TOWER_DAMAGE = 1;
+const SHOCKWAVE_TELEGRAPH_MS = 500;
 const TWICE_RUIN_DURATION_MS = 10_000;
 const HP_PENALTY_DURATION_MS = 9_000;
 const PROGRAM_START_AT = 10_000;
 const PROGRAM_END_AT = 47_500;
-const SHOCKWAVE_CAST_MS = 7_600;
+// Blaster 读条 7.6s，读条结束与本轮塔和冲击波结算同 tick。
+const BLASTER_CAST_MS = 7_600;
 const MAP_MARKER_RADIUS = 15;
 const ROUND_MARKER_RADIUS = 2;
 const SQUARE_MARKER_SIZE = 3;
+const ARENA_RADIUS = 25;
+const BOSS_TARGET_RING_RADIUS = 15;
+const NORTH_ANGLE = -Math.PI / 2;
+const MAP_MARKER_ANGLE_STEP = Math.PI / 4;
+const INITIAL_PARTY_FACING = NORTH_ANGLE;
+const PROGRAM_CAST_START_AT = 6_000;
+const PROGRAM_CAST_MS = 4_000;
+const MEMORY_LOSS_DURATION_MS = 1_000;
+const PROGRAM_DURATION_BASE_MS = 7_000;
+const PROGRAM_DURATION_STEP_MS = 9_000;
+
+// Bot 等待点位于塔方向的内侧，避免和外侧冲击波点重叠。
+const BOT_WAITING_RADIUS = 10;
+// Bot 接线点取首领到持线者线段上的一段，随后再越过该点，确保触发穿线。
+const BOT_TETHER_PICKUP_DISTANCE = 6;
+const BOT_TETHER_PICKUP_MIN_RATIO = 0.25;
+const BOT_TETHER_PICKUP_MAX_RATIO = 0.65;
+const BOT_TETHER_CROSSING_OVERSHOOT = 1.5;
+// 冲击波固定拉到正点 17m，避免 Bot 把线带到倾斜方向。
+const SHOCKWAVE_POSITION_RADIUS = 17;
 
 const TOWERS = {
-  N_W: { x: -5, y: -15 },
-  N_E: { x: 5, y: -15 },
-  E_N: { x: 15, y: -5 },
-  E_S: { x: 15, y: 5 },
-  S_E: { x: 5, y: 15 },
-  S_W: { x: -5, y: 15 },
-  W_S: { x: -15, y: 5 },
-  W_N: { x: -15, y: -5 },
+  N_W: { x: -3, y: -15 },
+  N_E: { x: 3, y: -15 },
+  E_N: { x: 15, y: -3 },
+  E_S: { x: 15, y: 3 },
+  S_E: { x: 3, y: 15 },
+  S_W: { x: -3, y: 15 },
+  W_S: { x: -15, y: 3 },
+  W_N: { x: -15, y: -3 },
 } as const satisfies Record<string, Vector2>;
 
-const SHOCK_POSITIONS = {
-  east: { x: 17, y: 0 },
-  west: { x: -17, y: 0 },
-  north: { x: 0, y: -17 },
-  south: { x: 0, y: 17 },
-} as const satisfies Record<string, Vector2>;
+const TOWER_RING = [
+  TOWERS.W_N,
+  TOWERS.N_W,
+  TOWERS.N_E,
+  TOWERS.E_N,
+  TOWERS.E_S,
+  TOWERS.S_E,
+  TOWERS.S_W,
+  TOWERS.W_S,
+] as const satisfies readonly Vector2[];
+
+// 从 A 点左侧开始逆时针找塔；第一座塔由高优先级玩家处理，第二座塔由低优先级玩家处理。
+const TOWER_ASSIGNMENT_SCAN_ORDER = [
+  TOWERS.N_W,
+  TOWERS.W_N,
+  TOWERS.W_S,
+  TOWERS.S_W,
+  TOWERS.S_E,
+  TOWERS.E_S,
+  TOWERS.E_N,
+  TOWERS.N_E,
+] as const satisfies readonly Vector2[];
+
+// TOP P1 每轮双塔只允许相隔 90 度或 180 度，按 8 点环形索引表示为 2/4/6。
+const VALID_TOWER_INDEX_DIFFS = new Set([2, 4, 6]);
+const FALLBACK_TOWER_INDEX_PAIRS = [
+  [1, 5],
+  [3, 7],
+  [2, 6],
+  [4, 0],
+] as const satisfies ReadonlyArray<readonly [number, number]>;
+
+const SHOCKWAVE_CARDINAL_POSITIONS = [
+  createPointOnRadius(NORTH_ANGLE, SHOCKWAVE_POSITION_RADIUS),
+  createPointOnRadius(Math.PI, SHOCKWAVE_POSITION_RADIUS),
+  createPointOnRadius(Math.PI / 2, SHOCKWAVE_POSITION_RADIUS),
+  createPointOnRadius(0, SHOCKWAVE_POSITION_RADIUS),
+] as const satisfies readonly Vector2[];
 
 const INITIAL_SOUTH_POSITIONS: Record<PartySlot, Vector2> = {
   MT: { x: -5.25, y: 15 },
@@ -119,17 +183,15 @@ const TOP_MAP_MARKER_BASES: Array<Omit<MapMarker, 'position' | 'radius' | 'size'
 
 const TOP_MAP_MARKERS: MapMarker[] = TOP_MAP_MARKER_BASES.map((marker, index) => ({
   ...marker,
-  position: createPointOnRadius(-Math.PI / 2 + (Math.PI / 4) * index, MAP_MARKER_RADIUS),
+  position: createPointOnRadius(NORTH_ANGLE + MAP_MARKER_ANGLE_STEP * index, MAP_MARKER_RADIUS),
   ...(marker.shape === 'circle' ? { radius: ROUND_MARKER_RADIUS } : { size: SQUARE_MARKER_SIZE }),
 }));
 
-const ROUNDS: ProgramRound[] = [
+const ROUND_SCHEDULES: ProgramRound[] = [
   {
     index: 1,
     towerNumber: 1,
     tetherNumber: 3,
-    towerPositions: [TOWERS.N_W, TOWERS.S_E],
-    tetherPositions: [SHOCK_POSITIONS.east, SHOCK_POSITIONS.west],
     startAt: 10_000,
     resolveAt: 17_600,
   },
@@ -137,8 +199,6 @@ const ROUNDS: ProgramRound[] = [
     index: 2,
     towerNumber: 2,
     tetherNumber: 4,
-    towerPositions: [TOWERS.E_N, TOWERS.W_S],
-    tetherPositions: [SHOCK_POSITIONS.north, SHOCK_POSITIONS.south],
     startAt: 17_600,
     resolveAt: 26_600,
   },
@@ -146,8 +206,6 @@ const ROUNDS: ProgramRound[] = [
     index: 3,
     towerNumber: 3,
     tetherNumber: 1,
-    towerPositions: [TOWERS.N_E, TOWERS.S_W],
-    tetherPositions: [SHOCK_POSITIONS.east, SHOCK_POSITIONS.west],
     startAt: 26_600,
     resolveAt: 35_600,
   },
@@ -155,12 +213,20 @@ const ROUNDS: ProgramRound[] = [
     index: 4,
     towerNumber: 4,
     tetherNumber: 2,
-    towerPositions: [TOWERS.E_S, TOWERS.W_N],
-    tetherPositions: [SHOCK_POSITIONS.north, SHOCK_POSITIONS.south],
     startAt: 35_600,
     resolveAt: 44_600,
   },
 ];
+
+function getRoundByIndex(rounds: ActiveProgramRound[], index: ProgramNumber): ActiveProgramRound {
+  const round = rounds.find((candidate) => candidate.index === index);
+
+  if (round === undefined) {
+    throw new Error(`missing program round ${index}`);
+  }
+
+  return round;
+}
 
 function getProgramNumber(slot: PartySlot, assignments: ProgramAssignments): ProgramNumber {
   for (const [number, slots] of Object.entries(assignments)) {
@@ -183,6 +249,140 @@ function shuffleSlots(slots: PartySlot[]): PartySlot[] {
   return shuffled;
 }
 
+function shuffleNumbers(numbers: number[]): number[] {
+  const shuffled = [...numbers];
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex]!, shuffled[index]!];
+  }
+
+  return shuffled;
+}
+
+function isValidTowerIndexPair(leftIndex: number, rightIndex: number): boolean {
+  return VALID_TOWER_INDEX_DIFFS.has(Math.abs(leftIndex - rightIndex));
+}
+
+function getTowerScanIndex(position: Vector2): number {
+  return TOWER_ASSIGNMENT_SCAN_ORDER.findIndex(
+    (towerPosition) => towerPosition.x === position.x && towerPosition.y === position.y,
+  );
+}
+
+function sortTowerPositionsByAssignmentOrder(
+  towerPositions: [Vector2, Vector2],
+): [Vector2, Vector2] {
+  return [...towerPositions].sort(
+    (left, right) => getTowerScanIndex(left) - getTowerScanIndex(right),
+  ) as [Vector2, Vector2];
+}
+
+function getSlotPriorityIndex(slot: PartySlot): number {
+  return TOWER_ASSIGNMENT_SLOT_PRIORITY.indexOf(slot);
+}
+
+function getProgramSlotsByPriority(
+  assignments: ProgramAssignments,
+  number: ProgramNumber,
+): [PartySlot, PartySlot] {
+  return [...assignments[number]].sort(
+    (left, right) => getSlotPriorityIndex(left) - getSlotPriorityIndex(right),
+  ) as [PartySlot, PartySlot];
+}
+
+function getProgramSlotLane(
+  slot: PartySlot,
+  assignments: ProgramAssignments,
+  number: ProgramNumber,
+): number {
+  return getProgramSlotsByPriority(assignments, number).indexOf(slot);
+}
+
+function createRandomTowerGroups(): Array<[Vector2, Vector2]> {
+  function pairRemainingTowerIndexes(remainingIndexes: number[]): Array<[number, number]> | null {
+    if (remainingIndexes.length === 0) {
+      return [];
+    }
+
+    const [leftIndex, ...restIndexes] = remainingIndexes;
+
+    for (const rightIndex of shuffleNumbers(
+      restIndexes.filter((index) => isValidTowerIndexPair(leftIndex!, index)),
+    )) {
+      const nextRemainingIndexes = restIndexes.filter((index) => index !== rightIndex);
+      const pairs = pairRemainingTowerIndexes(nextRemainingIndexes);
+
+      if (pairs !== null) {
+        return [[leftIndex!, rightIndex], ...pairs];
+      }
+    }
+
+    return null;
+  }
+
+  const indexPairs = pairRemainingTowerIndexes(shuffleNumbers(TOWER_RING.map((_, index) => index)));
+
+  if (indexPairs === null) {
+    throw new Error('无法为循环程序生成合法塔位组合');
+  }
+
+  return indexPairs.map(([leftIndex, rightIndex]) =>
+    sortTowerPositionsByAssignmentOrder([TOWER_RING[leftIndex]!, TOWER_RING[rightIndex]!]),
+  );
+}
+
+function createTetherPositions(towerPositions: [Vector2, Vector2]): [Vector2, Vector2] {
+  const validPairs = SHOCKWAVE_CARDINAL_POSITIONS.flatMap((left, leftIndex) =>
+    SHOCKWAVE_CARDINAL_POSITIONS.slice(leftIndex + 1).map((right) => [left, right] as const),
+  )
+    .map(([left, right]) => {
+      const towerDistances = towerPositions.flatMap((tower) => [
+        distance(left, tower),
+        distance(right, tower),
+      ]);
+      const pairDistance = distance(left, right);
+
+      return {
+        positions: [left, right] as [Vector2, Vector2],
+        score: Math.min(pairDistance, ...towerDistances),
+      };
+    })
+    .filter((pair) => pair.score > SHOCKWAVE_RADIUS);
+
+  const bestPair = validPairs.sort((left, right) => right.score - left.score)[0];
+
+  if (bestPair === undefined) {
+    throw new Error('无法为随机塔位生成安全的冲击波位置');
+  }
+
+  return bestPair.positions;
+}
+
+function createRounds(towerGroups: Array<[Vector2, Vector2]>): ActiveProgramRound[] {
+  return ROUND_SCHEDULES.map((round, roundIndex) => {
+    const roundTowerPositions = towerGroups[roundIndex]!;
+
+    return {
+      ...round,
+      towerPositions: roundTowerPositions,
+      tetherPositions: createTetherPositions(roundTowerPositions),
+    };
+  });
+}
+
+function createRandomRounds(): ActiveProgramRound[] {
+  return createRounds(createRandomTowerGroups());
+}
+
+function createFallbackRounds(): ActiveProgramRound[] {
+  return createRounds(
+    FALLBACK_TOWER_INDEX_PAIRS.map(([leftIndex, rightIndex]) =>
+      sortTowerPositionsByAssignmentOrder([TOWER_RING[leftIndex]!, TOWER_RING[rightIndex]!]),
+    ),
+  );
+}
+
 function createRandomAssignments(actors: BaseActorSnapshot[]): ProgramAssignments {
   const slots = actors
     .map((actor) => actor.slot)
@@ -202,8 +402,8 @@ function createRandomAssignments(actors: BaseActorSnapshot[]): ProgramAssignment
   };
 }
 
-function getRoundAt(timeMs: number): ProgramRound | null {
-  return ROUNDS.find((round) => timeMs >= round.startAt && timeMs < round.resolveAt) ?? null;
+function getRoundAt(timeMs: number, rounds: ActiveProgramRound[]): ActiveProgramRound | null {
+  return rounds.find((round) => timeMs >= round.startAt && timeMs < round.resolveAt) ?? null;
 }
 
 function getActorBySlot(actors: BaseActorSnapshot[], slot: PartySlot): BaseActorSnapshot {
@@ -218,29 +418,27 @@ function getActorBySlot(actors: BaseActorSnapshot[], slot: PartySlot): BaseActor
 
 function getTowerTarget(
   slot: PartySlot,
-  round: ProgramRound,
+  round: ActiveProgramRound,
   assignments: ProgramAssignments,
 ): Vector2 | null {
-  const towerSlots = assignments[round.towerNumber];
-  const towerIndex = towerSlots.indexOf(slot);
+  const towerIndex = getProgramSlotLane(slot, assignments, round.towerNumber);
 
   return towerIndex < 0 ? null : (round.towerPositions[towerIndex] ?? null);
 }
 
 function getTetherTarget(
   slot: PartySlot,
-  round: ProgramRound,
+  round: ActiveProgramRound,
   assignments: ProgramAssignments,
 ): Vector2 | null {
-  const tetherSlots = assignments[round.tetherNumber];
-  const tetherIndex = tetherSlots.indexOf(slot);
+  const tetherIndex = getProgramSlotLane(slot, assignments, round.tetherNumber);
 
   return tetherIndex < 0 ? null : (round.tetherPositions[tetherIndex] ?? null);
 }
 
 function getAssignedLane(slot: PartySlot, assignments: ProgramAssignments): number {
-  for (const slots of Object.values(assignments)) {
-    const lane = slots.indexOf(slot);
+  for (const number of PROGRAM_NUMBERS) {
+    const lane = getProgramSlotLane(slot, assignments, number);
 
     if (lane >= 0) {
       return lane;
@@ -252,7 +450,7 @@ function getAssignedLane(slot: PartySlot, assignments: ProgramAssignments): numb
 
 function getWaitingPoint(
   slot: PartySlot,
-  round: ProgramRound | null,
+  round: ActiveProgramRound | null,
   assignments: ProgramAssignments | null,
 ): Vector2 {
   if (round === null || assignments === null) {
@@ -261,7 +459,7 @@ function getWaitingPoint(
 
   const towerIndex = getAssignedLane(slot, assignments);
   const tower = round.towerPositions[towerIndex]!;
-  return createPointOnRadius(Math.atan2(tower.y, tower.x), 8);
+  return createPointOnRadius(Math.atan2(tower.y, tower.x), BOT_WAITING_RADIUS);
 }
 
 function getActorsInside(actors: BaseActorSnapshot[], center: Vector2, radius: number) {
@@ -318,7 +516,7 @@ function expireProgramStatus(
     return;
   }
 
-  applyTopStatus(ctx, actor, 'memory_loss', 1_000);
+  applyTopStatus(ctx, actor, 'memory_loss', MEMORY_LOSS_DURATION_MS);
   ctx.damage.kill([actor.id], '遗忘');
 }
 
@@ -364,7 +562,7 @@ function getTetherLane(
   round: ProgramRound,
   assignments: ProgramAssignments,
 ): number {
-  return assignments[round.tetherNumber].indexOf(slot);
+  return getProgramSlotLane(slot, assignments, round.tetherNumber);
 }
 
 function getHeldTetherLane(actorId: string, tethers: ShockwaveTether[]): number {
@@ -375,55 +573,112 @@ function getActorById(actors: BaseActorSnapshot[], actorId: string): BaseActorSn
   return actors.find((actor) => actor.id === actorId) ?? null;
 }
 
-function getTetherAllowedSlots(
-  assignments: ProgramAssignments,
-  lane: 0 | 1,
-): [PartySlot, PartySlot, PartySlot, PartySlot] {
-  return [assignments[2][lane], assignments[3][lane], assignments[4][lane], assignments[1][lane]];
+function getBotTetherLane(assignments: ProgramAssignments, lane: 0 | 1): BotTetherLane {
+  return [
+    getProgramSlotsByPriority(assignments, 2)[lane],
+    getProgramSlotsByPriority(assignments, 3)[lane],
+    getProgramSlotsByPriority(assignments, 4)[lane],
+    getProgramSlotsByPriority(assignments, 1)[lane],
+  ];
 }
 
-function getAssignmentsFromTethers(
-  actors: BaseActorSnapshot[],
-  tethers: ShockwaveTether[],
+function createBotTetherLanes(assignments: ProgramAssignments): BotTetherLanes {
+  return [getBotTetherLane(assignments, 0), getBotTetherLane(assignments, 1)];
+}
+
+function isPartySlot(value: unknown): value is PartySlot {
+  return PARTY_SLOT_ORDER.includes(value as PartySlot);
+}
+
+function isProgramAssignments(value: unknown): value is ProgramAssignments {
+  const assignments = value as ProgramAssignments;
+
+  return (
+    typeof assignments === 'object' &&
+    assignments !== null &&
+    PROGRAM_NUMBERS.every(
+      (number) =>
+        Array.isArray(assignments[number]) &&
+        assignments[number].length === 2 &&
+        assignments[number].every(isPartySlot),
+    )
+  );
+}
+
+function isBotTetherLane(value: unknown): value is BotTetherLane {
+  return Array.isArray(value) && value.length === 4 && value.every(isPartySlot);
+}
+
+function getAssignmentsFromScriptState(
+  scriptState: Record<string, unknown>,
 ): ProgramAssignments | null {
-  if (tethers.length < 2) {
+  const assignments = scriptState['top:assignments'];
+
+  return isProgramAssignments(assignments) ? assignments : null;
+}
+
+function getBotTetherLanesFromScriptState(
+  scriptState: Record<string, unknown>,
+): BotTetherLanes | null {
+  const lanes = scriptState['top:botTetherLanes'];
+
+  if (!Array.isArray(lanes) || lanes.length !== 2 || !lanes.every(isBotTetherLane)) {
     return null;
   }
 
-  const nextAssignments: Partial<ProgramAssignments> = {};
-
-  for (const number of [1, 2, 3, 4] as const) {
-    nextAssignments[number] = [DEFAULT_ASSIGNMENTS[number][0], DEFAULT_ASSIGNMENTS[number][1]];
-  }
-
-  for (const lane of [0, 1] as const) {
-    const allowedTargetIds = tethers[lane]?.allowedTargetIds;
-
-    if (allowedTargetIds === undefined || allowedTargetIds.length < 4) {
-      return null;
-    }
-
-    const slots = allowedTargetIds
-      .slice(0, 4)
-      .map((targetId) => getActorById(actors, targetId)?.slot);
-
-    if (slots.some((slot) => slot === null || slot === undefined)) {
-      return null;
-    }
-
-    nextAssignments[2]![lane] = slots[0]!;
-    nextAssignments[3]![lane] = slots[1]!;
-    nextAssignments[4]![lane] = slots[2]!;
-    nextAssignments[1]![lane] = slots[3]!;
-  }
-
-  return nextAssignments as ProgramAssignments;
+  return lanes as BotTetherLanes;
 }
 
-function getAssignmentsFromSnapshot(
-  snapshot: Parameters<BattleBotController>[0]['snapshot'],
-): ProgramAssignments | null {
-  return getAssignmentsFromTethers(snapshot.actors, getShockwaveTethers(snapshot.mechanics));
+function isVector2(value: unknown): value is Vector2 {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Vector2).x === 'number' &&
+    typeof (value as Vector2).y === 'number'
+  );
+}
+
+function subtractVector(left: Vector2, right: Vector2): Vector2 {
+  return {
+    x: left.x - right.x,
+    y: left.y - right.y,
+  };
+}
+
+function isActiveProgramRound(value: unknown): value is ActiveProgramRound {
+  const round = value as ActiveProgramRound;
+
+  return (
+    typeof round === 'object' &&
+    round !== null &&
+    PROGRAM_NUMBERS.includes(round.index) &&
+    PROGRAM_NUMBERS.includes(round.towerNumber) &&
+    PROGRAM_NUMBERS.includes(round.tetherNumber) &&
+    Array.isArray(round.towerPositions) &&
+    round.towerPositions.length === 2 &&
+    round.towerPositions.every(isVector2) &&
+    Array.isArray(round.tetherPositions) &&
+    round.tetherPositions.length === 2 &&
+    round.tetherPositions.every(isVector2) &&
+    typeof round.startAt === 'number' &&
+    typeof round.resolveAt === 'number'
+  );
+}
+
+function getRoundsFromScriptState(
+  scriptState: Record<string, unknown>,
+): ActiveProgramRound[] | null {
+  const rounds = scriptState['top:rounds'];
+
+  if (
+    !Array.isArray(rounds) ||
+    rounds.length !== ROUND_SCHEDULES.length ||
+    !rounds.every(isActiveProgramRound)
+  ) {
+    return null;
+  }
+
+  return rounds;
 }
 
 function getTetherPickupPoint(
@@ -445,11 +700,14 @@ function getTetherPickupPoint(
   const source = snapshot.boss.position;
   const lineLength = distance(source, holder.position);
 
-  if (lineLength <= 0.001) {
+  if (lineLength <= GEOMETRY_EPSILON) {
     return null;
   }
 
-  const ratio = Math.min(0.65, Math.max(0.25, 6 / lineLength));
+  const ratio = Math.min(
+    BOT_TETHER_PICKUP_MAX_RATIO,
+    Math.max(BOT_TETHER_PICKUP_MIN_RATIO, BOT_TETHER_PICKUP_DISTANCE / lineLength),
+  );
 
   return {
     x: source.x + (holder.position.x - source.x) * ratio,
@@ -457,23 +715,65 @@ function getTetherPickupPoint(
   };
 }
 
+function createTetherCrossingTarget(actorPosition: Vector2, pickupPoint: Vector2): Vector2 {
+  const direction = subtractVector(pickupPoint, actorPosition);
+  const directionLength = Math.hypot(direction.x, direction.y);
+
+  if (directionLength <= GEOMETRY_EPSILON) {
+    return pickupPoint;
+  }
+
+  return {
+    x: pickupPoint.x + (direction.x / directionLength) * BOT_TETHER_CROSSING_OVERSHOOT,
+    y: pickupPoint.y + (direction.y / directionLength) * BOT_TETHER_CROSSING_OVERSHOOT,
+  };
+}
+
+function getNextBotTetherSlot(
+  lane: number,
+  tethers: ShockwaveTether[],
+  actors: BaseActorSnapshot[],
+  botTetherLanes: BotTetherLanes | null,
+): PartySlot | null {
+  const tether = tethers[lane];
+  const laneSlots = botTetherLanes?.[lane];
+
+  if (tether === undefined || laneSlots === undefined) {
+    return null;
+  }
+
+  const holderSlot = getActorById(actors, tether.targetId)?.slot;
+
+  if (holderSlot === null || holderSlot === undefined) {
+    return null;
+  }
+
+  const holderIndex = laneSlots.indexOf(holderSlot);
+
+  if (holderIndex < 0) {
+    return null;
+  }
+
+  return laneSlots[(holderIndex + 1) % laneSlots.length]!;
+}
+
 export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
   id: 'top_p1_program_loop',
   name: '欧米茄绝境战 P1：循环程序',
-  arenaRadius: 20,
-  bossTargetRingRadius: 15,
+  arenaRadius: ARENA_RADIUS,
+  bossTargetRingRadius: BOSS_TARGET_RING_RADIUS,
   mapMarkers: TOP_MAP_MARKERS,
   slots: PARTY_SLOT_ORDER,
   bossName: '欧米茄',
   initialPartyPositions: {
-    MT: { position: INITIAL_SOUTH_POSITIONS.MT, facing: -Math.PI / 2 },
-    ST: { position: INITIAL_SOUTH_POSITIONS.ST, facing: -Math.PI / 2 },
-    H1: { position: INITIAL_SOUTH_POSITIONS.H1, facing: -Math.PI / 2 },
-    H2: { position: INITIAL_SOUTH_POSITIONS.H2, facing: -Math.PI / 2 },
-    D1: { position: INITIAL_SOUTH_POSITIONS.D1, facing: -Math.PI / 2 },
-    D2: { position: INITIAL_SOUTH_POSITIONS.D2, facing: -Math.PI / 2 },
-    D3: { position: INITIAL_SOUTH_POSITIONS.D3, facing: -Math.PI / 2 },
-    D4: { position: INITIAL_SOUTH_POSITIONS.D4, facing: -Math.PI / 2 },
+    MT: { position: INITIAL_SOUTH_POSITIONS.MT, facing: INITIAL_PARTY_FACING },
+    ST: { position: INITIAL_SOUTH_POSITIONS.ST, facing: INITIAL_PARTY_FACING },
+    H1: { position: INITIAL_SOUTH_POSITIONS.H1, facing: INITIAL_PARTY_FACING },
+    H2: { position: INITIAL_SOUTH_POSITIONS.H2, facing: INITIAL_PARTY_FACING },
+    D1: { position: INITIAL_SOUTH_POSITIONS.D1, facing: INITIAL_PARTY_FACING },
+    D2: { position: INITIAL_SOUTH_POSITIONS.D2, facing: INITIAL_PARTY_FACING },
+    D3: { position: INITIAL_SOUTH_POSITIONS.D3, facing: INITIAL_PARTY_FACING },
+    D4: { position: INITIAL_SOUTH_POSITIONS.D4, facing: INITIAL_PARTY_FACING },
   },
   failureTexts: {
     outOfBounds(actorName) {
@@ -486,15 +786,17 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
   buildScript(ctx) {
     const activeProgramStatuses = new Map<string, StatusId>();
 
-    ctx.state.setValue('top:rounds', ROUNDS);
-    ctx.timeline.at(6_000, () => {
-      ctx.boss.cast('program_loop', '循环程序', 4_000);
+    ctx.timeline.at(PROGRAM_CAST_START_AT, () => {
+      ctx.boss.cast('program_loop', '循环程序', PROGRAM_CAST_MS);
     });
 
     ctx.timeline.at(PROGRAM_START_AT, () => {
       const actors = ctx.select.allPlayers();
       const assignments = createRandomAssignments(actors);
+      const rounds = createRandomRounds();
       ctx.state.setValue('top:assignments', assignments);
+      ctx.state.setValue('top:botTetherLanes', createBotTetherLanes(assignments));
+      ctx.state.setValue('top:rounds', rounds);
 
       for (const actor of ctx.select.alivePlayers()) {
         if (actor.slot === null) {
@@ -503,7 +805,7 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
 
         const number = getProgramNumber(actor.slot, assignments);
         const statusId = STATUS_BY_NUMBER[number];
-        const durationMs = number * 9_000 + 7_000;
+        const durationMs = number * PROGRAM_DURATION_STEP_MS + PROGRAM_DURATION_BASE_MS;
         applyTopStatus(ctx, actor, statusId, durationMs);
         activeProgramStatuses.set(actor.id, statusId);
         ctx.timeline.after(durationMs, () => {
@@ -511,18 +813,16 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
         });
       }
 
-      for (const lane of [0, 1] as const) {
-        const slot = assignments[2][lane];
-        const allowedTargets = getTetherAllowedSlots(assignments, lane).map((allowedSlot) =>
-          getActorBySlot(actors, allowedSlot),
-        );
+      for (const lane of TETHER_LANES) {
+        const slot = getProgramSlotsByPriority(assignments, 2)[lane];
         ctx.spawn.tether({
           label: '冲击波连线',
           target: getActorBySlot(actors, slot),
-          allowedTargets,
-          transferRadius: TOP_TETHER_TRANSFER_RADIUS,
+          botTransferSequence: getBotTetherLane(assignments, lane).map((laneSlot) =>
+            getActorBySlot(actors, laneSlot),
+          ),
+          botTransferCooldownMs: TOP_BOT_TETHER_TRANSFER_COOLDOWN_MS,
           transferCooldownMs: TOP_TETHER_TRANSFER_COOLDOWN_MS,
-          minSourceDistance: TOP_TETHER_MIN_SOURCE_DISTANCE,
           allowTransfer: true,
           allowDeadRetarget: true,
           preventTargetHoldingOtherTether: true,
@@ -531,27 +831,54 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
       }
     });
 
-    for (const round of ROUNDS) {
-      ctx.timeline.at(round.startAt, () => {
-        ctx.state.setValue('top:activeRound', round.index);
+    for (const round of ROUND_SCHEDULES) {
+      ctx.timeline.at(round.resolveAt - BLASTER_CAST_MS, () => {
+        ctx.boss.cast(`shockwave_${round.index}`, '冲击波', BLASTER_CAST_MS);
+      });
 
-        for (const towerPosition of round.towerPositions) {
+      ctx.timeline.at(round.resolveAt - SHOCKWAVE_TELEGRAPH_MS, () => {
+        for (const tether of getShockwaveTethers(ctx.mechanics.all())) {
+          const handler = getActorById(ctx.select.allPlayers(), tether.targetId);
+
+          if (handler === null) {
+            continue;
+          }
+
+          ctx.spawn.circleTelegraph({
+            label: '冲击波预兆',
+            center: handler.position,
+            radius: SHOCKWAVE_RADIUS,
+            resolveAfterMs: SHOCKWAVE_TELEGRAPH_MS,
+          });
+        }
+      });
+
+      ctx.timeline.at(round.startAt, () => {
+        const activeRound = getRoundByIndex(
+          ctx.state.getValue<ActiveProgramRound[]>('top:rounds') ?? createFallbackRounds(),
+          round.index,
+        );
+        ctx.state.setValue('top:activeRound', activeRound.index);
+
+        for (const towerPosition of activeRound.towerPositions) {
           ctx.spawn.tower({
             label: '塔判定',
             center: towerPosition,
             radius: TOWER_RADIUS,
-            resolveAfterMs: round.resolveAt - round.startAt,
+            resolveAfterMs: activeRound.resolveAt - activeRound.startAt,
           });
         }
-
-        ctx.boss.cast(`shockwave_${round.index}`, '冲击波', SHOCKWAVE_CAST_MS);
       });
 
       ctx.timeline.at(round.resolveAt, () => {
+        const activeRound = getRoundByIndex(
+          ctx.state.getValue<ActiveProgramRound[]>('top:rounds') ?? createFallbackRounds(),
+          round.index,
+        );
         const actors = ctx.select.allPlayers();
         const assignments =
           ctx.state.getValue<ProgramAssignments>('top:assignments') ?? DEFAULT_ASSIGNMENTS;
-        round.towerPositions.forEach((towerPosition, towerIndex) => {
+        activeRound.towerPositions.forEach((towerPosition, towerIndex) => {
           const hits = getActorsInside(actors, towerPosition, TOWER_RADIUS);
           const validHits = hits
             .map((actor) => ({
@@ -571,11 +898,13 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
           }
 
           if (validHits.length !== 1) {
-            ctx.state.fail(`第 ${round.index} 轮塔未被正确处理`);
+            ctx.state.fail(`第 ${activeRound.index} 轮塔未被正确处理`);
             return;
           }
 
-          const expectedSlot = assignments[round.towerNumber][towerIndex];
+          const expectedSlot = getProgramSlotsByPriority(assignments, activeRound.towerNumber)[
+            towerIndex
+          ];
           const handler = validHits[0]!.actor;
 
           if (handler.slot !== expectedSlot) {
@@ -584,22 +913,22 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
         });
 
         const activeTethers = getShockwaveTethers(ctx.mechanics.all());
-        const tetherSlots = assignments[round.tetherNumber];
+        const tetherSlots = getProgramSlotsByPriority(assignments, activeRound.tetherNumber);
 
         tetherSlots.forEach((slot, tetherIndex) => {
           const expectedActor = getActorBySlot(actors, slot);
           const tether = activeTethers[tetherIndex];
-          const center = round.tetherPositions[tetherIndex];
+          const center = activeRound.tetherPositions[tetherIndex];
 
           if (tether === undefined || center === undefined) {
-            ctx.state.fail(`第 ${round.index} 轮冲击波缺少固定位置`);
+            ctx.state.fail(`第 ${activeRound.index} 轮冲击波缺少固定位置`);
             return;
           }
 
           const handler = actors.find((actor) => actor.id === tether.targetId);
 
           if (handler === undefined) {
-            ctx.state.fail(`第 ${round.index} 轮冲击波没有持有者`);
+            ctx.state.fail(`第 ${activeRound.index} 轮冲击波没有持有者`);
             return;
           }
 
@@ -609,13 +938,13 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
 
           const hits = getActorsInside(actors, handler.position, SHOCKWAVE_RADIUS);
 
-          const towerGroup = assignments[round.towerNumber];
+          const towerGroup = getProgramSlotsByPriority(assignments, activeRound.towerNumber);
           const hitTowerMember = hits.some(
             (actor) => actor.slot !== null && towerGroup.includes(actor.slot),
           );
 
           if (hitTowerMember) {
-            ctx.state.fail(`第 ${round.index} 轮冲击波命中踩塔玩家`);
+            ctx.state.fail(`第 ${activeRound.index} 轮冲击波命中踩塔玩家`);
           }
 
           for (const hit of hits) {
@@ -628,7 +957,7 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
       });
     }
 
-    ctx.timeline.at(47_500, () => {
+    ctx.timeline.at(PROGRAM_END_AT, () => {
       ctx.state.complete();
     });
   },
@@ -639,10 +968,12 @@ export const TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER: BattleBotController = ({
   slot,
   actor,
 }) => {
-  const round = getRoundAt(snapshot.timeMs);
+  const rounds = getRoundsFromScriptState(snapshot.scriptState);
+  const round = rounds === null ? null : getRoundAt(snapshot.timeMs, rounds);
   const faceAngle = createFacingTowards(actor.position, snapshot.boss.position);
   const tethers = getShockwaveTethers(snapshot.mechanics);
-  const assignments = getAssignmentsFromSnapshot(snapshot);
+  const assignments = getAssignmentsFromScriptState(snapshot.scriptState);
+  const botTetherLanes = getBotTetherLanesFromScriptState(snapshot.scriptState);
   const heldLane = getHeldTetherLane(actor.id, tethers);
   let target = getWaitingPoint(slot, round, assignments);
 
@@ -653,11 +984,19 @@ export const TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER: BattleBotController = ({
     if (tetherLane >= 0 && tetherTarget !== null) {
       const laneTether = tethers[tetherLane];
       const pickupTarget = getTetherPickupPoint(snapshot, tetherLane);
+      const nextBotTetherSlot = getNextBotTetherSlot(
+        tetherLane,
+        tethers,
+        snapshot.actors,
+        botTetherLanes,
+      );
 
       if (laneTether?.targetId === actor.id || pickupTarget === null) {
         target = tetherTarget;
+      } else if (nextBotTetherSlot === slot) {
+        target = createTetherCrossingTarget(actor.position, pickupTarget);
       } else {
-        target = pickupTarget;
+        target = getTowerTarget(slot, round, assignments) ?? target;
       }
     } else if (heldLane >= 0) {
       const heldTarget = getActorById(snapshot.actors, tethers[heldLane]!.targetId);

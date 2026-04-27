@@ -100,13 +100,19 @@ export interface BattleScriptContext {
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;
+    circleTelegraph(options: {
+      label: string;
+      center: Vector2;
+      radius: number;
+      resolveAfterMs?: number;
+      sourceId?: string;
+    }): MechanicSnapshot;
     tether(options: {
       label: string;
       target: BaseActorSnapshot;
-      allowedTargets?: BaseActorSnapshot[];
-      transferRadius?: number;
+      botTransferSequence?: BaseActorSnapshot[];
+      botTransferCooldownMs?: number;
       transferCooldownMs?: number;
-      minSourceDistance?: number;
       allowTransfer?: boolean;
       allowDeadRetarget?: boolean;
       preventTargetHoldingOtherTether?: boolean;

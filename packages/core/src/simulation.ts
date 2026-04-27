@@ -59,9 +59,8 @@ interface ActorMovementRuntime {
 const MOVEMENT_HISTORY_WINDOW_MS = 1_000;
 const HARD_CORRECTION_DISTANCE = 0.9;
 const POSITION_EPSILON = 0.001;
-const DEFAULT_TETHER_TRANSFER_RADIUS = 0.6;
 const DEFAULT_TETHER_TRANSFER_COOLDOWN_MS = 500;
-const DEFAULT_TETHER_MIN_SOURCE_DISTANCE = 3;
+const DEFAULT_BOT_TETHER_TRANSFER_COOLDOWN_MS = 0;
 const BUILTIN_STATUS_NAMES: Record<string, string> = {
   injury_up: '受伤加重',
   knockback_immune: '防击退',
@@ -80,6 +79,7 @@ interface RuntimeState {
   boss: BossSnapshot;
   mechanics: Map<string, MechanicSnapshot>;
   tetherReadyAt: Map<string, number>;
+  botTetherReadyAt: Map<string, number>;
   scheduler: SchedulerEntry[];
   schedulerOrder: number;
   scriptCursorTimeMs: number;
@@ -118,27 +118,6 @@ function sameMoveState(
   right: BaseActorSnapshot['moveState'],
 ): boolean {
   return left.moving === right.moving && sameDirection(left.direction, right.direction);
-}
-
-function distanceToSegment(point: Vector2, start: Vector2, end: Vector2): number {
-  const segment = subtract(end, start);
-  const segmentLengthSquared = segment.x * segment.x + segment.y * segment.y;
-
-  if (segmentLengthSquared <= POSITION_EPSILON) {
-    return distance(point, start);
-  }
-
-  const relative = subtract(point, start);
-  const progress = Math.max(
-    0,
-    Math.min(1, (relative.x * segment.x + relative.y * segment.y) / segmentLengthSquared),
-  );
-  const projection = {
-    x: start.x + segment.x * progress,
-    y: start.y + segment.y * progress,
-  };
-
-  return distance(point, projection);
 }
 
 function cross(left: Vector2, right: Vector2): number {
@@ -202,24 +181,6 @@ function segmentsIntersect(
   }
 
   return firstSideStart * firstSideEnd < 0 && secondSideStart * secondSideEnd < 0;
-}
-
-function distanceBetweenSegments(
-  firstStart: Vector2,
-  firstEnd: Vector2,
-  secondStart: Vector2,
-  secondEnd: Vector2,
-): number {
-  if (segmentsIntersect(firstStart, firstEnd, secondStart, secondEnd)) {
-    return 0;
-  }
-
-  return Math.min(
-    distanceToSegment(firstStart, secondStart, secondEnd),
-    distanceToSegment(firstEnd, secondStart, secondEnd),
-    distanceToSegment(secondStart, firstStart, firstEnd),
-    distanceToSegment(secondEnd, firstStart, firstEnd),
-  );
 }
 
 function createMovementRuntime(
@@ -568,6 +529,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       case 'spread':
         resolveSpread(mechanic);
         break;
+      case 'circleTelegraph':
       case 'tower':
       case 'tether':
         break;
@@ -847,6 +809,33 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
   function updateTethers(previousActorPositions: Map<string, Vector2>): void {
     const currentState = assertState(state);
 
+    function canTransferToActor(
+      mechanic: Extract<MechanicSnapshot, { kind: 'tether' }>,
+      actor: BaseActorSnapshot,
+      currentTargetId: string,
+    ): boolean {
+      if (actor.kind !== 'bot' || mechanic.botTransferSequenceIds === undefined) {
+        return true;
+      }
+
+      if ((currentState.botTetherReadyAt.get(mechanic.id) ?? 0) > currentState.timeMs) {
+        return false;
+      }
+
+      const currentTargetIndex = mechanic.botTransferSequenceIds.indexOf(currentTargetId);
+
+      if (currentTargetIndex < 0) {
+        return false;
+      }
+
+      const nextTargetId =
+        mechanic.botTransferSequenceIds[
+          (currentTargetIndex + 1) % mechanic.botTransferSequenceIds.length
+        ];
+
+      return actor.id === nextTargetId;
+    }
+
     for (const mechanic of currentState.mechanics.values()) {
       if (mechanic.kind !== 'tether') {
         continue;
@@ -881,12 +870,12 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         : new Set<string>();
 
       if (!target.alive && mechanic.allowDeadRetarget) {
+        const currentTargetId = target.id;
         const fallback = [...currentState.actors.values()].filter(
           (actor) =>
             actor.alive &&
             !heldTargetIds.has(actor.id) &&
-            (mechanic.allowedTargetIds === undefined ||
-              mechanic.allowedTargetIds.includes(actor.id)),
+            canTransferToActor(mechanic, actor, currentTargetId),
         )[0];
 
         if (fallback === undefined) {
@@ -895,6 +884,12 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
 
         mechanic.targetId = fallback.id;
         target = fallback;
+        if (fallback.kind === 'bot') {
+          currentState.botTetherReadyAt.set(
+            mechanic.id,
+            currentState.timeMs + mechanic.botTransferCooldownMs,
+          );
+        }
         currentState.tetherReadyAt.set(
           mechanic.id,
           currentState.timeMs + mechanic.transferCooldownMs,
@@ -912,34 +907,21 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             actor.alive &&
             actor.id !== target.id &&
             !heldTargetIds.has(actor.id) &&
-            (mechanic.allowedTargetIds === undefined ||
-              mechanic.allowedTargetIds.includes(actor.id)) &&
-            distance(actor.position, source.position) > mechanic.minSourceDistance &&
-            distance(actor.position, target.position) > mechanic.transferRadius,
+            canTransferToActor(mechanic, actor, target.id),
         )
         .map((actor) => {
           const previousPosition = previousActorPositions.get(actor.id) ?? actor.position;
 
           return {
             actor,
-            lineDistance: Math.min(
-              distanceToSegment(actor.position, source.position, target.position),
-              distanceBetweenSegments(
-                previousPosition,
-                actor.position,
-                source.position,
-                target.position,
-              ),
-            ),
+            crossing:
+              isPointOnSegment(actor.position, source.position, target.position) ||
+              segmentsIntersect(previousPosition, actor.position, source.position, target.position),
           };
         })
-        .filter((entry) => entry.lineDistance <= mechanic.transferRadius)
+        .filter((entry) => entry.crossing)
         .sort((left, right) => {
-          if (left.lineDistance === right.lineDistance) {
-            return (left.actor.slot ?? '').localeCompare(right.actor.slot ?? '');
-          }
-
-          return left.lineDistance - right.lineDistance;
+          return (left.actor.slot ?? '').localeCompare(right.actor.slot ?? '');
         })[0]?.actor;
 
       if (nextTarget === undefined) {
@@ -947,6 +929,12 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       }
 
       mechanic.targetId = nextTarget.id;
+      if (nextTarget.kind === 'bot') {
+        currentState.botTetherReadyAt.set(
+          mechanic.id,
+          currentState.timeMs + mechanic.botTransferCooldownMs,
+        );
+      }
       currentState.tetherReadyAt.set(
         mechanic.id,
         currentState.timeMs + mechanic.transferCooldownMs,
@@ -1157,6 +1145,18 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
+        circleTelegraph(options) {
+          const currentState = assertState(state);
+          return spawnMechanic({
+            id: nextMechanicId(),
+            kind: 'circleTelegraph',
+            label: options.label,
+            sourceId: options.sourceId ?? currentState.boss.id,
+            center: cloneVector(options.center),
+            radius: options.radius,
+            resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
+          });
+        },
         tether(options) {
           const currentState = assertState(state);
           return spawnMechanic({
@@ -1165,12 +1165,14 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             label: options.label,
             sourceId: options.sourceId ?? currentState.boss.id,
             targetId: options.target.id,
-            ...(options.allowedTargets === undefined
+            ...(options.botTransferSequence === undefined
               ? {}
-              : { allowedTargetIds: options.allowedTargets.map((target) => target.id) }),
-            transferRadius: options.transferRadius ?? DEFAULT_TETHER_TRANSFER_RADIUS,
+              : {
+                  botTransferSequenceIds: options.botTransferSequence.map((target) => target.id),
+                }),
+            botTransferCooldownMs:
+              options.botTransferCooldownMs ?? DEFAULT_BOT_TETHER_TRANSFER_COOLDOWN_MS,
             transferCooldownMs: options.transferCooldownMs ?? DEFAULT_TETHER_TRANSFER_COOLDOWN_MS,
-            minSourceDistance: options.minSourceDistance ?? DEFAULT_TETHER_MIN_SOURCE_DISTANCE,
             allowTransfer: options.allowTransfer ?? true,
             allowDeadRetarget: options.allowDeadRetarget ?? true,
             preventTargetHoldingOtherTether: options.preventTargetHoldingOtherTether ?? true,
@@ -1456,6 +1458,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         },
         mechanics: new Map(),
         tetherReadyAt: new Map(),
+        botTetherReadyAt: new Map(),
         scheduler: [],
         schedulerOrder: 0,
         scriptCursorTimeMs: 0,

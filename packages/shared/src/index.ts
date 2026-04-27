@@ -13,7 +13,14 @@ export type DamageType = 'raidwide' | 'avoidable' | 'punishment';
 export type EncounterOutcome = 'success' | 'failure';
 export type SimulationInputType = 'move' | 'face' | 'use-knockback-immune';
 export type StatusId = string;
-export type MechanicKind = 'circle' | 'donut' | 'share' | 'spread' | 'tower' | 'tether';
+export type MechanicKind =
+  | 'circle'
+  | 'donut'
+  | 'share'
+  | 'spread'
+  | 'tower'
+  | 'tether'
+  | 'circleTelegraph';
 
 export interface Vector2 {
   x: number;
@@ -147,16 +154,25 @@ export interface TowerMechanicSnapshot {
   resolveAt: number;
 }
 
+export interface CircleTelegraphMechanicSnapshot {
+  id: string;
+  kind: 'circleTelegraph';
+  label: string;
+  sourceId: string;
+  center: Vector2;
+  radius: number;
+  resolveAt: number;
+}
+
 export interface TetherMechanicSnapshot {
   id: string;
   kind: 'tether';
   label: string;
   sourceId: string;
   targetId: string;
-  allowedTargetIds?: string[];
-  transferRadius: number;
+  botTransferSequenceIds?: string[];
+  botTransferCooldownMs: number;
   transferCooldownMs: number;
-  minSourceDistance: number;
   allowTransfer: boolean;
   allowDeadRetarget: boolean;
   preventTargetHoldingOtherTether: boolean;
@@ -169,6 +185,7 @@ export type MechanicSnapshot =
   | ShareMechanicSnapshot
   | SpreadMechanicSnapshot
   | TowerMechanicSnapshot
+  | CircleTelegraphMechanicSnapshot
   | TetherMechanicSnapshot;
 
 export interface EncounterResult {
