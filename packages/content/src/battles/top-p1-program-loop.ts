@@ -124,16 +124,16 @@ const TOWER_RING = [
   TOWERS.W_S,
 ] as const satisfies readonly Vector2[];
 
-// 从 A 点左侧开始逆时针找塔；第一座塔由高优先级玩家处理，第二座塔由低优先级玩家处理。
+// 从 A 点左侧开始顺时针找塔；第一座塔由高优先级玩家处理，第二座塔由低优先级玩家处理。
 const TOWER_ASSIGNMENT_SCAN_ORDER = [
   TOWERS.N_W,
-  TOWERS.W_N,
-  TOWERS.W_S,
-  TOWERS.S_W,
-  TOWERS.S_E,
-  TOWERS.E_S,
-  TOWERS.E_N,
   TOWERS.N_E,
+  TOWERS.E_N,
+  TOWERS.E_S,
+  TOWERS.S_E,
+  TOWERS.S_W,
+  TOWERS.W_S,
+  TOWERS.W_N,
 ] as const satisfies readonly Vector2[];
 
 // TOP P1 每轮双塔只允许相隔 90 度或 180 度，按 8 点环形索引表示为 2/4/6。
@@ -147,9 +147,9 @@ const FALLBACK_TOWER_INDEX_PAIRS = [
 
 const SHOCKWAVE_CARDINAL_POSITIONS = [
   createPointOnRadius(NORTH_ANGLE, SHOCKWAVE_POSITION_RADIUS),
-  createPointOnRadius(Math.PI, SHOCKWAVE_POSITION_RADIUS),
-  createPointOnRadius(Math.PI / 2, SHOCKWAVE_POSITION_RADIUS),
   createPointOnRadius(0, SHOCKWAVE_POSITION_RADIUS),
+  createPointOnRadius(Math.PI / 2, SHOCKWAVE_POSITION_RADIUS),
+  createPointOnRadius(Math.PI, SHOCKWAVE_POSITION_RADIUS),
 ] as const satisfies readonly Vector2[];
 
 const INITIAL_SOUTH_POSITIONS: Record<PartySlot, Vector2> = {

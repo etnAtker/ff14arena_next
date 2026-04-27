@@ -108,15 +108,15 @@ function runTopProgramLoopWithBots(randomValues) {
 const TOWER_RING_KEYS = ['-15,-3', '-3,-15', '3,-15', '15,-3', '15,3', '3,15', '-3,15', '-15,3'];
 const TOWER_ASSIGNMENT_SCAN_KEYS = [
   '-3,-15',
-  '-15,-3',
-  '-15,3',
-  '-3,15',
-  '3,15',
-  '15,3',
-  '15,-3',
   '3,-15',
+  '15,-3',
+  '15,3',
+  '3,15',
+  '-3,15',
+  '-15,3',
+  '-15,-3',
 ];
-const SHOCKWAVE_CARDINAL_KEYS = ['0,-17', '-17,0', '0,17', '17,0'];
+const SHOCKWAVE_CARDINAL_KEYS = ['0,-17', '17,0', '0,17', '-17,0'];
 const TOP_ASSIGNMENT_PRIORITY = ['H1', 'MT', 'ST', 'D1', 'D2', 'D3', 'D4', 'H2'];
 
 function isValidTowerPairIndexDistance(towerPositions) {
@@ -391,7 +391,7 @@ test('欧米茄绝境战 P1 循环程序：全机器人按随机塔位脚本完�
             isSortedByOrder(round.towerPositions, TOWER_ASSIGNMENT_SCAN_KEYS),
           ),
           true,
-          '每轮塔位应按 A 左侧起逆时针顺序分配',
+          '每轮塔位应按 A 左侧起顺时针顺序分配',
         );
         assert.equal(
           tetherPositions.every((position) =>
@@ -403,7 +403,7 @@ test('欧米茄绝境战 P1 循环程序：全机器人按随机塔位脚本完�
         assert.equal(
           rounds.every((round) => isSortedByOrder(round.tetherPositions, SHOCKWAVE_CARDINAL_KEYS)),
           true,
-          '每轮冲击波拉线点应按 A 起逆时针顺序分配',
+          '每轮冲击波拉线点应按 A 起顺时针顺序分配',
         );
         assert.deepEqual(
           botTetherLanes,
