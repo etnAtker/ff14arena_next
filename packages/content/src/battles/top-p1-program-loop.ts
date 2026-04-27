@@ -33,6 +33,8 @@ const STATUS_BY_NUMBER: Record<ProgramNumber, StatusId> = {
   4: 'program_loop_4',
 };
 
+const PROGRAM_STATUS_IDS = new Set<StatusId>(Object.values(STATUS_BY_NUMBER));
+
 const STATUS_NAME_BY_ID: Record<StatusId, string> = {
   program_loop_1: '一号',
   program_loop_2: '二号',
@@ -259,12 +261,7 @@ function getWaitingPoint(
 
   const towerIndex = getAssignedLane(slot, assignments);
   const tower = round.towerPositions[towerIndex]!;
-  const inward = createPointOnRadius(Math.atan2(tower.y, tower.x), 9);
-
-  return {
-    x: (tower.x + inward.x) / 2,
-    y: (tower.y + inward.y) / 2,
-  };
+  return createPointOnRadius(Math.atan2(tower.y, tower.x), 8);
 }
 
 function getActorsInside(actors: BaseActorSnapshot[], center: Vector2, radius: number) {
@@ -273,6 +270,10 @@ function getActorsInside(actors: BaseActorSnapshot[], center: Vector2, radius: n
 
 function hasStatus(actor: BaseActorSnapshot, statusId: StatusId): boolean {
   return actor.statuses.some((status) => status.id === statusId);
+}
+
+function getProgramStatus(actor: BaseActorSnapshot): StatusId | null {
+  return actor.statuses.find((status) => PROGRAM_STATUS_IDS.has(status.id))?.id ?? null;
 }
 
 function applyTopStatus(
@@ -284,6 +285,41 @@ function applyTopStatus(
   ctx.status.apply([actor.id], statusId, durationMs, {
     name: STATUS_NAME_BY_ID[statusId] ?? statusId,
   });
+}
+
+function removeProgramStatus(
+  ctx: BattleScriptContext,
+  actor: BaseActorSnapshot,
+  statusId: StatusId,
+  activeProgramStatuses: Map<string, StatusId>,
+): void {
+  if (activeProgramStatuses.get(actor.id) === statusId) {
+    activeProgramStatuses.delete(actor.id);
+  }
+
+  ctx.status.remove([actor.id], statusId);
+}
+
+function expireProgramStatus(
+  ctx: BattleScriptContext,
+  actorId: string,
+  statusId: StatusId,
+  activeProgramStatuses: Map<string, StatusId>,
+): void {
+  if (activeProgramStatuses.get(actorId) !== statusId) {
+    return;
+  }
+
+  activeProgramStatuses.delete(actorId);
+
+  const actor = ctx.select.allPlayers().find((candidate) => candidate.id === actorId);
+
+  if (actor === undefined || !actor.alive) {
+    return;
+  }
+
+  applyTopStatus(ctx, actor, 'memory_loss', 1_000);
+  ctx.damage.kill([actor.id], '遗忘');
 }
 
 function applyTwiceComeRuin(
@@ -448,6 +484,8 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
     },
   },
   buildScript(ctx) {
+    const activeProgramStatuses = new Map<string, StatusId>();
+
     ctx.state.setValue('top:rounds', ROUNDS);
     ctx.timeline.at(6_000, () => {
       ctx.boss.cast('program_loop', '循环程序', 4_000);
@@ -465,7 +503,12 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
 
         const number = getProgramNumber(actor.slot, assignments);
         const statusId = STATUS_BY_NUMBER[number];
-        applyTopStatus(ctx, actor, statusId, number * 9_000 + 7_000);
+        const durationMs = number * 9_000 + 7_000;
+        applyTopStatus(ctx, actor, statusId, durationMs);
+        activeProgramStatuses.set(actor.id, statusId);
+        ctx.timeline.after(durationMs, () => {
+          expireProgramStatus(ctx, actor.id, statusId, activeProgramStatuses);
+        });
       }
 
       for (const lane of [0, 1] as const) {
@@ -508,12 +551,24 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
         const actors = ctx.select.allPlayers();
         const assignments =
           ctx.state.getValue<ProgramAssignments>('top:assignments') ?? DEFAULT_ASSIGNMENTS;
-        const towerStatus = STATUS_BY_NUMBER[round.towerNumber];
         round.towerPositions.forEach((towerPosition, towerIndex) => {
           const hits = getActorsInside(actors, towerPosition, TOWER_RADIUS);
-          const validHits = hits.filter((actor) =>
-            actor.statuses.some((status) => status.id === towerStatus),
-          );
+          const validHits = hits
+            .map((actor) => ({
+              actor,
+              statusId: getProgramStatus(actor),
+            }))
+            .filter(
+              (hit): hit is { actor: BaseActorSnapshot; statusId: StatusId } =>
+                hit.statusId !== null,
+            );
+
+          for (const hit of validHits) {
+            if (applyTopDamage(ctx, hit.actor, TOWER_DAMAGE, '塔判定')) {
+              applyTwiceComeRuin(ctx, hit.actor, TWICE_RUIN_DURATION_MS);
+            }
+            removeProgramStatus(ctx, hit.actor, hit.statusId, activeProgramStatuses);
+          }
 
           if (validHits.length !== 1) {
             ctx.state.fail(`第 ${round.index} 轮塔未被正确处理`);
@@ -521,16 +576,11 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
           }
 
           const expectedSlot = assignments[round.towerNumber][towerIndex];
-          const handler = validHits[0]!;
+          const handler = validHits[0]!.actor;
 
           if (handler.slot !== expectedSlot) {
             ctx.state.fail(`${handler.name} 在错误位置处理塔判定`);
           }
-
-          if (applyTopDamage(ctx, handler, TOWER_DAMAGE, '塔判定')) {
-            applyTwiceComeRuin(ctx, handler, TWICE_RUIN_DURATION_MS);
-          }
-          ctx.status.remove([handler.id], towerStatus);
         });
 
         const activeTethers = getShockwaveTethers(ctx.mechanics.all());

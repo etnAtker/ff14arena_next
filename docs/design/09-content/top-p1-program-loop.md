@@ -439,10 +439,8 @@
 文件组织要求：
 
 - 新机制必须单独写文件，不继续堆在 `packages/content/src/index.ts`。
-- 现有演示机制也需要拆出独立文件。
 - `packages/content/src/index.ts` 只保留类型导出、战斗注册表与聚合导出。
 - 推荐结构：
-  - `packages/content/src/battles/opening-two-rounds.ts`
   - `packages/content/src/battles/top-p1-program-loop.ts`
   - `packages/content/src/battles/index.ts`
   - `packages/content/src/bot/top-p1-program-loop.ts`

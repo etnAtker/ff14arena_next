@@ -105,10 +105,20 @@ function getMechanicStatusRows(slot: PartySlot): string[] {
   }
 
   return actor.statuses
-    .map((status) => status.name)
-    .filter((name) =>
-      ['一号', '二号', '三号', '四号', '衰减', '破灭', '死宣', '遗忘'].includes(name),
-    )
+    .map((status) => {
+      if (!Number.isFinite(status.expiresAt)) {
+        return status.name;
+      }
+
+      const remainingMs = status.expiresAt - renderSimulationTimeMs.value;
+
+      if (remainingMs <= 0) {
+        return null;
+      }
+
+      return `${status.name} ${Math.ceil(remainingMs / 1_000)}秒`;
+    })
+    .filter((name): name is string => name !== null)
     .slice(0, 10);
 }
 
@@ -464,7 +474,7 @@ onBeforeUnmount(() => {
 
 .slot-row.status-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   grid-auto-rows: minmax(19px, auto);
   gap: 4px;
   margin-top: 6px;

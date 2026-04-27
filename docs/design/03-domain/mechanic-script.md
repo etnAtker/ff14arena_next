@@ -48,7 +48,7 @@ type BattleDefinition = {
 ```ts
 export function buildBattle(ctx) {
   ctx.timeline.at(0, function () {
-    ctx.ui.setCastBar('双轮组合练习', 3000);
+    ctx.ui.setCastBar('示例读条', 3000);
   });
 
   ctx.timeline.at(3000, function () {

@@ -19,8 +19,6 @@
 
 当前已登记战斗为：
 
-- `opening_two_rounds`
-- 名称：`双轮组合练习`
 - `top_p1_program_loop`
 - 名称：`欧米茄绝境战 P1：循环程序`
 
@@ -70,7 +68,7 @@
 服务端集成测试位于：
 
 - [apps/server/test/app.test.mjs](/home/etnatker/workspace/code/ff14arena_next/apps/server/test/app.test.mjs)
-- [apps/server/test/top-program-loop.test.mjs](/home/etnatker/workspace/code/ff14arena_next/apps/server/test/top-program-loop.test.mjs)
+- [packages/content/test/top-program-loop.test.mjs](/home/etnatker/workspace/code/ff14arena_next/packages/content/test/top-program-loop.test.mjs)
 
 当前测试覆盖的关键链路：
 

@@ -36,5 +36,4 @@ MVP 要证明以下产品链路成立：
 
 ## MVP 演示内容
 
-MVP 使用一个双轮组合战斗做演示。  
-具体定义见 [首个战斗定义](../09-battle-baseline/first-battle.md)。
+MVP 使用当前 content 包登记的正式战斗做演示。

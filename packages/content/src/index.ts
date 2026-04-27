@@ -6,10 +6,6 @@ import {
 } from '@ff14arena/core';
 import type { BattleStaticData, BattleSummary } from '@ff14arena/shared';
 import {
-  OPENING_TWO_ROUNDS_BATTLE,
-  OPENING_TWO_ROUNDS_BOT_CONTROLLER,
-} from './battles/opening-two-rounds';
-import {
   TOP_P1_PROGRAM_LOOP_BATTLE,
   TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER,
 } from './battles/top-p1-program-loop';
@@ -21,13 +17,9 @@ export type {
   BattleBotControllerContext,
 } from './runtime/bot';
 
-export const battleDefinitions: BattleDefinition[] = [
-  OPENING_TWO_ROUNDS_BATTLE,
-  TOP_P1_PROGRAM_LOOP_BATTLE,
-];
+export const battleDefinitions: BattleDefinition[] = [TOP_P1_PROGRAM_LOOP_BATTLE];
 
 export const battleBotControllers = new Map<string, BattleBotController>([
-  [OPENING_TWO_ROUNDS_BATTLE.id, OPENING_TWO_ROUNDS_BOT_CONTROLLER],
   [TOP_P1_PROGRAM_LOOP_BATTLE.id, TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER],
 ]);
 
