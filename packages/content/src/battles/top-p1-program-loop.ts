@@ -549,6 +549,15 @@ function applyTopDamage(
   return true;
 }
 
+function triggerTowerExplosion(ctx: BattleScriptContext, roundIndex: ProgramNumber): void {
+  ctx.state.fail(`第 ${roundIndex} 轮塔爆炸`);
+  ctx.damage.kill(
+    ctx.select.alivePlayers().map((actor) => actor.id),
+    '塔爆炸',
+  );
+  ctx.state.complete('failure');
+}
+
 function isShockwaveTether(mechanic: MechanicSnapshot): mechanic is ShockwaveTether {
   return mechanic.kind === 'tether' && mechanic.label === '冲击波连线';
 }
@@ -878,7 +887,7 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
         const actors = ctx.select.allPlayers();
         const assignments =
           ctx.state.getValue<ProgramAssignments>('top:assignments') ?? DEFAULT_ASSIGNMENTS;
-        activeRound.towerPositions.forEach((towerPosition, towerIndex) => {
+        for (const [towerIndex, towerPosition] of activeRound.towerPositions.entries()) {
           const hits = getActorsInside(actors, towerPosition, TOWER_RADIUS);
           const validHits = hits
             .map((actor) => ({
@@ -890,6 +899,11 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
                 hit.statusId !== null,
             );
 
+          if (validHits.length === 0) {
+            triggerTowerExplosion(ctx, activeRound.index);
+            return;
+          }
+
           for (const hit of validHits) {
             if (applyTopDamage(ctx, hit.actor, TOWER_DAMAGE, '塔判定')) {
               applyTwiceComeRuin(ctx, hit.actor, TWICE_RUIN_DURATION_MS);
@@ -897,20 +911,17 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
             removeProgramStatus(ctx, hit.actor, hit.statusId, activeProgramStatuses);
           }
 
-          if (validHits.length !== 1) {
-            ctx.state.fail(`第 ${activeRound.index} 轮塔未被正确处理`);
-            return;
-          }
-
           const expectedSlot = getProgramSlotsByPriority(assignments, activeRound.towerNumber)[
             towerIndex
           ];
-          const handler = validHits[0]!.actor;
+          const handler =
+            validHits.find((candidate) => candidate.actor.slot === expectedSlot)?.actor ??
+            validHits[0]!.actor;
 
           if (handler.slot !== expectedSlot) {
             ctx.state.fail(`${handler.name} 在错误位置处理塔判定`);
           }
-        });
+        }
 
         const activeTethers = getShockwaveTethers(ctx.mechanics.all());
         const tetherSlots = getProgramSlotsByPriority(assignments, activeRound.tetherNumber);
