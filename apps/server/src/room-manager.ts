@@ -1,6 +1,7 @@
 import { getBattleBotController, getBattleDefinition } from '@ff14arena/content';
 import { createSimulation, DEFAULT_PLAYER_MAX_HP, FIXED_TICK_MS } from '@ff14arena/core';
 import type { BattleDefinition, PartyMemberBlueprint, SimulationInstance } from '@ff14arena/core';
+import { performance } from 'node:perf_hooks';
 import type { Server as SocketServer, Socket } from 'socket.io';
 import type {
   ActorControlFrame,
@@ -18,6 +19,7 @@ import type {
   UseKnockbackImmuneSimulationInput,
 } from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
+import { ServerMetricsCollector, type RoomMetricDescriptor } from './metrics';
 
 type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 type TypedIo = SocketServer<ClientToServerEvents, ServerToClientEvents>;
@@ -81,7 +83,10 @@ export class RoomManager {
   private readonly userRooms = new Map<string, string>();
   private roomCounter = 0;
 
-  constructor(private readonly io: TypedIo) {}
+  constructor(
+    private readonly io: TypedIo,
+    private readonly metrics?: ServerMetricsCollector,
+  ) {}
 
   listRooms(): RoomSummaryDto[] {
     return [...this.rooms.values()].map((room) => ({
@@ -92,6 +97,32 @@ export class RoomManager {
       phase: room.phase,
       occupantCount: Object.values(room.slots).filter((slot) => slot.type === 'player').length,
     }));
+  }
+
+  listMetricDescriptors(): RoomMetricDescriptor[] {
+    return [...this.rooms.values()].map((room) => {
+      const snapshot = room.simulation?.getSnapshot();
+      const slotOccupants = Object.values(room.slots);
+      const playerSlots = slotOccupants.filter((slot) => slot.type === 'player');
+      const botSlots = slotOccupants.filter((slot) => slot.type === 'bot');
+
+      return {
+        roomId: room.roomId,
+        name: room.name,
+        battleName: room.battle?.name ?? null,
+        phase: room.phase,
+        playerCount: playerSlots.length,
+        onlinePlayerCount: playerSlots.filter((slot) => slot.online).length,
+        botCount: botSlots.length,
+        activeSimulation: room.simulation !== null && room.loopHandle !== null,
+        tick: snapshot?.tick ?? null,
+        timeMs: snapshot?.timeMs ?? null,
+        syncId: room.syncId,
+        latestResultPresent: room.latestResult !== null || snapshot?.latestResult !== null,
+        failureReasonCount:
+          snapshot?.failureReasons.length ?? room.latestResult?.failureReasons.length ?? 0,
+      };
+    });
   }
 
   createRoom(options: {
@@ -276,6 +307,10 @@ export class RoomManager {
       return;
     }
 
+    const tickStartedAt = performance.now();
+    let botControllerDurationMs = 0;
+    let botControlFrames = 0;
+
     for (const frame of room.pendingControlByActorId.values()) {
       room.simulation.submitActorControlFrame(frame);
     }
@@ -302,11 +337,13 @@ export class RoomManager {
           continue;
         }
 
+        const botControllerStartedAt = performance.now();
         const control = botController({
           snapshot: preTickSnapshot,
           slot,
           actor,
         });
+        botControllerDurationMs += performance.now() - botControllerStartedAt;
         const nextSeq = (room.inputSeqByActorId.get(actor.id) ?? 0) + 1;
         room.inputSeqByActorId.set(actor.id, nextSeq);
         room.simulation.submitActorControlFrame({
@@ -316,14 +353,18 @@ export class RoomManager {
           ...(control.pose === undefined ? {} : { pose: control.pose }),
           ...(control.commands === undefined ? {} : { commands: control.commands }),
         });
+        botControlFrames += 1;
       }
     }
 
+    const simulationTickStartedAt = performance.now();
     room.simulation.tick(FIXED_TICK_MS);
+    const simulationTickDurationMs = performance.now() - simulationTickStartedAt;
     room.snapshotBroadcastCounter += 1;
     const events = room.simulation.drainEvents();
 
     if (events.length > 0) {
+      this.metrics?.recordSimEvents(room.roomId, events.length);
       this.io.to(room.roomId).emit('sim:events', {
         roomId: room.roomId,
         syncId: room.syncId,
@@ -344,6 +385,14 @@ export class RoomManager {
     if (room.phase === 'running' && snapshot.latestResult !== null) {
       this.finishSimulation(room, snapshot);
     }
+
+    this.metrics?.recordTick({
+      roomId: room.roomId,
+      tickDurationMs: performance.now() - tickStartedAt,
+      botControllerDurationMs,
+      simulationTickDurationMs,
+      botControlFrames,
+    });
   }
 
   joinRoom(
@@ -676,9 +725,12 @@ export class RoomManager {
     const lastSeq = room.lastPoseSeqByActorId.get(inputFrame.actorId) ?? 0;
 
     if (inputFrame.inputSeq <= lastSeq) {
+      this.metrics?.recordInputFrame(room.roomId);
+      this.metrics?.recordDroppedInputFrame(room.roomId);
       return;
     }
 
+    this.metrics?.recordInputFrame(room.roomId);
     room.lastPoseSeqByActorId.set(inputFrame.actorId, inputFrame.inputSeq);
     room.pendingControlByActorId.set(inputFrame.actorId, {
       actorId: inputFrame.actorId,
@@ -717,6 +769,7 @@ export class RoomManager {
       return;
     }
 
+    this.metrics?.recordResyncRequest(room.roomId);
     this.emitRoomState(room, socket);
     this.emitRoomSlots(room, socket);
     this.emitSnapshot(room, {
@@ -795,6 +848,7 @@ export class RoomManager {
       syncId: room.syncId,
       snapshot: startSnapshot,
     });
+    this.metrics?.recordSimStart();
     this.emitRoomState(room);
     this.emitRoomSlots(room);
   }
@@ -826,6 +880,7 @@ export class RoomManager {
       roomId: room.roomId,
       latestResult: room.latestResult!,
     });
+    this.metrics?.recordSimEnd();
     this.broadcastWaitingState(room, 'battle-end');
   }
 
@@ -843,10 +898,12 @@ export class RoomManager {
   private emitRoomState(room: RoomRecord, target?: TypedSocket): void {
     if (target !== undefined) {
       target.emit('room:state', { room: this.toRoomState(room) });
+      this.metrics?.recordRoomState();
       return;
     }
 
     this.io.to(room.roomId).emit('room:state', { room: this.toRoomState(room) });
+    this.metrics?.recordRoomState();
   }
 
   private emitRoomSlots(room: RoomRecord, target?: TypedSocket): void {
@@ -857,10 +914,12 @@ export class RoomManager {
 
     if (target !== undefined) {
       target.emit('room:slots', payload);
+      this.metrics?.recordRoomSlots();
       return;
     }
 
     this.io.to(room.roomId).emit('room:slots', payload);
+    this.metrics?.recordRoomSlots();
   }
 
   private emitSnapshot(
@@ -892,10 +951,12 @@ export class RoomManager {
 
     if (options.target !== undefined) {
       options.target.emit('sim:snapshot', payload);
+      this.metrics?.recordSnapshot(room.roomId);
       return;
     }
 
     this.io.to(room.roomId).emit('sim:snapshot', payload);
+    this.metrics?.recordSnapshot(room.roomId);
   }
 
   private resetReadyStates(room: RoomRecord): void {
@@ -954,6 +1015,7 @@ export class RoomManager {
       roomId: room.roomId,
       reason,
     });
+    this.metrics?.recordRoomClosedEvent();
 
     for (const slot of PARTY_SLOT_ORDER) {
       const occupant = room.slots[slot];
@@ -964,6 +1026,7 @@ export class RoomManager {
     }
 
     this.rooms.delete(roomId);
+    this.metrics?.recordRoomClosed(roomId);
   }
 
   private emitError(socket: TypedSocket, code: string, message: string): void {
@@ -971,5 +1034,6 @@ export class RoomManager {
       code,
       message,
     });
+    this.metrics?.recordServerError(code);
   }
 }

@@ -19,6 +19,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   selectBattle: [value: SelectValue];
   leaveRoom: [];
+  openMetrics: [];
 }>();
 </script>
 
@@ -58,6 +59,7 @@ const emit = defineEmits<{
           </n-tag>
           <n-tag type="warning" size="large" round> 延迟：{{ props.latencyDisplay }} </n-tag>
           <n-tag type="info" size="large" round> 当前用户：{{ props.userName }} </n-tag>
+          <n-button secondary @click="emit('openMetrics')">观测</n-button>
           <n-button v-if="props.roomName" secondary @click="emit('leaveRoom')">离开房间</n-button>
         </div>
       </div>

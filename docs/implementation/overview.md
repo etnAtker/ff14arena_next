@@ -16,6 +16,7 @@
 - 战斗结束后回到待开始状态
 - 运行中断线后按原槽位重连
 - 客户端主动请求重同步
+- 服务端短期内存态性能观测
 
 当前已登记战斗为：
 
@@ -47,6 +48,7 @@
   入口：
   [app.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/app.ts),
   [room-manager.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/room-manager.ts),
+  [metrics.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/metrics.ts),
   [index.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/index.ts)
 
 - `apps/web`
@@ -54,7 +56,8 @@
   入口：
   [App.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/App.vue),
   [app.ts](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/stores/app.ts),
-  [BattleStage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/battle/BattleStage.vue)
+  [BattleStage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/battle/BattleStage.vue),
+  [ServerMetricsPage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/pages/ServerMetricsPage.vue)
 
 ## 3. 验证方式
 

@@ -7,10 +7,13 @@ import { battleCatalog, getBattleStaticData } from '@ff14arena/content';
 import { Server } from 'socket.io';
 import type { AddressInfo } from 'node:net';
 import type { ClientToServerEvents, ServerToClientEvents } from '@ff14arena/shared';
+import { performance } from 'node:perf_hooks';
+import { ServerMetricsCollector } from './metrics';
 import { RoomManager } from './room-manager';
 
 const DEFAULT_WEB_DIST_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../web/dist');
-const BACKEND_ROUTE_PREFIXES = ['/health', '/battles', '/rooms', '/socket.io'];
+const BACKEND_ROUTE_PREFIXES = ['/health', '/battles', '/rooms', '/admin', '/socket.io'];
+const requestStartedAt = new WeakMap<FastifyRequest, number>();
 
 export interface ServerContextOptions {
   logger?: boolean;
@@ -21,6 +24,7 @@ export interface ServerContext {
   app: FastifyInstance;
   io: Server<ClientToServerEvents, ServerToClientEvents>;
   roomManager: RoomManager;
+  metrics: ServerMetricsCollector;
 }
 
 export interface StartServerOptions extends ServerContextOptions {
@@ -61,6 +65,10 @@ function shouldServeSpaShell(request: FastifyRequest): boolean {
   return !isBackendRoute(pathname);
 }
 
+function shouldRecordHttpMetrics(pathname: string): boolean {
+  return pathname !== '/health' && pathname !== '/admin/metrics';
+}
+
 export function createServerContext(options?: ServerContextOptions): ServerContext {
   const app = Fastify({
     logger: options?.logger ?? true,
@@ -72,7 +80,31 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       origin: true,
     },
   });
-  const roomManager = new RoomManager(io);
+  const metrics = new ServerMetricsCollector();
+  const roomManager = new RoomManager(io, metrics);
+
+  app.addHook('onRequest', async (request) => {
+    requestStartedAt.set(request, performance.now());
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const startedAt = requestStartedAt.get(request) ?? performance.now();
+    const requestUrl = request.raw.url ?? '/';
+    const pathname = new URL(requestUrl, 'http://localhost').pathname;
+
+    if (!shouldRecordHttpMetrics(pathname)) {
+      return;
+    }
+
+    const route = request.routeOptions.url ?? pathname;
+
+    metrics.recordHttp({
+      method: request.method,
+      route,
+      statusCode: reply.statusCode,
+      durationMs: performance.now() - startedAt,
+    });
+  });
 
   app.get('/health', async () => ({
     status: 'ok',
@@ -103,6 +135,10 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
   app.get('/rooms', async () => ({
     rooms: roomManager.listRooms(),
   }));
+
+  app.get('/admin/metrics', async () =>
+    metrics.createSnapshot(roomManager.listMetricDescriptors()),
+  );
 
   app.post('/rooms', async (request, reply) => {
     const body = request.body as {
@@ -150,43 +186,55 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
   }
 
   io.on('connection', (socket) => {
+    metrics.recordSocketConnect();
+
     socket.on('room:join', (payload) => {
+      metrics.recordSocketInbound('room:join');
       roomManager.joinRoom(socket, payload);
     });
 
     socket.on('room:leave', (payload) => {
+      metrics.recordSocketInbound('room:leave');
       roomManager.leaveRoom(socket, payload.roomId);
     });
 
     socket.on('room:ready', (payload) => {
+      metrics.recordSocketInbound('room:ready');
       roomManager.setReady(socket, payload.roomId, payload.ready);
     });
 
     socket.on('room:select-battle', (payload) => {
+      metrics.recordSocketInbound('room:select-battle');
       roomManager.selectBattle(socket, payload.roomId, payload.battleId);
     });
 
     socket.on('room:switch-slot', (payload) => {
+      metrics.recordSocketInbound('room:switch-slot');
       roomManager.switchSlot(socket, payload);
     });
 
     socket.on('room:start', (payload) => {
+      metrics.recordSocketInbound('room:start');
       roomManager.startRoom(socket, payload.roomId);
     });
 
     socket.on('sim:input-frame', (payload) => {
+      metrics.recordSocketInbound('sim:input-frame');
       roomManager.enqueueContinuousInput(socket, payload);
     });
 
     socket.on('sim:use-knockback-immune', (payload) => {
+      metrics.recordSocketInbound('sim:use-knockback-immune');
       roomManager.enqueueInput(socket, payload);
     });
 
     socket.on('sim:request-resync', (payload) => {
+      metrics.recordSocketInbound('sim:request-resync');
       roomManager.requestResync(socket, payload);
     });
 
     socket.on('disconnect', () => {
+      metrics.recordSocketDisconnect();
       roomManager.handleDisconnect(socket.id);
     });
   });
@@ -195,6 +243,7 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
     app,
     io,
     roomManager,
+    metrics,
   };
 }
 

@@ -18,6 +18,9 @@ import type { OperationMode, SelectValue } from './utils/ui';
 
 const HomePage = defineAsyncComponent(() => import('./components/pages/HomePage.vue'));
 const BattlePage = defineAsyncComponent(() => import('./components/pages/BattlePage.vue'));
+const ServerMetricsPage = defineAsyncComponent(
+  () => import('./components/pages/ServerMetricsPage.vue'),
+);
 
 const OPERATION_MODE_STORAGE_KEY = 'ff14arena:operation-mode';
 const MIN_CAMERA_ZOOM = 0.7;
@@ -100,6 +103,7 @@ const editUserName = ref(profile.value.userName);
 const operationMode = ref<OperationMode>(loadOperationMode());
 const cameraYaw = ref(0);
 const cameraZoom = ref(1);
+const isMetricsRoute = window.location.pathname === '/metrics';
 const lastTraditionalFacing = ref<number | null>(null);
 const pendingPointerFacing = ref<number | null>(null);
 const lastSentPointerFacing = ref<number | null>(null);
@@ -236,6 +240,10 @@ function handleJoinRoom(roomId: string): void {
   void store.joinRoom(roomId);
 }
 
+function openMetricsPage(): void {
+  window.location.assign('/metrics');
+}
+
 function updateCameraYaw(nextYaw: number): void {
   cameraYaw.value = nextYaw;
 }
@@ -300,6 +308,10 @@ watch(
 );
 
 onMounted(async () => {
+  if (isMetricsRoute) {
+    return;
+  }
+
   await refreshLobby();
   window.addEventListener('keydown', handleKeyDown);
   window.addEventListener('keyup', handleKeyUp);
@@ -367,7 +379,11 @@ onBeforeUnmount(() => {
     :date-locale="dateZhCN"
   >
     <n-global-style />
-    <div class="shell">
+    <div v-if="isMetricsRoute" class="metrics-shell">
+      <ServerMetricsPage />
+    </div>
+
+    <div v-else class="shell">
       <AppTopbar
         :connected="connected"
         :latency-display="latencyDisplay"
@@ -381,6 +397,7 @@ onBeforeUnmount(() => {
         :battle-select-disabled="!isOwner || snapshot?.phase !== 'waiting'"
         @select-battle="selectBattleByValue"
         @leave-room="store.leaveRoom"
+        @open-metrics="openMetricsPage"
       />
 
       <main :class="['shell-content', page === 'battle' ? 'battle-content' : 'home-content']">
@@ -458,6 +475,13 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
+}
+
+.metrics-shell {
+  box-sizing: border-box;
+  height: 100dvh;
+  padding: 20px;
+  overflow: auto;
 }
 
 .shell-content {

@@ -211,6 +211,29 @@ test('房间全流程：创建、立即加入、等待态快照、开始战斗',
 
     const healthResponse = await globalThis.fetch(`${baseUrl}/health`);
     assert.equal(healthResponse.status, 200);
+
+    await new Promise((resolve) => {
+      globalThis.setTimeout(resolve, 80);
+    });
+
+    const metricsResponse = await globalThis.fetch(`${baseUrl}/admin/metrics`);
+    assert.equal(metricsResponse.status, 200);
+    const metricsPayload = await metricsResponse.json();
+    assert.equal(metricsPayload.limits.persistence, 'none');
+    assert.equal(metricsPayload.limits.windowSec, 600);
+    assert.equal(metricsPayload.limits.estimatedMemoryCeilingMb, 32);
+    assert.equal(metricsPayload.rooms.total, 1);
+    assert.equal(metricsPayload.rooms.running, 1);
+    assert.equal(metricsPayload.socket.connected, 2);
+    assert.ok(metricsPayload.simulation.tickDurationMs.count >= 1);
+    assert.equal(
+      metricsPayload.http.routes.some((route) => route.route === '/health'),
+      false,
+    );
+    assert.equal(
+      metricsPayload.http.routes.some((route) => route.route === '/admin/metrics'),
+      false,
+    );
   } finally {
     owner.close();
     guest.close();

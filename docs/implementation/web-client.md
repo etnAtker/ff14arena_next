@@ -8,6 +8,7 @@
 - [apps/web/src/App.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/App.vue)
 - [apps/web/src/stores/app.ts](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/stores/app.ts)
 - [apps/web/src/components/battle/BattleStage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/battle/BattleStage.vue)
+- [apps/web/src/components/pages/ServerMetricsPage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/pages/ServerMetricsPage.vue)
 
 ## 1. 页面结构
 
@@ -15,11 +16,14 @@
 
 - 首页
 - 模拟页
+- 服务器性能观测页
 
 当前切换规则如下：
 
 - 未进入房间时显示首页
 - 进入任意房间后直接显示模拟页
+- 顶栏“观测”按钮会跳转到独立路径 `/metrics`
+- `/metrics` 只渲染服务器性能观测页，不加载大厅数据，也不创建模拟页输入循环
 
 ## 2. 页面分工
 
@@ -30,7 +34,7 @@
 - `components/layout`
   负责顶栏等全局壳层组件
 - `components/pages`
-  负责首页和模拟页页面组件
+  负责首页、模拟页和服务器性能观测页页面组件
 - `components/battle`
   负责战斗场地、镜头换算与场景绘制
 - `utils/ui.ts`
@@ -164,6 +168,29 @@
 - `waiting` 阶段用于进房预览、切槽和等待开始
 - `running` 阶段用于权威模拟展示
 - `latestResult` 用于右侧栏展示上一轮结果
+
+## 7. 性能观测页
+
+当前性能观测页通过 `GET /admin/metrics` 轮询服务端短期内存指标。
+
+页面行为如下：
+
+- 默认每 `2` 秒拉取一次指标
+- 只读取聚合后的指标 JSON
+- 不建立额外 Socket 订阅
+- 不触发服务端落盘
+- 与首页和模拟页状态解耦
+
+页面展示以下信息：
+
+- Socket 当前连接数、累计连接数和断开数
+- 房间总量、运行中房间数、活跃模拟数、在线玩家数和 Bot 数
+- Tick p95、Tick 最大耗时、Tick 超时次数
+- Bot controller p95、Bot 控制帧数量
+- core simulation tick p95
+- HTTP 路由请求数、错误率、请求速率、耗时 p95 和最大耗时
+- Socket 上行事件、下行事件和错误码分布
+- 房间级玩家数、Bot 数、Tick、输入帧、丢弃旧输入、事件、快照和重同步统计
 
 ## 7. 当前边界
 

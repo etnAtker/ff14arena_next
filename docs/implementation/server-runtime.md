@@ -6,6 +6,7 @@
 
 - [apps/server/src/app.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/app.ts)
 - [apps/server/src/room-manager.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/room-manager.ts)
+- [apps/server/src/metrics.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/metrics.ts)
 - [packages/shared/src/index.ts](/home/etnatker/workspace/code/ff14arena_next/packages/shared/src/index.ts)
 
 ## 1. 房间托管职责
@@ -30,8 +31,9 @@
 - `GET /battles/:battleId/static`
 - `GET /rooms`
 - `POST /rooms`
+- `GET /admin/metrics`
 
-这些接口用于存活探测、战斗列表查询、静态战斗信息获取和房间创建。
+这些接口用于存活探测、战斗列表查询、静态战斗信息获取、房间创建和短期性能观测。
 
 ## 3. 房间生命周期
 
@@ -127,3 +129,48 @@
 
 - [部署说明](./deployment.md)
 - [docs/todo/README.md](/home/etnatker/workspace/code/ff14arena_next/docs/todo/README.md)
+
+## 7. 性能观测
+
+当前服务端提供内存态短期性能观测能力，观测接口为 `GET /admin/metrics`。
+
+观测实现遵循以下约束：
+
+- 指标只保存在当前 Node.js 进程内存中，服务重启后清空
+- 不落盘，不写数据库，不生成指标日志文件
+- 默认观测最近 `10` 分钟滑动窗口数据
+- 每 `10` 秒一个聚合 bucket
+- 默认指标内存设计预算估算为 `16 MB`
+- 指标内存设计上界估算为 `32 MB`
+- 房间级指标最多跟踪 `256` 个房间
+- 已关闭房间指标最多短期保留 `64` 个
+- 超出房间指标上限时，优先丢弃已关闭或最久未活跃房间的指标
+- 实际强约束是窗口 bucket 数、活跃房间指标数和已关闭房间指标数，不做 JS 对象字节级硬限制
+- `/health` 和 `/admin/metrics` 请求不会进入 HTTP 路由性能统计
+
+观测数据只记录计数、耗时直方图和房间运行摘要。  
+服务端不会记录以下内容：
+
+- HTTP 请求 body
+- Socket payload
+- 玩家输入明细
+- 完整 `SimulationSnapshot`
+- 完整 `SimulationEvent`
+- 战斗日志正文
+- 玩家名称历史
+
+当前观测指标覆盖：
+
+- Node.js 进程 uptime、内存、事件循环延迟和事件循环利用率
+- HTTP 路由请求数、错误率、耗时 p95 和最大耗时
+- Socket.IO 当前连接数、累计连接断开数、上行事件数、下行事件数和错误码分布
+- 房间总数、等待态房间数、运行中房间数、活跃模拟数、在线玩家数和 Bot 数
+- Tick 总耗时、Bot controller 耗时、core simulation tick 耗时和 Tick 超时次数
+- 输入帧数量、丢弃旧输入数量、Bot 控制帧数量、模拟事件数量、快照数量和重同步请求数量
+
+耗时 p95 使用固定直方图近似计算，不保存原始耗时样本。  
+当前直方图包含亚毫秒桶，因此轻负载下的 Tick p95 不会统一显示为 `1ms`。  
+每次读取 `/admin/metrics` 时，服务端会以当前时间所在 bucket 为终点，合并最近 `60` 个 `10` 秒 bucket。
+
+Bot 指标单独从 Tick 指标中拆出。  
+Bot 不占用 Socket 连接，也不产生客户端上行 `sim:input-frame`，但 Bot controller 和 Bot 控制帧会占用服务端 Tick 预算，并间接影响模拟事件数量、快照序列化成本、CPU 使用和事件循环延迟。
