@@ -28,12 +28,17 @@
 - `packages/shared`
   共享协议、房间 DTO、输入类型、快照与事件定义
   入口：
-  [packages/shared/src/index.ts](/home/etnatker/workspace/code/ff14arena_next/packages/shared/src/index.ts)
+  [index.ts](/home/etnatker/workspace/code/ff14arena_next/packages/shared/src/index.ts),
+  [base.ts](/home/etnatker/workspace/code/ff14arena_next/packages/shared/src/base.ts),
+  [simulation.ts](/home/etnatker/workspace/code/ff14arena_next/packages/shared/src/simulation.ts),
+  [protocol.ts](/home/etnatker/workspace/code/ff14arena_next/packages/shared/src/protocol.ts),
+  [metrics.ts](/home/etnatker/workspace/code/ff14arena_next/packages/shared/src/metrics.ts)
 
 - `packages/core`
   战斗模拟内核，负责 Tick 推进、输入消费、移动、通用机制 primitive、伤害、状态和结果聚合
   入口：
   [simulation.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/simulation.ts),
+  [movement-runtime.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/movement-runtime.ts),
   [types.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/types.ts),
   [constants.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/constants.ts),
   [math.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/math.ts)
@@ -48,6 +53,8 @@
   入口：
   [app.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/app.ts),
   [room-manager.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/room-manager.ts),
+  [room-record.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/room-record.ts),
+  [room-presenter.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/room-presenter.ts),
   [metrics.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/metrics.ts),
   [index.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/index.ts)
 
@@ -56,6 +63,7 @@
   入口：
   [App.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/App.vue),
   [app.ts](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/stores/app.ts),
+  [profile.ts](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/stores/profile.ts),
   [BattleStage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/battle/BattleStage.vue),
   [ServerMetricsPage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/pages/ServerMetricsPage.vue)
 

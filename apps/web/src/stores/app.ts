@@ -13,58 +13,19 @@ import type {
   SimulationSnapshot,
   Vector2,
 } from '@ff14arena/shared';
+import { normalizeAngleDifference } from '../utils/angle';
+import { loadProfile, saveProfile, type LocalProfile } from './profile';
 
 type AppSocket = Socket;
-
-interface LocalProfile {
-  userId: string;
-  userName: string;
-}
 
 interface FacingPreviewState {
   actorId: string;
   facing: number;
 }
 
-const PROFILE_STORAGE_KEY = 'ff14arena:profile';
 const RESYNC_THROTTLE_MS = 500;
 const CONTINUOUS_INPUT_INTERVAL_MS = 50;
 const TRANSPORT_PROBE_INTERVAL_MS = 1_500;
-
-function createDefaultProfile(): LocalProfile {
-  return {
-    userId: `user_${crypto.randomUUID()}`,
-    userName: `玩家${Math.floor(Math.random() * 9000 + 1000)}`,
-  };
-}
-
-function loadProfile(): LocalProfile {
-  const raw = window.localStorage.getItem(PROFILE_STORAGE_KEY);
-
-  if (raw === null) {
-    const nextProfile = createDefaultProfile();
-    window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(nextProfile));
-    return nextProfile;
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as LocalProfile;
-
-    if (typeof parsed.userId === 'string' && typeof parsed.userName === 'string') {
-      return parsed;
-    }
-  } catch {
-    // 忽略损坏的本地缓存，回退到默认身份。
-  }
-
-  const fallback = createDefaultProfile();
-  window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(fallback));
-  return fallback;
-}
-
-function normalizeAngleDifference(left: number, right: number): number {
-  return Math.atan2(Math.sin(left - right), Math.cos(left - right));
-}
 
 interface LocalControlledPose {
   actorId: string;
@@ -552,7 +513,7 @@ export const useAppStore = defineStore('app', () => {
       ...profile.value,
       userName: userName.trim() || profile.value.userName,
     };
-    window.localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile.value));
+    saveProfile(profile.value);
   }
 
   async function createRoom(name: string, battleId?: string): Promise<void> {

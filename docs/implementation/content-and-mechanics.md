@@ -6,6 +6,7 @@
 
 - [packages/core/src/types.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/types.ts)
 - [packages/core/src/simulation.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/simulation.ts)
+- [packages/core/src/movement-runtime.ts](/home/etnatker/workspace/code/ff14arena_next/packages/core/src/movement-runtime.ts)
 - [packages/content/src/index.ts](/home/etnatker/workspace/code/ff14arena_next/packages/content/src/index.ts)
 - [packages/content/src/battles/top-p1-program-loop.ts](/home/etnatker/workspace/code/ff14arena_next/packages/content/src/battles/top-p1-program-loop.ts)
 

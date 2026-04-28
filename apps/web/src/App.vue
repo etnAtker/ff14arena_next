@@ -14,6 +14,8 @@ import { darkTheme, dateZhCN, NAlert, NConfigProvider, NGlobalStyle, zhCN } from
 import AppTopbar from './components/layout/AppTopbar.vue';
 import { getCameraYawForFacing } from './components/battle/camera';
 import { useAppStore } from './stores/app';
+import { normalizeAngleDifference, rotateVector } from './utils/angle';
+import { loadOperationMode, saveOperationMode } from './utils/operation-mode';
 import type { OperationMode, SelectValue } from './utils/ui';
 
 const HomePage = defineAsyncComponent(() => import('./components/pages/HomePage.vue'));
@@ -22,7 +24,6 @@ const ServerMetricsPage = defineAsyncComponent(
   () => import('./components/pages/ServerMetricsPage.vue'),
 );
 
-const OPERATION_MODE_STORAGE_KEY = 'ff14arena:operation-mode';
 const MIN_CAMERA_ZOOM = 0.7;
 const MAX_CAMERA_ZOOM = 2.4;
 
@@ -62,25 +63,6 @@ const themeOverrides: GlobalThemeOverrides = {
     },
   },
 };
-
-function loadOperationMode(): OperationMode {
-  const raw = window.localStorage.getItem(OPERATION_MODE_STORAGE_KEY);
-  return raw === 'standard' ? 'standard' : 'traditional';
-}
-
-function rotateVector(vector: { x: number; y: number }, angle: number): { x: number; y: number } {
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-
-  return {
-    x: vector.x * cos - vector.y * sin,
-    y: vector.x * sin + vector.y * cos,
-  };
-}
-
-function normalizeAngleDifference(left: number, right: number): number {
-  return Math.atan2(Math.sin(left - right), Math.cos(left - right));
-}
 
 const store = useAppStore();
 const {
@@ -214,7 +196,7 @@ function movementVector(): { x: number; y: number } {
 
 function updateOperationMode(value: SelectValue): void {
   operationMode.value = value === 'standard' ? 'standard' : 'traditional';
-  window.localStorage.setItem(OPERATION_MODE_STORAGE_KEY, operationMode.value);
+  saveOperationMode(operationMode.value);
   pendingPointerFacing.value = null;
   lastSentPointerFacing.value = null;
 }

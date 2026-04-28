@@ -39,11 +39,11 @@
 
 ```ts
 createSimulation(config);
+simulation.loadBattle(options);
 simulation.start();
 simulation.stop();
 simulation.tick(deltaMs);
-simulation.dispatchInput(input);
+simulation.submitActorControlFrame(frame);
 simulation.getSnapshot();
 simulation.drainEvents();
-simulation.loadBattle(script);
 ```

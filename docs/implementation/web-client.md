@@ -7,6 +7,7 @@
 
 - [apps/web/src/App.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/App.vue)
 - [apps/web/src/stores/app.ts](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/stores/app.ts)
+- [apps/web/src/stores/profile.ts](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/stores/profile.ts)
 - [apps/web/src/components/battle/BattleStage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/battle/BattleStage.vue)
 - [apps/web/src/components/pages/ServerMetricsPage.vue](/home/etnatker/workspace/code/ff14arena_next/apps/web/src/components/pages/ServerMetricsPage.vue)
 
@@ -198,7 +199,7 @@
 - Socket 上行事件、下行事件和错误码分布
 - 房间级玩家数、Bot 数、Tick、输入帧、丢弃旧输入、事件、快照和重同步统计
 
-## 7. 当前边界
+## 8. 当前边界
 
 当前前端仍以原型可用为目标。  
 当前前端已具备第一版高延迟移动优化，但尚不包含完整聊天能力与更精细的输入重演链。

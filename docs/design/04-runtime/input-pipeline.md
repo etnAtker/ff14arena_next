@@ -10,7 +10,7 @@
 二者共用同一套移动主链，但进入 `core` 的形式不同：
 
 - 玩家移动通过位姿样本写入当前 Actor 状态
-- Bot 指令仍转换为 `SimulationInput`
+- Bot controller 提交统一控制帧
 
 ## 输入结构
 
@@ -24,14 +24,13 @@
 - `payload.facing`
 - `payload.moveDirection`
 
-Bot 主动能力输入仍使用 `SimulationInput`，包含：
+Bot 控制帧包含：
 
-- `roomId`
 - `actorId`
 - `inputSeq`
 - `issuedAt`
-- `type`
-- `payload`
+- `pose`
+- `commands`
 
 ## 处理流程
 
@@ -42,7 +41,7 @@ Bot 主动能力输入仍使用 `SimulationInput`，包含：
 3. 对玩家连续移动样本按 `actorId + inputSeq` 去重，只保留每个 Actor 的最新位姿样本
 4. 房间 Tick 开始时，服务端先把待处理位姿样本写入同一个 `SimulationInstance`
 5. 等待态与运行态都走同一套位姿样本写入链路，这条链路不分叉
-6. Bot 指令和一次性主动能力继续进入同一个 `SimulationInput` 队列
+6. Bot 指令和一次性主动能力继续进入同一个控制帧处理链
 7. `core` 在当前 Tick 中推进移动、状态与战斗逻辑
 8. `core` 产出状态变化与事件
 
@@ -53,27 +52,28 @@ Bot 主动能力输入仍使用 `SimulationInput`，包含：
 - 该连接属于该房间
 - 该连接控制该 Actor
 - 当前房间状态允许该输入
-- 当前 Actor 仍然存活
 
 ## 主动能力校验
 
 所有主动能力由 `core` 判断可用性。  
-防击退统一校验：
+防击退当前校验：
 
 - 是否存活
 - 是否已处于防击退状态
 - 是否处于冷却中
+
+不满足条件时，`core` 静默忽略该指令，不向客户端返回细粒度拒绝事件。
 
 防击退的冷却与持续时间使用全局规则：
 
 - 冷却时间 `20s`
 - 持续时间 `8s`
 
-## 拒绝原因
+## 当前服务端拒绝原因
 
-服务端返回以下拒绝原因：
+服务端当前只返回房间、连接与控制权相关错误，例如：
 
 - `not_in_room`
 - `slot_not_owned`
-- `actor_dead`
-- `skill_on_cooldown`
+- `room_not_found`
+- `room_not_running`

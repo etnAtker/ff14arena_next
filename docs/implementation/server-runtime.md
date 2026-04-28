@@ -6,6 +6,8 @@
 
 - [apps/server/src/app.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/app.ts)
 - [apps/server/src/room-manager.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/room-manager.ts)
+- [apps/server/src/room-record.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/room-record.ts)
+- [apps/server/src/room-presenter.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/room-presenter.ts)
 - [apps/server/src/metrics.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/metrics.ts)
 - [packages/shared/src/index.ts](/home/etnatker/workspace/code/ff14arena_next/packages/shared/src/index.ts)
 

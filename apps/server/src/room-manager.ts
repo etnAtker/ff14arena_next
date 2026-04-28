@@ -1,17 +1,11 @@
 import { getBattleBotController, getBattleDefinition } from '@ff14arena/content';
-import { createSimulation, DEFAULT_PLAYER_MAX_HP, FIXED_TICK_MS } from '@ff14arena/core';
-import type { BattleDefinition, PartyMemberBlueprint, SimulationInstance } from '@ff14arena/core';
+import { createSimulation, FIXED_TICK_MS } from '@ff14arena/core';
 import { performance } from 'node:perf_hooks';
 import type { Server as SocketServer, Socket } from 'socket.io';
 import type {
-  ActorControlFrame,
   ClientToServerEvents,
   ContinuousSimulationInputFrame,
-  EncounterResult,
   PartySlot,
-  RoomPhase,
-  RoomSlotState,
-  RoomSpectatorState,
   RoomStateDto,
   RoomSummaryDto,
   ServerToClientEvents,
@@ -21,72 +15,23 @@ import type {
 } from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import { ServerMetricsCollector, type RoomMetricDescriptor } from './metrics';
+import {
+  buildPartyBlueprint,
+  createRoomMetricDescriptor,
+  createRoomSlots,
+  createRoomState,
+  createRoomSummary,
+} from './room-presenter';
+import {
+  createBotOccupant,
+  createFilledBotSlots,
+  type PlayerSlotOccupant,
+  type RoomRecord,
+  type RoomSpectator,
+} from './room-record';
 
 type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 type TypedIo = SocketServer<ClientToServerEvents, ServerToClientEvents>;
-
-interface PlayerSlotOccupant {
-  type: 'player';
-  actorId: string;
-  userId: string;
-  name: string;
-  socketId: string | null;
-  online: boolean;
-  ready: boolean;
-  departed: boolean;
-}
-
-interface BotSlotOccupant {
-  type: 'bot';
-  actorId: string;
-  name: string;
-  ready: true;
-}
-
-type SlotOccupant = PlayerSlotOccupant | BotSlotOccupant;
-
-interface RoomSpectator {
-  userId: string;
-  name: string;
-  socketId: string | null;
-  online: boolean;
-  ready: boolean;
-}
-
-interface RoomRecord {
-  roomId: string;
-  name: string;
-  ownerUserId: string;
-  ownerName: string;
-  phase: RoomPhase;
-  battleId: string | null;
-  battle: BattleDefinition | null;
-  slots: Record<PartySlot, SlotOccupant>;
-  spectators: Map<string, RoomSpectator>;
-  simulation: SimulationInstance | null;
-  loopHandle: NodeJS.Timeout | null;
-  snapshotBroadcastCounter: number;
-  latestResult: EncounterResult | null;
-  inputSeqByActorId: Map<string, number>;
-  lastPoseSeqByActorId: Map<string, number>;
-  pendingControlByActorId: Map<string, ActorControlFrame>;
-  syncId: number;
-}
-
-function createBotOccupant(roomId: string, slot: PartySlot): BotSlotOccupant {
-  return {
-    type: 'bot',
-    actorId: `${roomId}:bot:${slot}`,
-    name: `Bot ${slot}`,
-    ready: true,
-  };
-}
-
-function createFilledBotSlots(roomId: string): Record<PartySlot, SlotOccupant> {
-  return Object.fromEntries(
-    PARTY_SLOT_ORDER.map((slot) => [slot, createBotOccupant(roomId, slot)]),
-  ) as Record<PartySlot, SlotOccupant>;
-}
 
 export class RoomManager {
   private readonly rooms = new Map<string, RoomRecord>();
@@ -99,45 +44,11 @@ export class RoomManager {
   ) {}
 
   listRooms(): RoomSummaryDto[] {
-    return [...this.rooms.values()].map((room) => ({
-      roomId: room.roomId,
-      name: room.name,
-      battleId: room.battleId,
-      battleName: room.battle?.name ?? null,
-      phase: room.phase,
-      occupantCount:
-        Object.values(room.slots).filter((slot) => slot.type === 'player').length +
-        room.spectators.size,
-    }));
+    return [...this.rooms.values()].map(createRoomSummary);
   }
 
   listMetricDescriptors(): RoomMetricDescriptor[] {
-    return [...this.rooms.values()].map((room) => {
-      const snapshot = room.simulation?.getSnapshot();
-      const slotOccupants = Object.values(room.slots);
-      const playerSlots = slotOccupants.filter((slot) => slot.type === 'player');
-      const botSlots = slotOccupants.filter((slot) => slot.type === 'bot');
-      const spectators = [...room.spectators.values()];
-
-      return {
-        roomId: room.roomId,
-        name: room.name,
-        battleName: room.battle?.name ?? null,
-        phase: room.phase,
-        playerCount: playerSlots.length + spectators.length,
-        onlinePlayerCount:
-          playerSlots.filter((slot) => slot.online).length +
-          spectators.filter((spectator) => spectator.online).length,
-        botCount: botSlots.length,
-        activeSimulation: room.simulation !== null && room.loopHandle !== null,
-        tick: snapshot?.tick ?? null,
-        timeMs: snapshot?.timeMs ?? null,
-        syncId: room.syncId,
-        latestResultPresent: room.latestResult !== null || snapshot?.latestResult !== null,
-        failureReasonCount:
-          snapshot?.failureReasons.length ?? room.latestResult?.failureReasons.length ?? 0,
-      };
-    });
+    return [...this.rooms.values()].map(createRoomMetricDescriptor);
   }
 
   createRoom(options: {
@@ -176,96 +87,11 @@ export class RoomManager {
       keepTimeMs: false,
       sourceSnapshot: null,
     });
-    return this.toRoomState(room);
+    return createRoomState(room);
   }
 
   toRoomState(room: RoomRecord): RoomStateDto {
-    return {
-      roomId: room.roomId,
-      name: room.name,
-      ownerUserId: room.ownerUserId,
-      ownerName: room.ownerName,
-      battleId: room.battleId,
-      battleName: room.battle?.name ?? null,
-      phase: room.phase,
-      slots: this.toRoomSlots(room),
-      spectators: this.toRoomSpectators(room),
-      latestResult: room.latestResult,
-    };
-  }
-
-  toRoomSpectators(room: RoomRecord): RoomSpectatorState[] {
-    return [...room.spectators.values()].map((spectator) => ({
-      userId: spectator.userId,
-      name: spectator.name,
-      online: spectator.online,
-      ready: spectator.ready,
-    }));
-  }
-
-  toRoomSlots(room: RoomRecord): RoomSlotState[] {
-    const snapshot = room.simulation?.getSnapshot();
-    const actorById = new Map(snapshot?.actors.map((actor) => [actor.id, actor]) ?? []);
-
-    return PARTY_SLOT_ORDER.map((slot) => {
-      const occupant = room.slots[slot];
-      const actor = actorById.get(occupant.actorId);
-
-      if (occupant.type === 'bot') {
-        return {
-          slot,
-          occupantType: 'bot',
-          actorId: occupant.actorId,
-          ownerUserId: null,
-          name: occupant.name,
-          online: true,
-          ready: true,
-          currentHp: actor?.currentHp ?? DEFAULT_PLAYER_MAX_HP,
-          alive: actor?.alive ?? true,
-          knockbackImmune: actor?.knockbackImmune ?? false,
-        };
-      }
-
-      return {
-        slot,
-        occupantType: 'player',
-        actorId: occupant.actorId,
-        ownerUserId: occupant.userId,
-        name: occupant.name,
-        online: occupant.online,
-        ready: occupant.ready,
-        currentHp: actor?.currentHp ?? DEFAULT_PLAYER_MAX_HP,
-        alive: actor?.alive ?? true,
-        knockbackImmune: actor?.knockbackImmune ?? false,
-      };
-    });
-  }
-
-  private buildPartyBlueprint(room: RoomRecord): PartyMemberBlueprint[] {
-    return PARTY_SLOT_ORDER.map((slot) => {
-      const occupant = room.slots[slot];
-
-      if (occupant.type === 'bot') {
-        return {
-          slot,
-          name: occupant.name,
-          kind: 'bot',
-          actorId: occupant.actorId,
-          online: true,
-          ready: true,
-        };
-      }
-
-      return {
-        slot,
-        name: occupant.name,
-        kind: 'player',
-        actorId: occupant.actorId,
-        ownerUserId: occupant.userId,
-        online: occupant.online,
-        ready: occupant.ready,
-      };
-    });
+    return createRoomState(room);
   }
 
   private resetPoseSyncState(room: RoomRecord): void {
@@ -300,7 +126,7 @@ export class RoomManager {
     simulation.loadBattle({
       battle: room.battle,
       roomId: room.roomId,
-      party: this.buildPartyBlueprint(room),
+      party: buildPartyBlueprint(room),
       sourceSnapshot,
       latestResult: room.latestResult,
       ...(options?.keepTimeMs === undefined ? {} : { keepTimeMs: options.keepTimeMs }),
@@ -999,7 +825,7 @@ export class RoomManager {
     simulation.loadBattle({
       battle: room.battle!,
       roomId: room.roomId,
-      party: this.buildPartyBlueprint(room),
+      party: buildPartyBlueprint(room),
       resetAllActors: true,
       keepTimeMs: false,
       latestResult: null,
@@ -1078,7 +904,7 @@ export class RoomManager {
   private emitRoomSlots(room: RoomRecord, target?: TypedSocket): void {
     const payload = {
       roomId: room.roomId,
-      slots: this.toRoomSlots(room),
+      slots: createRoomSlots(room),
     };
 
     if (target !== undefined) {
