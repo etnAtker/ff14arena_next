@@ -6,7 +6,12 @@ import type {
   SimulationSnapshot,
   Vector2,
 } from '@ff14arena/shared';
-import { FIXED_TICK_MS, movePosition, normalizeMoveDirection } from '@ff14arena/core';
+import {
+  FIXED_TICK_MS,
+  getActorMoveSpeed,
+  movePosition,
+  normalizeMoveDirection,
+} from '@ff14arena/core';
 
 export interface BattleBotControllerContext {
   snapshot: SimulationSnapshot;
@@ -45,7 +50,7 @@ export function createPose(
   const direction = normalizeMoveDirection(moveDirection);
 
   return {
-    position: movePosition(actor.position, direction, FIXED_TICK_MS),
+    position: movePosition(actor.position, direction, FIXED_TICK_MS, getActorMoveSpeed(actor)),
     facing,
     moveState: {
       direction,

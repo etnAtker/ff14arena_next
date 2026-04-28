@@ -79,6 +79,7 @@
   - `sim:input-frame`
 - 一次性指令：
   - `sim:use-knockback-immune`
+  - `sim:use-sprint`
 - 主动重同步请求：
   - `sim:request-resync`
 
@@ -125,6 +126,7 @@
 - `running` 只是比 `waiting` 多推进战斗脚本、AOE、伤害、Buff 与结算
 - Bot controller 运行在 `core` 外部，只读取快照与 `scriptState`，再向 `core` 提交统一控制帧
 - 普通移动不再做 `issuedAtServerTimeEstimate` 时间补偿，也不再回传输入确认序号
+- 当前服务端不对玩家上传位姿样本执行移动速度上限校验
 - 击退、越界修正等强修正仍通过事件直接下发位置结果
 
 ## 6. 当前边界

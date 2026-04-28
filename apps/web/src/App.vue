@@ -262,6 +262,10 @@ function handleKeyDown(event: KeyboardEvent): void {
   if (event.code === 'Digit1') {
     store.useKnockbackImmune();
   }
+
+  if (event.code === 'Digit2') {
+    store.useSprint();
+  }
 }
 
 function handleKeyUp(event: KeyboardEvent): void {
@@ -435,6 +439,7 @@ onBeforeUnmount(() => {
               { label: '标准', value: 'standard' },
             ]"
             @use-knockback-immune="store.useKnockbackImmune"
+            @use-sprint="store.useSprint"
             @spectate="store.spectate"
             @start-battle="store.startBattle"
             @set-ready="store.setReady(true)"

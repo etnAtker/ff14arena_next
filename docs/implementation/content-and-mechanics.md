@@ -40,6 +40,7 @@ core 只对少量内置状态保留通用行为：
 
 - `injury_up`
 - `knockback_immune`
+- `sprint`
 
 content 可以创建任意状态 ID。  
 状态展示名由 `ctx.status.apply(..., { name })` 传入；若未传入展示名，core 使用状态 ID 作为显示名。
@@ -56,6 +57,8 @@ content 可以创建任意状态 ID。
 - `memory_loss`：遗忘
 
 这些状态的副作用不在 core 中实现。
+
+`sprint` 是全局主动能力状态，展示名为“疾跑”。该状态存在时，通用移动速度计算返回默认速度的 `1.3` 倍；状态持续 `10s`，冷却 `60s`。
 
 ## 3. 通用机制 primitive
 

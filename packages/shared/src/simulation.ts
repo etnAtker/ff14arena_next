@@ -3,7 +3,7 @@ import type { MapMarker, PartySlot, RoomRuntimePhase, Vector2 } from './base';
 export type ActorKind = 'player' | 'bot' | 'boss';
 export type DamageType = 'raidwide' | 'avoidable' | 'punishment';
 export type EncounterOutcome = 'success' | 'failure';
-export type SimulationInputType = 'move' | 'face' | 'use-knockback-immune';
+export type SimulationInputType = 'move' | 'face' | 'use-knockback-immune' | 'use-sprint';
 export type StatusId = string;
 export type MechanicKind =
   | 'circle'
@@ -56,6 +56,7 @@ export interface BaseActorSnapshot {
   statuses: StatusSnapshot[];
   knockbackImmune: boolean;
   knockbackImmuneCooldown: CooldownState;
+  sprintCooldown: CooldownState;
   deathReason: string | null;
   lastDamageSource: string | null;
   online?: boolean;
@@ -200,6 +201,10 @@ export interface UseKnockbackImmunePayload {
   issuedBy: 'player' | 'bot';
 }
 
+export interface UseSprintPayload {
+  issuedBy: 'player' | 'bot';
+}
+
 export interface ContinuousInputFramePayload {
   position: Vector2;
   moveDirection: Vector2;
@@ -221,10 +226,15 @@ export interface ActorControlPose {
   moveState: MoveState;
 }
 
-export interface ActorControlCommand {
-  type: 'use-knockback-immune';
-  payload: UseKnockbackImmunePayload;
-}
+export type ActorControlCommand =
+  | {
+      type: 'use-knockback-immune';
+      payload: UseKnockbackImmunePayload;
+    }
+  | {
+      type: 'use-sprint';
+      payload: UseSprintPayload;
+    };
 
 export interface ActorControlFrame {
   actorId: string;
@@ -239,7 +249,8 @@ export type PositionCorrectionMode = 'smooth' | 'hard';
 export type SimulationInputPayload =
   | MoveInputPayload
   | FaceInputPayload
-  | UseKnockbackImmunePayload;
+  | UseKnockbackImmunePayload
+  | UseSprintPayload;
 
 export interface SimulationInputBase<TType extends SimulationInputType, TPayload> {
   roomId: string;
@@ -256,6 +267,7 @@ export type UseKnockbackImmuneSimulationInput = SimulationInputBase<
   'use-knockback-immune',
   UseKnockbackImmunePayload
 >;
+export type UseSprintSimulationInput = SimulationInputBase<'use-sprint', UseSprintPayload>;
 
 export interface ContinuousSimulationInputFrame {
   roomId: string;
@@ -268,4 +280,5 @@ export interface ContinuousSimulationInputFrame {
 export type SimulationInput =
   | MoveSimulationInput
   | FaceSimulationInput
-  | UseKnockbackImmuneSimulationInput;
+  | UseKnockbackImmuneSimulationInput
+  | UseSprintSimulationInput;

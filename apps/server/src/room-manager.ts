@@ -12,6 +12,7 @@ import type {
   SimResyncRequestPayload,
   SimulationSnapshot,
   UseKnockbackImmuneSimulationInput,
+  UseSprintSimulationInput,
 } from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import { ServerMetricsCollector, type RoomMetricDescriptor } from './metrics';
@@ -637,7 +638,10 @@ export class RoomManager {
     this.startSimulation(room);
   }
 
-  enqueueInput(socket: TypedSocket, input: UseKnockbackImmuneSimulationInput): void {
+  enqueueInput(
+    socket: TypedSocket,
+    input: UseKnockbackImmuneSimulationInput | UseSprintSimulationInput,
+  ): void {
     const room = this.rooms.get(input.roomId);
 
     if (room === undefined) {
@@ -668,7 +672,7 @@ export class RoomManager {
       issuedAt: input.issuedAt,
       commands: [
         {
-          type: 'use-knockback-immune',
+          type: input.type,
           payload: input.payload,
         },
       ],

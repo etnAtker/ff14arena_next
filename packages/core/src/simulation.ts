@@ -25,6 +25,9 @@ import {
   INJURY_UP_DURATION_MS,
   INJURY_UP_MULTIPLIER,
   KNOCKBACK_IMMUNE_COOLDOWN_MS,
+  KNOCKBACK_IMMUNE_DURATION_MS,
+  SPRINT_COOLDOWN_MS,
+  SPRINT_DURATION_MS,
 } from './constants';
 import { add, angleTo, distance, fromAngle, length, normalize, scale, subtract } from './math';
 import {
@@ -59,6 +62,7 @@ const DEFAULT_BOT_TETHER_TRANSFER_COOLDOWN_MS = 0;
 const BUILTIN_STATUS_NAMES: Record<string, string> = {
   injury_up: '受伤加重',
   knockback_immune: '防击退',
+  sprint: '疾跑',
 };
 
 interface RuntimeState {
@@ -246,6 +250,10 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     if (statusId === 'knockback_immune') {
       target.knockbackImmune = true;
       target.knockbackImmuneCooldown.readyAt = currentState.timeMs + KNOCKBACK_IMMUNE_COOLDOWN_MS;
+    }
+
+    if (statusId === 'sprint') {
+      target.sprintCooldown.readyAt = currentState.timeMs + SPRINT_COOLDOWN_MS;
     }
 
     emit<StatusAppliedEvent>({
@@ -571,7 +579,17 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             continue;
           }
 
-          applyStatus(actor, 'knockback_immune', 8_000);
+          applyStatus(actor, 'knockback_immune', KNOCKBACK_IMMUNE_DURATION_MS);
+          break;
+        case 'use-sprint':
+          if (
+            actor.statuses.some((status) => status.id === 'sprint') ||
+            actor.sprintCooldown.readyAt > currentState.timeMs
+          ) {
+            continue;
+          }
+
+          applyStatus(actor, 'sprint', SPRINT_DURATION_MS);
           break;
       }
     }
@@ -1151,6 +1169,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
                 knockbackImmuneCooldown: {
                   readyAt: 0,
                 },
+                sprintCooldown: {
+                  readyAt: 0,
+                },
                 deathReason: null,
                 lastDamageSource: null,
               }
@@ -1161,6 +1182,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           kind: member.kind,
           slot: member.slot,
           name: member.name,
+          sprintCooldown: actorBase.sprintCooldown ?? {
+            readyAt: 0,
+          },
           online: member.online ?? member.kind === 'bot',
           ready: member.ready ?? member.kind === 'bot',
         };
@@ -1185,6 +1209,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           actor.statuses = [];
           actor.knockbackImmune = false;
           actor.knockbackImmuneCooldown = {
+            readyAt: 0,
+          };
+          actor.sprintCooldown = {
             readyAt: 0,
           };
           actor.deathReason = null;
@@ -1228,6 +1255,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           statuses: [],
           knockbackImmune: true,
           knockbackImmuneCooldown: {
+            readyAt: Number.MAX_SAFE_INTEGER,
+          },
+          sprintCooldown: {
             readyAt: Number.MAX_SAFE_INTEGER,
           },
           deathReason: null,

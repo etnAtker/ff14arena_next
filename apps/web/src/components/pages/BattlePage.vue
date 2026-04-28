@@ -38,6 +38,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   useKnockbackImmune: [];
+  useSprint: [];
   spectate: [];
   startBattle: [];
   setReady: [];
@@ -88,6 +89,9 @@ const castProgress = computed(() => {
 });
 
 const canUseKnockback = computed(
+  () => props.snapshot?.phase === 'running' && props.controlledActorId !== null,
+);
+const canUseSprint = computed(
   () => props.snapshot?.phase === 'running' && props.controlledActorId !== null,
 );
 const spectateButtonLabel = computed(() => (props.isOwner && props.isSpectating ? '开始' : '观战'));
@@ -392,6 +396,9 @@ onBeforeUnmount(() => {
           <div class="stage-actions">
             <n-button secondary :disabled="!canUseKnockback" @click="emit('useKnockbackImmune')">
               防击退（1）
+            </n-button>
+            <n-button secondary :disabled="!canUseSprint" @click="emit('useSprint')">
+              疾跑（2）
             </n-button>
             <n-button tertiary @click="emit('resetZoom')">重置缩放</n-button>
             <n-text depth="3" class="stage-hint">

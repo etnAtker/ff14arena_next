@@ -1,7 +1,7 @@
 import { computed, ref, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import type { Socket } from 'socket.io-client';
-import { movePosition, normalizeMoveDirection } from '@ff14arena/core';
+import { getActorMoveSpeed, movePosition, normalizeMoveDirection } from '@ff14arena/core';
 import type {
   BattleSummary,
   PartySlot,
@@ -648,7 +648,12 @@ export const useAppStore = defineStore('app', () => {
 
     const direction = normalizeMoveDirection(frame.moveDirection);
     const nextFacing = frame.facing ?? actor.facing;
-    const nextPosition = movePosition(actor.position, direction, CONTINUOUS_INPUT_INTERVAL_MS);
+    const nextPosition = movePosition(
+      actor.position,
+      direction,
+      CONTINUOUS_INPUT_INTERVAL_MS,
+      getActorMoveSpeed(actor),
+    );
 
     actor.position = nextPosition;
     actor.moveState = {
@@ -690,6 +695,9 @@ export const useAppStore = defineStore('app', () => {
     switch (payload.type) {
       case 'use-knockback-immune':
         socket.value.emit('sim:use-knockback-immune', payload);
+        break;
+      case 'use-sprint':
+        socket.value.emit('sim:use-sprint', payload);
         break;
       default:
         return;
@@ -760,6 +768,26 @@ export const useAppStore = defineStore('app', () => {
     emitSimulationInput({
       actorId: actor.id,
       type: 'use-knockback-immune',
+      payload: {
+        issuedBy: 'player',
+      },
+    });
+  }
+
+  function useSprint(): void {
+    if (snapshot.value?.phase !== 'running') {
+      return;
+    }
+
+    const actor = getCurrentPlayerActor();
+
+    if (actor === null) {
+      return;
+    }
+
+    emitSimulationInput({
+      actorId: actor.id,
+      type: 'use-sprint',
       payload: {
         issuedBy: 'player',
       },
@@ -913,5 +941,6 @@ export const useAppStore = defineStore('app', () => {
     sendContinuousInputFrame,
     previewFaceAngle,
     useKnockbackImmune,
+    useSprint,
   };
 });

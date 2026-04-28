@@ -233,6 +233,11 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       roomManager.enqueueInput(socket, payload);
     });
 
+    socket.on('sim:use-sprint', (payload) => {
+      metrics.recordSocketInbound('sim:use-sprint');
+      roomManager.enqueueInput(socket, payload);
+    });
+
     socket.on('sim:request-resync', (payload) => {
       metrics.recordSocketInbound('sim:request-resync');
       roomManager.requestResync(socket, payload);

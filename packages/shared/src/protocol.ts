@@ -5,6 +5,7 @@ import type {
   EncounterResult,
   SimulationSnapshot,
   UseKnockbackImmuneSimulationInput,
+  UseSprintSimulationInput,
 } from './simulation';
 import type { SimulationEvent } from './events';
 
@@ -111,5 +112,6 @@ export interface ClientToServerEvents {
   'room:start': (payload: RoomStartPayload) => void;
   'sim:input-frame': (payload: ContinuousSimulationInputFrame) => void;
   'sim:use-knockback-immune': (payload: UseKnockbackImmuneSimulationInput) => void;
+  'sim:use-sprint': (payload: UseSprintSimulationInput) => void;
   'sim:request-resync': (payload: SimResyncRequestPayload) => void;
 }

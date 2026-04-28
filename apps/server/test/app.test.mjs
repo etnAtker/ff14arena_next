@@ -839,6 +839,112 @@ test('等待态位姿样本通过统一事件链返回位移事件', async () =>
   }
 });
 
+test('疾跑会为玩家附加状态并记录冷却', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '疾跑测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+
+    const startPromise = waitForEvent(owner, 'sim:start');
+    owner.emit('room:start', {
+      roomId,
+    });
+    const startPayload = await startPromise;
+    const ownerActor = startPayload.snapshot.actors.find((actor) => actor.slot === 'MT');
+    assert.ok(ownerActor, '应找到房主控制的 MT 角色');
+
+    const sprintEventPromise = waitForPayload(
+      owner,
+      'sim:events',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.events.some(
+          (event) =>
+            event.type === 'statusApplied' &&
+            event.payload.targetId === ownerActor.id &&
+            event.payload.status.id === 'sprint',
+        ),
+      4000,
+    );
+
+    owner.emit('sim:use-sprint', {
+      roomId,
+      actorId: ownerActor.id,
+      inputSeq: 1,
+      issuedAt: Date.now(),
+      type: 'use-sprint',
+      payload: {
+        issuedBy: 'player',
+      },
+    });
+
+    const sprintPayload = await sprintEventPromise;
+    const sprintEvent = sprintPayload.events.find(
+      (event) =>
+        event.type === 'statusApplied' &&
+        event.payload.targetId === ownerActor.id &&
+        event.payload.status.id === 'sprint',
+    );
+    assert.ok(sprintEvent, '应收到疾跑状态事件');
+    assert.equal(sprintEvent.payload.status.name, '疾跑');
+    assert.equal(sprintEvent.payload.status.expiresAt - sprintEvent.timeMs, 10000);
+
+    const resyncPromise = waitForPayload(
+      owner,
+      'sim:snapshot',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.reason === 'resync' &&
+        payload.snapshot.phase === 'running',
+      4000,
+    );
+    owner.emit('sim:request-resync', {
+      roomId,
+      reason: 'sprint-check',
+    });
+    const resyncPayload = await resyncPromise;
+    const resyncActor = findActor(resyncPayload.snapshot, ownerActor.id);
+    assert.ok(resyncActor, '重同步快照中应找到房主角色');
+    assert.equal(resyncActor.sprintCooldown.readyAt, sprintEvent.timeMs + 60000);
+    assert.equal(
+      resyncActor.statuses.some((status) => status.id === 'sprint'),
+      true,
+    );
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
 test('准备态与战斗态位姿样本使用同一套移动链路', async () => {
   const server = await startServer({
     host: '127.0.0.1',
