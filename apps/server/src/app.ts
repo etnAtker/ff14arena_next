@@ -213,6 +213,11 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       roomManager.switchSlot(socket, payload);
     });
 
+    socket.on('room:spectate', (payload) => {
+      metrics.recordSocketInbound('room:spectate');
+      roomManager.spectate(socket, payload.roomId);
+    });
+
     socket.on('room:start', (payload) => {
       metrics.recordSocketInbound('room:start');
       roomManager.startRoom(socket, payload.roomId);

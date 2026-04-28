@@ -11,6 +11,7 @@ import type {
   PartySlot,
   RoomPhase,
   RoomSlotState,
+  RoomSpectatorState,
   RoomStateDto,
   RoomSummaryDto,
   ServerToClientEvents,
@@ -44,6 +45,14 @@ interface BotSlotOccupant {
 
 type SlotOccupant = PlayerSlotOccupant | BotSlotOccupant;
 
+interface RoomSpectator {
+  userId: string;
+  name: string;
+  socketId: string | null;
+  online: boolean;
+  ready: boolean;
+}
+
 interface RoomRecord {
   roomId: string;
   name: string;
@@ -53,6 +62,7 @@ interface RoomRecord {
   battleId: string | null;
   battle: BattleDefinition | null;
   slots: Record<PartySlot, SlotOccupant>;
+  spectators: Map<string, RoomSpectator>;
   simulation: SimulationInstance | null;
   loopHandle: NodeJS.Timeout | null;
   snapshotBroadcastCounter: number;
@@ -95,7 +105,9 @@ export class RoomManager {
       battleId: room.battleId,
       battleName: room.battle?.name ?? null,
       phase: room.phase,
-      occupantCount: Object.values(room.slots).filter((slot) => slot.type === 'player').length,
+      occupantCount:
+        Object.values(room.slots).filter((slot) => slot.type === 'player').length +
+        room.spectators.size,
     }));
   }
 
@@ -105,14 +117,17 @@ export class RoomManager {
       const slotOccupants = Object.values(room.slots);
       const playerSlots = slotOccupants.filter((slot) => slot.type === 'player');
       const botSlots = slotOccupants.filter((slot) => slot.type === 'bot');
+      const spectators = [...room.spectators.values()];
 
       return {
         roomId: room.roomId,
         name: room.name,
         battleName: room.battle?.name ?? null,
         phase: room.phase,
-        playerCount: playerSlots.length,
-        onlinePlayerCount: playerSlots.filter((slot) => slot.online).length,
+        playerCount: playerSlots.length + spectators.length,
+        onlinePlayerCount:
+          playerSlots.filter((slot) => slot.online).length +
+          spectators.filter((spectator) => spectator.online).length,
         botCount: botSlots.length,
         activeSimulation: room.simulation !== null && room.loopHandle !== null,
         tick: snapshot?.tick ?? null,
@@ -144,6 +159,7 @@ export class RoomManager {
       battleId: battle?.id ?? null,
       battle,
       slots: createFilledBotSlots(roomId),
+      spectators: new Map(),
       simulation: null,
       loopHandle: null,
       snapshotBroadcastCounter: 0,
@@ -173,8 +189,18 @@ export class RoomManager {
       battleName: room.battle?.name ?? null,
       phase: room.phase,
       slots: this.toRoomSlots(room),
+      spectators: this.toRoomSpectators(room),
       latestResult: room.latestResult,
     };
+  }
+
+  toRoomSpectators(room: RoomRecord): RoomSpectatorState[] {
+    return [...room.spectators.values()].map((spectator) => ({
+      userId: spectator.userId,
+      name: spectator.name,
+      online: spectator.online,
+      ready: spectator.ready,
+    }));
   }
 
   toRoomSlots(room: RoomRecord): RoomSlotState[] {
@@ -443,6 +469,29 @@ export class RoomManager {
       return;
     }
 
+    const currentSpectator = room.spectators.get(payload.userId);
+
+    if (currentSpectator !== undefined) {
+      currentSpectator.socketId = socket.id;
+      currentSpectator.online = true;
+      currentSpectator.name = userName;
+      this.userRooms.set(payload.userId, room.roomId);
+      socket.join(room.roomId);
+
+      if (room.phase === 'waiting') {
+        this.broadcastWaitingState(room, 'rejoin');
+      } else {
+        this.emitRoomState(room);
+        this.emitRoomSlots(room);
+        this.emitSnapshot(room, {
+          target: socket,
+          reason: 'rejoin',
+        });
+      }
+
+      return;
+    }
+
     if (room.phase !== 'waiting') {
       this.emitError(socket, 'room_not_joinable', '当前房间不可加入');
       return;
@@ -490,6 +539,13 @@ export class RoomManager {
     const slot = this.findPlayerSlotBySocket(room, socket.id);
 
     if (slot === undefined) {
+      const spectator = this.getSpectatorBySocket(room, socket.id);
+
+      if (spectator !== undefined) {
+        this.handleSpectatorDeparture(room, spectator, true);
+        socket.leave(room.roomId);
+      }
+
       return;
     }
 
@@ -502,6 +558,13 @@ export class RoomManager {
       const slot = this.findPlayerSlotBySocket(room, socketId);
 
       if (slot === undefined) {
+        const spectator = this.getSpectatorBySocket(room, socketId);
+
+        if (spectator !== undefined) {
+          this.handleSpectatorDeparture(room, spectator, false);
+          return;
+        }
+
         continue;
       }
 
@@ -526,16 +589,22 @@ export class RoomManager {
     const slot = this.findPlayerSlotBySocket(room, socket.id);
 
     if (slot === undefined) {
-      this.emitError(socket, 'not_in_room', '当前连接不在该房间');
-      return;
-    }
+      const spectator = this.getSpectatorBySocket(room, socket.id);
 
-    const occupant = room.slots[slot] as PlayerSlotOccupant;
+      if (spectator === undefined) {
+        this.emitError(socket, 'not_in_room', '当前连接不在该房间');
+        return;
+      }
 
-    if (occupant.userId === room.ownerUserId) {
-      occupant.ready = true;
+      spectator.ready = spectator.userId === room.ownerUserId ? true : ready;
     } else {
-      occupant.ready = ready;
+      const occupant = room.slots[slot] as PlayerSlotOccupant;
+
+      if (occupant.userId === room.ownerUserId) {
+        occupant.ready = true;
+      } else {
+        occupant.ready = ready;
+      }
     }
 
     this.rebuildWaitingSimulation(room, {
@@ -553,7 +622,7 @@ export class RoomManager {
       return;
     }
 
-    const occupant = this.getPlayerBySocket(room, socket.id);
+    const occupant = this.getRoomMemberBySocket(room, socket.id);
 
     if (occupant?.userId !== room.ownerUserId) {
       this.emitError(socket, 'not_owner', '只有房主可以选择战斗');
@@ -602,7 +671,39 @@ export class RoomManager {
     const currentSlot = this.findPlayerSlotBySocket(room, socket.id);
 
     if (currentSlot === undefined) {
-      this.emitError(socket, 'not_in_room', '当前连接不在该房间');
+      const spectator = this.getSpectatorBySocket(room, socket.id);
+
+      if (spectator === undefined) {
+        this.emitError(socket, 'not_in_room', '当前连接不在该房间');
+        return;
+      }
+
+      const targetOccupant = room.slots[payload.targetSlot];
+
+      if (targetOccupant.type === 'player') {
+        this.emitError(socket, 'slot_occupied', '目标槽位已被玩家占用');
+        return;
+      }
+
+      room.spectators.delete(spectator.userId);
+      const nextOccupant: PlayerSlotOccupant = {
+        type: 'player',
+        actorId: `${room.roomId}:player:${spectator.userId}`,
+        userId: spectator.userId,
+        name: spectator.name,
+        socketId: spectator.socketId,
+        online: spectator.online,
+        ready: spectator.userId === room.ownerUserId ? true : spectator.ready,
+        departed: false,
+      };
+      room.slots[payload.targetSlot] = nextOccupant;
+      this.resetReadyStates(room);
+      this.rebuildWaitingSimulation(room, {
+        sourceSnapshot: room.simulation?.getSnapshot() ?? null,
+        keepTimeMs: true,
+        resetPositionActorIds: new Set([nextOccupant.actorId, targetOccupant.actorId]),
+      });
+      this.broadcastWaitingState(room, 'waiting-state');
       return;
     }
 
@@ -624,6 +725,47 @@ export class RoomManager {
     this.broadcastWaitingState(room, 'waiting-state');
   }
 
+  spectate(socket: TypedSocket, roomId: string): void {
+    const room = this.rooms.get(roomId);
+
+    if (room === undefined) {
+      this.emitError(socket, 'room_not_found', '房间不存在');
+      return;
+    }
+
+    if (room.phase !== 'waiting') {
+      this.emitError(socket, 'room_not_waiting', '当前房间状态不允许切换观战');
+      return;
+    }
+
+    const currentSlot = this.findPlayerSlotBySocket(room, socket.id);
+
+    if (currentSlot === undefined) {
+      if (this.getSpectatorBySocket(room, socket.id) !== undefined) {
+        return;
+      }
+
+      this.emitError(socket, 'not_in_room', '当前连接不在该房间');
+      return;
+    }
+
+    const occupant = room.slots[currentSlot] as PlayerSlotOccupant;
+    room.spectators.set(occupant.userId, {
+      userId: occupant.userId,
+      name: occupant.name,
+      socketId: occupant.socketId,
+      online: occupant.online,
+      ready: occupant.userId === room.ownerUserId ? true : occupant.ready,
+    });
+    room.slots[currentSlot] = createBotOccupant(room.roomId, currentSlot);
+    this.rebuildWaitingSimulation(room, {
+      sourceSnapshot: room.simulation?.getSnapshot() ?? null,
+      keepTimeMs: true,
+      resetPositionActorIds: new Set([occupant.actorId, room.slots[currentSlot].actorId]),
+    });
+    this.broadcastWaitingState(room, 'waiting-state');
+  }
+
   startRoom(socket: TypedSocket, roomId: string): void {
     const room = this.rooms.get(roomId);
 
@@ -632,7 +774,7 @@ export class RoomManager {
       return;
     }
 
-    const occupant = this.getPlayerBySocket(room, socket.id);
+    const occupant = this.getRoomMemberBySocket(room, socket.id);
 
     if (occupant?.userId !== room.ownerUserId) {
       this.emitError(socket, 'not_owner', '只有房主可以开始战斗');
@@ -649,12 +791,17 @@ export class RoomManager {
       return;
     }
 
-    const unreadyPlayers = Object.values(room.slots).filter(
-      (slotOccupant) =>
-        slotOccupant.type === 'player' &&
-        slotOccupant.userId !== room.ownerUserId &&
-        !slotOccupant.ready,
-    );
+    const unreadyPlayers = [
+      ...Object.values(room.slots).filter(
+        (slotOccupant) =>
+          slotOccupant.type === 'player' &&
+          slotOccupant.userId !== room.ownerUserId &&
+          !slotOccupant.ready,
+      ),
+      ...[...room.spectators.values()].filter(
+        (spectator) => spectator.userId !== room.ownerUserId && !spectator.ready,
+      ),
+    ];
 
     if (unreadyPlayers.length > 0) {
       this.emitError(socket, 'players_not_ready', '仍有玩家未准备');
@@ -762,7 +909,7 @@ export class RoomManager {
       return;
     }
 
-    const player = this.getPlayerBySocket(room, socket.id);
+    const player = this.getRoomMemberBySocket(room, socket.id);
 
     if (player === undefined) {
       this.emitError(socket, 'not_in_room', '当前连接不在该房间');
@@ -815,6 +962,28 @@ export class RoomManager {
     occupant.departed = shouldLeaveRoom;
 
     this.emitRoomSlots(room);
+    this.emitRoomState(room);
+  }
+
+  private handleSpectatorDeparture(
+    room: RoomRecord,
+    spectator: RoomSpectator,
+    shouldLeaveRoom: boolean,
+  ): void {
+    if (spectator.userId === room.ownerUserId) {
+      this.closeRoom(room.roomId, '房主已离开，房间已关闭');
+      return;
+    }
+
+    if (shouldLeaveRoom) {
+      this.userRooms.delete(spectator.userId);
+      room.spectators.delete(spectator.userId);
+    } else {
+      spectator.online = false;
+      spectator.socketId = null;
+      spectator.ready = false;
+    }
+
     this.emitRoomState(room);
   }
 
@@ -970,6 +1139,10 @@ export class RoomManager {
 
       occupant.ready = occupant.userId === room.ownerUserId;
     }
+
+    for (const spectator of room.spectators.values()) {
+      spectator.ready = spectator.userId === room.ownerUserId;
+    }
   }
 
   private findPlayerSlot(room: RoomRecord, userId: string): PartySlot | undefined {
@@ -994,6 +1167,17 @@ export class RoomManager {
     }
 
     return room.slots[slot] as PlayerSlotOccupant;
+  }
+
+  private getSpectatorBySocket(room: RoomRecord, socketId: string): RoomSpectator | undefined {
+    return [...room.spectators.values()].find((spectator) => spectator.socketId === socketId);
+  }
+
+  private getRoomMemberBySocket(
+    room: RoomRecord,
+    socketId: string,
+  ): PlayerSlotOccupant | RoomSpectator | undefined {
+    return this.getPlayerBySocket(room, socketId) ?? this.getSpectatorBySocket(room, socketId);
   }
 
   private findFirstAvailableSlot(room: RoomRecord): PartySlot | undefined {
@@ -1023,6 +1207,10 @@ export class RoomManager {
       if (occupant.type === 'player') {
         this.userRooms.delete(occupant.userId);
       }
+    }
+
+    for (const spectator of room.spectators.values()) {
+      this.userRooms.delete(spectator.userId);
     }
 
     this.rooms.delete(roomId);

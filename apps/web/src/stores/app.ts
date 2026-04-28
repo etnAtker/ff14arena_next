@@ -134,6 +134,18 @@ export const useAppStore = defineStore('app', () => {
     const hit = currentRoom.slots.find((slot) => slot.ownerUserId === profile.value.userId);
     return hit?.slot ?? null;
   });
+  const currentSpectator = computed(() => {
+    const currentRoom = room.value;
+
+    if (currentRoom === null) {
+      return null;
+    }
+
+    return (
+      currentRoom.spectators.find((spectator) => spectator.userId === profile.value.userId) ?? null
+    );
+  });
+  const isSpectating = computed(() => currentSpectator.value !== null);
 
   const page = computed<'home' | 'battle'>(() => (room.value === null ? 'home' : 'battle'));
   const latencyDisplay = computed(() =>
@@ -637,6 +649,17 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
+  async function spectate(): Promise<void> {
+    if (room.value === null) {
+      return;
+    }
+
+    const currentSocket = socket.value ?? (await ensureSocket());
+    currentSocket.emit('room:spectate', {
+      roomId: room.value.roomId,
+    });
+  }
+
   async function startBattle(): Promise<void> {
     if (room.value === null) {
       return;
@@ -913,6 +936,8 @@ export const useAppStore = defineStore('app', () => {
     latencyDisplay,
     logs,
     currentPlayerSlot,
+    currentSpectator,
+    isSpectating,
     page,
     loadLobbyData,
     updateProfile,
@@ -922,6 +947,7 @@ export const useAppStore = defineStore('app', () => {
     setReady,
     selectBattle,
     switchSlot,
+    spectate,
     startBattle,
     sendContinuousInputFrame,
     previewFaceAngle,

@@ -248,6 +248,13 @@ export interface RoomSlotState {
   knockbackImmune: boolean;
 }
 
+export interface RoomSpectatorState {
+  userId: string;
+  name: string;
+  online: boolean;
+  ready: boolean;
+}
+
 export interface RoomStateDto {
   roomId: string;
   name: string;
@@ -257,6 +264,7 @@ export interface RoomStateDto {
   battleName: string | null;
   phase: RoomPhase;
   slots: RoomSlotState[];
+  spectators: RoomSpectatorState[];
   latestResult: EncounterResult | null;
 }
 
@@ -478,6 +486,10 @@ export interface RoomSwitchSlotPayload {
   targetSlot: PartySlot;
 }
 
+export interface RoomSpectatePayload {
+  roomId: string;
+}
+
 export interface RoomStartPayload {
   roomId: string;
 }
@@ -547,6 +559,7 @@ export interface ClientToServerEvents {
   'room:ready': (payload: RoomReadyPayload) => void;
   'room:select-battle': (payload: RoomSelectBattlePayload) => void;
   'room:switch-slot': (payload: RoomSwitchSlotPayload) => void;
+  'room:spectate': (payload: RoomSpectatePayload) => void;
   'room:start': (payload: RoomStartPayload) => void;
   'sim:input-frame': (payload: ContinuousSimulationInputFrame) => void;
   'sim:use-knockback-immune': (payload: UseKnockbackImmuneSimulationInput) => void;

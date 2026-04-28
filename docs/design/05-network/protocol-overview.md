@@ -16,6 +16,7 @@
 - `room:ready`
 - `room:select-battle`
 - `room:switch-slot`
+- `room:spectate`
 - `room:start`
 - `sim:input-frame`
 - `sim:use-knockback-immune`

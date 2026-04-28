@@ -426,6 +426,195 @@ test('运行中断线后允许按原槽位重连，并向重连玩家下发权�
   }
 });
 
+test('等待态玩家可以切换观战并点击槽位回到场内', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '观战回场测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    await ownerWaitingSnapshotPromise;
+
+    await waitForConnect(guest);
+    const guestWaitingSnapshotPromise = waitForEvent(guest, 'sim:snapshot');
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      slot: 'ST',
+    });
+    await waitForRoomState(guest, (room) => room.roomId === roomId && room.phase === 'waiting');
+    await guestWaitingSnapshotPromise;
+
+    const spectatePromise = waitForRoomState(
+      owner,
+      (room) =>
+        room.roomId === roomId &&
+        room.spectators.some((spectator) => spectator.userId === 'guest-user') &&
+        room.slots.find((slot) => slot.slot === 'ST')?.occupantType === 'bot',
+    );
+    guest.emit('room:spectate', {
+      roomId,
+    });
+    const spectateRoom = await spectatePromise;
+    assert.equal(spectateRoom.spectators.length, 1);
+
+    const returnPromise = waitForRoomState(
+      owner,
+      (room) =>
+        room.roomId === roomId &&
+        room.spectators.every((spectator) => spectator.userId !== 'guest-user') &&
+        room.slots.find((slot) => slot.slot === 'D1')?.ownerUserId === 'guest-user',
+    );
+    guest.emit('room:switch-slot', {
+      roomId,
+      targetSlot: 'D1',
+    });
+    const returnRoom = await returnPromise;
+    assert.equal(returnRoom.slots.find((slot) => slot.slot === 'D1')?.occupantType, 'player');
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
+test('房主观战后可以在所有真人准备时以 8 个 Bot 开始战斗', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '全 Bot 观战开始测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    await ownerWaitingSnapshotPromise;
+
+    await waitForConnect(guest);
+    const guestWaitingSnapshotPromise = waitForEvent(guest, 'sim:snapshot');
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      slot: 'ST',
+    });
+    await waitForRoomState(guest, (room) => room.roomId === roomId && room.phase === 'waiting');
+    await guestWaitingSnapshotPromise;
+
+    const readyPromise = waitForPayload(
+      owner,
+      'room:slots',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.slots.find((slot) => slot.slot === 'ST')?.ready === true,
+    );
+    guest.emit('room:ready', {
+      roomId,
+      ready: true,
+    });
+    await readyPromise;
+
+    const guestSpectatePromise = waitForRoomState(
+      owner,
+      (room) =>
+        room.roomId === roomId &&
+        room.spectators.some(
+          (spectator) => spectator.userId === 'guest-user' && spectator.ready === true,
+        ) &&
+        room.slots.find((slot) => slot.slot === 'ST')?.occupantType === 'bot',
+    );
+    guest.emit('room:spectate', {
+      roomId,
+    });
+    await guestSpectatePromise;
+
+    const ownerSpectatePromise = waitForRoomState(
+      owner,
+      (room) =>
+        room.roomId === roomId &&
+        room.spectators.some((spectator) => spectator.userId === 'owner-user') &&
+        room.slots.every((slot) => slot.occupantType === 'bot'),
+    );
+    owner.emit('room:spectate', {
+      roomId,
+    });
+    const allBotRoom = await ownerSpectatePromise;
+    assert.equal(allBotRoom.spectators.length, 2);
+
+    const startPromise = waitForEvent(owner, 'sim:start');
+    owner.emit('room:start', {
+      roomId,
+    });
+    const startPayload = await startPromise;
+    assert.equal(startPayload.snapshot.phase, 'running');
+    assert.equal(startPayload.snapshot.actors.length, 8);
+    assert.equal(
+      startPayload.snapshot.actors.every((actor) => actor.kind === 'bot'),
+      true,
+    );
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
 test('客户端请求重同步时，服务端会回送当前权威快照', async () => {
   const server = await startServer({
     host: '127.0.0.1',

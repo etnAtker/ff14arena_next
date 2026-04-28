@@ -94,6 +94,8 @@ const {
   latencyDisplay,
   serverError,
   currentPlayerSlot,
+  currentSpectator,
+  isSpectating,
   page,
 } = storeToRefs(store);
 
@@ -125,11 +127,15 @@ const currentActor = computed(() => {
   return snapshot.value?.actors.find((actor) => actor.slot === currentPlayerSlot.value) ?? null;
 });
 const currentReady = computed(() => {
-  if (room.value === null || currentPlayerSlot.value === null) {
+  if (room.value === null) {
     return false;
   }
 
-  return room.value.slots.find((slot) => slot.slot === currentPlayerSlot.value)?.ready ?? false;
+  if (currentPlayerSlot.value !== null) {
+    return room.value.slots.find((slot) => slot.slot === currentPlayerSlot.value)?.ready ?? false;
+  }
+
+  return currentSpectator.value?.ready ?? false;
 });
 const canStart = computed(() => {
   if (!isOwner.value || room.value === null || snapshot.value?.phase !== 'waiting') {
@@ -140,9 +146,16 @@ const canStart = computed(() => {
     return false;
   }
 
-  return room.value.slots.every(
-    (slot) =>
-      slot.occupantType !== 'player' || slot.ownerUserId === room.value?.ownerUserId || slot.ready,
+  return (
+    room.value.slots.every(
+      (slot) =>
+        slot.occupantType !== 'player' ||
+        slot.ownerUserId === room.value?.ownerUserId ||
+        slot.ready,
+    ) &&
+    room.value.spectators.every(
+      (spectator) => spectator.userId === room.value?.ownerUserId || spectator.ready,
+    )
   );
 });
 const latestResult = computed(
@@ -430,6 +443,7 @@ onBeforeUnmount(() => {
             :camera-zoom="cameraZoom"
             :operation-mode="operationMode"
             :is-owner="isOwner"
+            :is-spectating="isSpectating"
             :current-ready="currentReady"
             :can-start="canStart"
             :logs="logs"
@@ -439,6 +453,7 @@ onBeforeUnmount(() => {
               { label: '标准', value: 'standard' },
             ]"
             @use-knockback-immune="store.useKnockbackImmune"
+            @spectate="store.spectate"
             @start-battle="store.startBattle"
             @set-ready="store.setReady(true)"
             @switch-slot="store.switchSlot($event)"

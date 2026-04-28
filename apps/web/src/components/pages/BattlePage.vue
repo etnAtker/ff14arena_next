@@ -28,6 +28,7 @@ const props = defineProps<{
   cameraZoom: number;
   operationMode: OperationMode;
   isOwner: boolean;
+  isSpectating: boolean;
   currentReady: boolean;
   canStart: boolean;
   logs: string[];
@@ -37,6 +38,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   useKnockbackImmune: [];
+  spectate: [];
   startBattle: [];
   setReady: [];
   switchSlot: [slot: PartySlot];
@@ -88,6 +90,28 @@ const castProgress = computed(() => {
 const canUseKnockback = computed(
   () => props.snapshot?.phase === 'running' && props.controlledActorId !== null,
 );
+const spectateButtonLabel = computed(() => (props.isOwner && props.isSpectating ? '开始' : '观战'));
+const spectateButtonType = computed(() =>
+  props.isOwner && props.isSpectating ? 'warning' : 'info',
+);
+const spectateButtonDisabled = computed(() => {
+  if (props.isOwner && props.isSpectating) {
+    return props.snapshot?.phase !== 'waiting' || !props.canStart;
+  }
+
+  return (
+    props.snapshot?.phase !== 'waiting' || props.isSpectating || props.currentPlayerSlot === null
+  );
+});
+
+function handleSpectateButton(): void {
+  if (props.isOwner && props.isSpectating) {
+    emit('startBattle');
+    return;
+  }
+
+  emit('spectate');
+}
 
 function getSlotState(slot: PartySlot) {
   return slotMap.value.get(slot) ?? null;
@@ -123,6 +147,10 @@ function getMechanicStatusRows(slot: PartySlot): string[] {
 }
 
 function getSlotButtonLabel(slot: PartySlot): string {
+  if (props.isSpectating) {
+    return getSlotState(slot)?.occupantType === 'player' ? '占用' : '入场';
+  }
+
   if (slot === props.currentPlayerSlot) {
     if (props.isOwner) {
       return props.snapshot?.phase === 'running' ? '房主' : '开始';
@@ -137,6 +165,10 @@ function getSlotButtonLabel(slot: PartySlot): string {
 function getSlotButtonType(
   slot: PartySlot,
 ): 'default' | 'primary' | 'success' | 'warning' | 'info' {
+  if (props.isSpectating) {
+    return getSlotState(slot)?.occupantType === 'player' ? 'default' : 'primary';
+  }
+
   if (slot === props.currentPlayerSlot) {
     if (props.isOwner) {
       return 'warning';
@@ -149,6 +181,10 @@ function getSlotButtonType(
 }
 
 function isSlotButtonDisabled(slot: PartySlot): boolean {
+  if (props.isSpectating) {
+    return props.snapshot?.phase !== 'waiting' || getSlotState(slot)?.occupantType === 'player';
+  }
+
   if (slot === props.currentPlayerSlot) {
     if (props.isOwner) {
       return props.snapshot?.phase !== 'waiting' || !props.canStart;
@@ -161,6 +197,11 @@ function isSlotButtonDisabled(slot: PartySlot): boolean {
 }
 
 function handleSlotAction(slot: PartySlot): void {
+  if (props.isSpectating) {
+    emit('switchSlot', slot);
+    return;
+  }
+
   if (slot === props.currentPlayerSlot) {
     if (props.isOwner) {
       emit('startBattle');
@@ -291,6 +332,16 @@ onBeforeUnmount(() => {
               </h2>
             </div>
             <div class="stage-meta">
+              <n-button
+                secondary
+                strong
+                class="spectate-button"
+                :type="spectateButtonType"
+                :disabled="spectateButtonDisabled"
+                @click="handleSpectateButton"
+              >
+                {{ spectateButtonLabel }}
+              </n-button>
               <n-select
                 class="stage-mode-select"
                 size="small"
@@ -703,6 +754,11 @@ onBeforeUnmount(() => {
 
 .stage-mode-select {
   width: 112px;
+}
+
+.spectate-button {
+  min-width: 72px;
+  font-weight: 700;
 }
 
 .zoom-control {
