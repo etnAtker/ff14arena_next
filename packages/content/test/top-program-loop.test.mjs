@@ -118,6 +118,12 @@ const TOWER_ASSIGNMENT_SCAN_KEYS = [
 ];
 const SHOCKWAVE_CARDINAL_KEYS = ['0,-17', '17,0', '0,17', '-17,0'];
 const TOP_ASSIGNMENT_PRIORITY = ['H1', 'MT', 'ST', 'D1', 'D2', 'D3', 'D4', 'H2'];
+const BOT_TETHER_STAGING_RADIUS = 10;
+const BOT_TETHER_FINAL_APPROACH_MS = 2_000;
+
+function getDistance(left, right) {
+  return Math.hypot(left.x - right.x, left.y - right.y);
+}
 
 function isValidTowerPairIndexDistance(towerPositions) {
   const indexes = towerPositions.map((position) =>
@@ -479,6 +485,87 @@ test('欧米茄绝境战 P1 循环程序：Bot 不会提前接走非自身轮次
 
   assert.equal(result?.outcome, 'success');
   assert.deepEqual(result?.failureReasons, []);
+});
+
+test('欧米茄绝境战 P1 循环程序：Bot 接到当前轮连线后先在 10m 点等待', () => {
+  withMockedRandom(createSeededRandomValues(8, 32), () => {
+    const controller = getBattleBotController('top_p1_program_loop');
+    assert.ok(controller);
+
+    const simulation = createTopProgramLoopSimulation();
+    let inputSeq = 0;
+    let checkedStagingPoint = false;
+    let checkedFinalPoint = false;
+
+    for (let elapsedMs = 0; elapsedMs <= 20_000 && simulation.running; elapsedMs += 50) {
+      const snapshot = simulation.getSnapshot();
+      const rounds = snapshot.scriptState['top:rounds'];
+      const assignments = snapshot.scriptState['top:assignments'];
+      const tethers = snapshot.mechanics
+        .filter((mechanic) => mechanic.kind === 'tether' && mechanic.label === '冲击波连线')
+        .sort((left, right) => left.id.localeCompare(right.id));
+
+      if (Array.isArray(rounds) && assignments && tethers.length === 2) {
+        const round = rounds[0];
+        const tetherSlots = sortSlotsByTopPriority(assignments[round.tetherNumber]);
+
+        for (const [tetherIndex, slot] of tetherSlots.entries()) {
+          const tether = tethers[tetherIndex];
+          const actor = snapshot.actors.find(
+            (candidate) => candidate.slot === slot && candidate.id === tether?.targetId,
+          );
+
+          if (!actor) {
+            continue;
+          }
+
+          const distanceFromCenter = getDistance(actor.position, { x: 0, y: 0 });
+          const timeToResolve = round.resolveAt - snapshot.timeMs;
+
+          if (
+            !checkedStagingPoint &&
+            timeToResolve > BOT_TETHER_FINAL_APPROACH_MS + 500 &&
+            Math.abs(distanceFromCenter - BOT_TETHER_STAGING_RADIUS) <= 1
+          ) {
+            checkedStagingPoint = true;
+          }
+
+          if (
+            checkedStagingPoint &&
+            !checkedFinalPoint &&
+            timeToResolve <= 500 &&
+            getDistance(actor.position, round.tetherPositions[tetherIndex]) <= 1
+          ) {
+            checkedFinalPoint = true;
+          }
+        }
+      }
+
+      for (const actor of snapshot.actors) {
+        if (actor.slot === null || !actor.alive) {
+          continue;
+        }
+
+        const frame = controller({
+          snapshot,
+          slot: actor.slot,
+          actor,
+        });
+
+        simulation.submitActorControlFrame({
+          actorId: actor.id,
+          inputSeq: ++inputSeq,
+          issuedAt: elapsedMs,
+          ...frame,
+        });
+      }
+
+      simulation.tick(50);
+    }
+
+    assert.equal(checkedStagingPoint, true, 'Bot 接到线后应先停在距离中心约 10m 的中转点');
+    assert.equal(checkedFinalPoint, true, 'Bot 应在临近判定时前往最终冲击波点');
+  });
 });
 
 test('欧米茄绝境战 P1 循环程序：更晚编号提前踩塔会消耗自身状态', () => {

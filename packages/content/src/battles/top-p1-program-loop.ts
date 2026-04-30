@@ -99,6 +99,8 @@ const BOT_TETHER_PICKUP_DISTANCE = 6;
 const BOT_TETHER_PICKUP_MIN_RATIO = 0.25;
 const BOT_TETHER_PICKUP_MAX_RATIO = 0.65;
 const BOT_TETHER_CROSSING_OVERSHOOT = 1.5;
+const BOT_TETHER_STAGING_RADIUS = 10;
+const BOT_TETHER_FINAL_APPROACH_MS = 2_000;
 // 冲击波固定拉到正点 17m，避免 Bot 把线带到倾斜方向。
 const SHOCKWAVE_POSITION_RADIUS = 17;
 
@@ -434,6 +436,14 @@ function getTetherTarget(
   const tetherIndex = getProgramSlotLane(slot, assignments, round.tetherNumber);
 
   return tetherIndex < 0 ? null : (round.tetherPositions[tetherIndex] ?? null);
+}
+
+function getTetherStagingTarget(tetherTarget: Vector2): Vector2 {
+  return createPointOnRadius(Math.atan2(tetherTarget.y, tetherTarget.x), BOT_TETHER_STAGING_RADIUS);
+}
+
+function shouldMoveToTetherFinalPoint(timeMs: number, round: ActiveProgramRound): boolean {
+  return timeMs >= round.resolveAt - BOT_TETHER_FINAL_APPROACH_MS;
 }
 
 function getAssignedLane(slot: PartySlot, assignments: ProgramAssignments): number {
@@ -1003,7 +1013,9 @@ export const TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER: BattleBotController = ({
       );
 
       if (laneTether?.targetId === actor.id || pickupTarget === null) {
-        target = tetherTarget;
+        target = shouldMoveToTetherFinalPoint(snapshot.timeMs, round)
+          ? tetherTarget
+          : getTetherStagingTarget(tetherTarget);
       } else if (nextBotTetherSlot === slot) {
         target = createTetherCrossingTarget(actor.position, pickupTarget);
       } else {
