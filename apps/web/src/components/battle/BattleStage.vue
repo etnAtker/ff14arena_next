@@ -14,6 +14,8 @@ const PLAYER_SCREEN_OFFSET_RATIO = 1 / 10;
 const WORLD_VIEW_PADDING = 12;
 const REMOTE_SMOOTH_SPEED = 8;
 const HARD_SNAP_DISTANCE = 0.9;
+const ZOOM_STEP = 0.12;
+const ZOOM_EMIT_EPSILON = 0.001;
 
 const props = defineProps<{
   snapshot: SimulationSnapshot | null;
@@ -52,6 +54,8 @@ const actorLabels = new Map<string, Text>();
 const markerLabels = new Map<string, Text>();
 let pendingYawDelta = 0;
 let dragUpdateFrame: number | null = null;
+let pendingZoomSteps = 0;
+let zoomUpdateFrame: number | null = null;
 
 function clampZoom(zoom: number): number {
   return Math.min(Math.max(zoom, MIN_ZOOM), MAX_ZOOM);
@@ -645,8 +649,28 @@ function endDrag(): void {
 function handleWheel(event: WheelEvent): void {
   event.preventDefault();
 
-  const zoomDelta = event.deltaY > 0 ? -0.12 : 0.12;
-  emit('cameraZoomChange', clampZoom(props.cameraZoom + zoomDelta));
+  pendingZoomSteps += event.deltaY > 0 ? -1 : 1;
+
+  if (zoomUpdateFrame !== null) {
+    return;
+  }
+
+  zoomUpdateFrame = requestAnimationFrame(() => {
+    zoomUpdateFrame = null;
+
+    if (pendingZoomSteps === 0) {
+      return;
+    }
+
+    const nextZoom = clampZoom(props.cameraZoom + pendingZoomSteps * ZOOM_STEP);
+    pendingZoomSteps = 0;
+
+    if (Math.abs(nextZoom - props.cameraZoom) < ZOOM_EMIT_EPSILON) {
+      return;
+    }
+
+    emit('cameraZoomChange', nextZoom);
+  });
 }
 
 function handleDoubleClick(): void {
@@ -690,6 +714,11 @@ onBeforeUnmount(() => {
   if (dragUpdateFrame !== null) {
     cancelAnimationFrame(dragUpdateFrame);
     dragUpdateFrame = null;
+  }
+
+  if (zoomUpdateFrame !== null) {
+    cancelAnimationFrame(zoomUpdateFrame);
+    zoomUpdateFrame = null;
   }
 
   app?.destroy(true, {

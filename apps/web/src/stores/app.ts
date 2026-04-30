@@ -1,7 +1,13 @@
 import { computed, ref, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import type { Socket } from 'socket.io-client';
-import { getActorMoveSpeed, movePosition, normalizeMoveDirection } from '@ff14arena/core';
+import {
+  getActorMoveSpeed,
+  KNOCKBACK_IMMUNE_COOLDOWN_MS,
+  movePosition,
+  normalizeMoveDirection,
+  SPRINT_COOLDOWN_MS,
+} from '@ff14arena/core';
 import type {
   BattleSummary,
   PartySlot,
@@ -174,6 +180,23 @@ export const useAppStore = defineStore('app', () => {
     }
 
     const actor = snapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
+
+    if (actor === null || !actor.alive) {
+      return null;
+    }
+
+    return actor;
+  }
+
+  function getAuthoritativeCurrentPlayerActor() {
+    const slot = currentPlayerSlot.value;
+
+    if (slot === null) {
+      return null;
+    }
+
+    const actor =
+      authoritativeSnapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
 
     if (actor === null || !actor.alive) {
       return null;
@@ -678,9 +701,9 @@ export const useAppStore = defineStore('app', () => {
 
   function emitSimulationInput(
     input: Omit<SimulationInput, 'roomId' | 'inputSeq' | 'issuedAt'>,
-  ): void {
+  ): boolean {
     if (room.value === null || socket.value === null) {
-      return;
+      return false;
     }
 
     inputSeq.value += 1;
@@ -695,12 +718,12 @@ export const useAppStore = defineStore('app', () => {
     switch (payload.type) {
       case 'use-knockback-immune':
         socket.value.emit('sim:use-knockback-immune', payload);
-        break;
+        return true;
       case 'use-sprint':
         socket.value.emit('sim:use-sprint', payload);
-        break;
+        return true;
       default:
-        return;
+        return false;
     }
   }
 
@@ -754,43 +777,105 @@ export const useAppStore = defineStore('app', () => {
     };
   }
 
-  function useKnockbackImmune(): void {
+  function applyOptimisticCooldown(options: {
+    actorId: string;
+    cooldown: 'knockbackImmune' | 'sprint';
+    durationMs: number;
+    currentTimeMs: number;
+  }): void {
+    if (authoritativeSnapshot.value === null) {
+      return;
+    }
+
+    const actor = authoritativeSnapshot.value.actors.find(
+      (candidate) => candidate.id === options.actorId,
+    );
+
+    if (actor === undefined) {
+      return;
+    }
+
+    const readyAt = options.currentTimeMs + options.durationMs;
+
+    if (options.cooldown === 'knockbackImmune') {
+      actor.knockbackImmuneCooldown.readyAt = readyAt;
+      return;
+    }
+
+    actor.sprintCooldown.readyAt = readyAt;
+  }
+
+  function useKnockbackImmune(currentTimeMs?: number): void {
     if (snapshot.value?.phase !== 'running') {
       return;
     }
 
-    const actor = getCurrentPlayerActor();
+    const actor = getAuthoritativeCurrentPlayerActor();
 
     if (actor === null) {
       return;
     }
 
-    emitSimulationInput({
+    const actionTimeMs = currentTimeMs ?? authoritativeSnapshot.value?.timeMs ?? 0;
+
+    if (actor.knockbackImmuneCooldown.readyAt > actionTimeMs) {
+      return;
+    }
+
+    const emitted = emitSimulationInput({
       actorId: actor.id,
       type: 'use-knockback-immune',
       payload: {
         issuedBy: 'player',
       },
     });
+
+    if (!emitted) {
+      return;
+    }
+
+    applyOptimisticCooldown({
+      actorId: actor.id,
+      cooldown: 'knockbackImmune',
+      durationMs: KNOCKBACK_IMMUNE_COOLDOWN_MS,
+      currentTimeMs: actionTimeMs,
+    });
   }
 
-  function useSprint(): void {
+  function useSprint(currentTimeMs?: number): void {
     if (snapshot.value?.phase !== 'running') {
       return;
     }
 
-    const actor = getCurrentPlayerActor();
+    const actor = getAuthoritativeCurrentPlayerActor();
 
     if (actor === null) {
       return;
     }
 
-    emitSimulationInput({
+    const actionTimeMs = currentTimeMs ?? authoritativeSnapshot.value?.timeMs ?? 0;
+
+    if (actor.sprintCooldown.readyAt > actionTimeMs) {
+      return;
+    }
+
+    const emitted = emitSimulationInput({
       actorId: actor.id,
       type: 'use-sprint',
       payload: {
         issuedBy: 'player',
       },
+    });
+
+    if (!emitted) {
+      return;
+    }
+
+    applyOptimisticCooldown({
+      actorId: actor.id,
+      cooldown: 'sprint',
+      durationMs: SPRINT_COOLDOWN_MS,
+      currentTimeMs: actionTimeMs,
     });
   }
 

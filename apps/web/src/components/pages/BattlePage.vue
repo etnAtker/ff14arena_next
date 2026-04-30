@@ -4,20 +4,24 @@ import { NButton, NCard, NEmpty, NInputNumber, NSelect, NText } from 'naive-ui';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type {
+  BaseActorSnapshot,
   EncounterResult,
   PartySlot,
   RoomStateDto,
   SimulationSnapshot,
 } from '@ff14arena/shared';
 import {
+  formatSkillCooldownLabel,
   getSlotCardBackground,
   getSlotRole,
+  isCooldownReady,
   type OperationMode,
   type SelectValue,
 } from '../../utils/ui';
 import BattleStage from '../battle/BattleStage.vue';
 const MIN_ZOOM = 0.7;
 const MAX_ZOOM = 2.4;
+const HUD_TICK_MS = 100;
 
 const props = defineProps<{
   room: RoomStateDto | null;
@@ -37,8 +41,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  useKnockbackImmune: [];
-  useSprint: [];
+  useKnockbackImmune: [currentTimeMs: number];
+  useSprint: [currentTimeMs: number];
   spectate: [];
   startBattle: [];
   setReady: [];
@@ -61,12 +65,17 @@ const actorMap = computed(() => {
 });
 
 const castBar = computed(() => props.snapshot?.hud.bossCastBar ?? null);
-const renderNowMs = ref(0);
+const hudNowMs = ref(0);
 const renderClockBase = ref({
   snapshotTimeMs: 0,
   clientNowMs: 0,
 });
-let renderFrame: number | null = null;
+const castAnimationBase = ref<{
+  castKey: string;
+  initialElapsedMs: number;
+  totalDurationMs: number;
+} | null>(null);
+let hudTimer: number | null = null;
 
 const renderSimulationTimeMs = computed(() => {
   if (props.snapshot === null) {
@@ -75,25 +84,69 @@ const renderSimulationTimeMs = computed(() => {
 
   return (
     renderClockBase.value.snapshotTimeMs +
-    Math.max(renderNowMs.value - renderClockBase.value.clientNowMs, 0)
+    Math.max(hudNowMs.value - renderClockBase.value.clientNowMs, 0)
   );
 });
 
-const castProgress = computed(() => {
-  if (castBar.value === null || props.snapshot === null) {
-    return 0;
+const currentActor = computed<BaseActorSnapshot | null>(() => {
+  if (props.snapshot === null || props.controlledActorId === null) {
+    return null;
   }
 
-  const elapsed = Math.max(renderSimulationTimeMs.value - castBar.value.startedAt, 0);
-  return Math.min(elapsed / castBar.value.totalDurationMs, 1);
+  return props.snapshot.actors.find((actor) => actor.id === props.controlledActorId) ?? null;
+});
+
+const castFillStyle = computed(() => {
+  const base = castAnimationBase.value;
+
+  if (base === null) {
+    return {};
+  }
+
+  return {
+    animationDuration: `${base.totalDurationMs}ms`,
+    animationDelay: `${-base.initialElapsedMs}ms`,
+  };
 });
 
 const canUseKnockback = computed(
-  () => props.snapshot?.phase === 'running' && props.controlledActorId !== null,
+  () =>
+    props.snapshot?.phase === 'running' &&
+    currentActor.value !== null &&
+    currentActor.value.alive &&
+    isCooldownReady(currentActor.value.knockbackImmuneCooldown, renderSimulationTimeMs.value),
 );
 const canUseSprint = computed(
-  () => props.snapshot?.phase === 'running' && props.controlledActorId !== null,
+  () =>
+    props.snapshot?.phase === 'running' &&
+    currentActor.value !== null &&
+    currentActor.value.alive &&
+    isCooldownReady(currentActor.value.sprintCooldown, renderSimulationTimeMs.value),
 );
+const knockbackButtonLabel = computed(() => {
+  if (currentActor.value === null) {
+    return '防击退（1）';
+  }
+
+  return formatSkillCooldownLabel({
+    label: '防击退',
+    hotkey: '1',
+    cooldown: currentActor.value.knockbackImmuneCooldown,
+    currentTimeMs: renderSimulationTimeMs.value,
+  });
+});
+const sprintButtonLabel = computed(() => {
+  if (currentActor.value === null) {
+    return '疾跑（2）';
+  }
+
+  return formatSkillCooldownLabel({
+    label: '疾跑',
+    hotkey: '2',
+    cooldown: currentActor.value.sprintCooldown,
+    currentTimeMs: renderSimulationTimeMs.value,
+  });
+});
 const spectateButtonLabel = computed(() => (props.isOwner && props.isSpectating ? '开始' : '观战'));
 const spectateButtonType = computed(() =>
   props.isOwner && props.isSpectating ? 'warning' : 'info',
@@ -235,9 +288,8 @@ function handleZoomInput(value: number | null): void {
   emit('cameraZoomChange', Math.min(Math.max(value, MIN_ZOOM), MAX_ZOOM));
 }
 
-function tickRenderClock(now: number): void {
-  renderNowMs.value = now;
-  renderFrame = requestAnimationFrame(tickRenderClock);
+function tickHudClock(): void {
+  hudNowMs.value = performance.now();
 }
 
 watch(
@@ -251,18 +303,44 @@ watch(
   { immediate: true },
 );
 
+watch(
+  () =>
+    castBar.value === null
+      ? null
+      : `${castBar.value.actionId}:${castBar.value.startedAt}:${castBar.value.totalDurationMs}`,
+  (castKey) => {
+    if (castKey === null || castBar.value === null || props.snapshot === null) {
+      castAnimationBase.value = null;
+      return;
+    }
+
+    const elapsedMs = Math.min(
+      Math.max(props.snapshot.timeMs - castBar.value.startedAt, 0),
+      castBar.value.totalDurationMs,
+    );
+
+    castAnimationBase.value = {
+      castKey,
+      initialElapsedMs: elapsedMs,
+      totalDurationMs: castBar.value.totalDurationMs,
+    };
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   renderClockBase.value = {
     snapshotTimeMs: props.snapshot?.timeMs ?? 0,
     clientNowMs: performance.now(),
   };
-  renderFrame = requestAnimationFrame(tickRenderClock);
+  tickHudClock();
+  hudTimer = window.setInterval(tickHudClock, HUD_TICK_MS);
 });
 
 onBeforeUnmount(() => {
-  if (renderFrame !== null) {
-    cancelAnimationFrame(renderFrame);
-    renderFrame = null;
+  if (hudTimer !== null) {
+    window.clearInterval(hudTimer);
+    hudTimer = null;
   }
 });
 </script>
@@ -374,7 +452,11 @@ onBeforeUnmount(() => {
               <template v-if="castBar">
                 <div class="cast-name">{{ castBar.actionName }}</div>
                 <div class="cast-track">
-                  <div class="cast-fill" :style="{ width: `${castProgress * 100}%` }" />
+                  <div
+                    :key="`${castBar.actionId}-${castBar.startedAt}`"
+                    class="cast-fill"
+                    :style="castFillStyle"
+                  />
                 </div>
               </template>
             </div>
@@ -394,11 +476,19 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="stage-actions">
-            <n-button secondary :disabled="!canUseKnockback" @click="emit('useKnockbackImmune')">
-              防击退（1）
+            <n-button
+              secondary
+              :disabled="!canUseKnockback"
+              @click="emit('useKnockbackImmune', renderSimulationTimeMs)"
+            >
+              {{ knockbackButtonLabel }}
             </n-button>
-            <n-button secondary :disabled="!canUseSprint" @click="emit('useSprint')">
-              疾跑（2）
+            <n-button
+              secondary
+              :disabled="!canUseSprint"
+              @click="emit('useSprint', renderSimulationTimeMs)"
+            >
+              {{ sprintButtonLabel }}
             </n-button>
             <n-button tertiary @click="emit('resetZoom')">重置缩放</n-button>
             <n-text depth="3" class="stage-hint">
@@ -819,6 +909,20 @@ onBeforeUnmount(() => {
   height: 100%;
   border-radius: 999px;
   background: linear-gradient(90deg, #f0d08b 0%, #d67652 100%);
+  transform-origin: left center;
+  animation-name: cast-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: both;
+}
+
+@keyframes cast-progress {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
 }
 
 .empty-stage {

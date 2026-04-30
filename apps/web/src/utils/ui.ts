@@ -1,4 +1,9 @@
-import type { BaseActorSnapshot, RoomSlotState, RoomSummaryDto } from '@ff14arena/shared';
+import type {
+  BaseActorSnapshot,
+  CooldownState,
+  RoomSlotState,
+  RoomSummaryDto,
+} from '@ff14arena/shared';
 
 export type OperationMode = 'traditional' | 'standard';
 export type SelectValue = string | number | null;
@@ -82,8 +87,33 @@ export function getSlotAliveText(alive: boolean | null | undefined): string {
   return alive === false ? '否' : '是';
 }
 
+export function getCooldownRemainingMs(cooldown: CooldownState, currentTimeMs: number): number {
+  return Math.max(cooldown.readyAt - currentTimeMs, 0);
+}
+
+export function isCooldownReady(cooldown: CooldownState, currentTimeMs: number): boolean {
+  return getCooldownRemainingMs(cooldown, currentTimeMs) <= 0;
+}
+
+export function formatCooldownSeconds(cooldown: CooldownState, currentTimeMs: number): string {
+  return (getCooldownRemainingMs(cooldown, currentTimeMs) / 1000).toFixed(1);
+}
+
+export function formatSkillCooldownLabel(options: {
+  label: string;
+  hotkey: string;
+  cooldown: CooldownState;
+  currentTimeMs: number;
+}): string {
+  if (isCooldownReady(options.cooldown, options.currentTimeMs)) {
+    return `${options.label}（${options.hotkey}）`;
+  }
+
+  return `${options.label} ${formatCooldownSeconds(options.cooldown, options.currentTimeMs)}s`;
+}
+
 export function getCooldownSeconds(actor: BaseActorSnapshot, currentTimeMs: number): string {
-  return Math.max((actor.knockbackImmuneCooldown.readyAt - currentTimeMs) / 1000, 0).toFixed(1);
+  return formatCooldownSeconds(actor.knockbackImmuneCooldown, currentTimeMs);
 }
 
 export function getActorStatuses(actor: BaseActorSnapshot): string {

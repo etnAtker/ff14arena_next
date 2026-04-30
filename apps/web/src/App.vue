@@ -438,8 +438,8 @@ onBeforeUnmount(() => {
               { label: '传统', value: 'traditional' },
               { label: '标准', value: 'standard' },
             ]"
-            @use-knockback-immune="store.useKnockbackImmune"
-            @use-sprint="store.useSprint"
+            @use-knockback-immune="store.useKnockbackImmune($event)"
+            @use-sprint="store.useSprint($event)"
             @spectate="store.spectate"
             @start-battle="store.startBattle"
             @set-ready="store.setReady(true)"
