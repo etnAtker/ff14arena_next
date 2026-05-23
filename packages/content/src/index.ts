@@ -9,6 +9,7 @@ import {
   TOP_P1_PROGRAM_LOOP_BATTLE,
   TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER,
 } from './battles/top-p1-program-loop';
+import { EDEN_P4_SPECIAL_BATTLE } from './battles/eden-p4-special';
 import type { BattleBotController } from './runtime/bot';
 
 export type {
@@ -17,7 +18,10 @@ export type {
   BattleBotControllerContext,
 } from './runtime/bot';
 
-export const battleDefinitions: BattleDefinition[] = [TOP_P1_PROGRAM_LOOP_BATTLE];
+export const battleDefinitions: BattleDefinition[] = [
+  TOP_P1_PROGRAM_LOOP_BATTLE,
+  EDEN_P4_SPECIAL_BATTLE,
+];
 
 export const battleBotControllers = new Map<string, BattleBotController>([
   [TOP_P1_PROGRAM_LOOP_BATTLE.id, TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER],

@@ -382,6 +382,72 @@ function drawMapMarker(
   }
 }
 
+function drawActorMarker(
+  graphics: Graphics,
+  position: Vector2,
+  width: number,
+  height: number,
+  arenaRadius: number,
+  scale: number,
+): void {
+  const actorPoint = toStagePoint(position, width, height, arenaRadius);
+  const markerCenter = {
+    x: actorPoint.x,
+    y: actorPoint.y - 2.4 * scale,
+  };
+  const arrowWidth = 1.2 * scale;
+  const arrowHeight = 0.45 * scale;
+  const gap = 0.08 * scale;
+
+  for (let index = 0; index < 3; index += 1) {
+    const y = markerCenter.y + (index - 1) * (arrowHeight + gap);
+    const points = [
+      markerCenter.x - arrowWidth / 2,
+      y - arrowHeight / 2,
+      markerCenter.x + arrowWidth / 2,
+      y - arrowHeight / 2,
+      markerCenter.x,
+      y + arrowHeight / 2,
+    ];
+
+    graphics.poly(points).fill({ color: 0xf4d35e, alpha: 0.95 });
+    graphics.poly(points).stroke({ width: 1.5, color: 0x4c2f12, alpha: 0.8 });
+  }
+}
+
+function drawFanTelegraph(
+  graphics: Graphics,
+  center: Vector2,
+  direction: number,
+  angle: number,
+  radius: number,
+  width: number,
+  height: number,
+  arenaRadius: number,
+): void {
+  const points = [toStagePoint(center, width, height, arenaRadius)];
+  const steps = 18;
+
+  for (let index = 0; index <= steps; index += 1) {
+    const fanAngle = direction - angle / 2 + (angle * index) / steps;
+    points.push(
+      toStagePoint(
+        {
+          x: center.x + Math.cos(fanAngle) * radius,
+          y: center.y + Math.sin(fanAngle) * radius,
+        },
+        width,
+        height,
+        arenaRadius,
+      ),
+    );
+  }
+
+  const polygon = points.flatMap((point) => [point.x, point.y]);
+  graphics.poly(polygon).fill({ color: 0xf47262, alpha: 0.18 });
+  graphics.poly(polygon).stroke({ width: 2, color: 0xffd1ca, alpha: 0.85 });
+}
+
 function draw(now: number): void {
   if (stageRootRef.value === null || app === null || !isAppReady) {
     return;
@@ -456,6 +522,32 @@ function draw(now: number): void {
         graphics.stroke({ width: 3, color: 0xff6b6b, alpha: 0.9 });
       }
 
+      continue;
+    }
+
+    if (mechanic.kind === 'actorMarker') {
+      const target = props.snapshot.actors.find((actor) => actor.id === mechanic.targetId);
+      const targetPosition =
+        target === undefined ? null : (getRenderActorState(target.id)?.position ?? target.position);
+
+      if (targetPosition !== null) {
+        drawActorMarker(graphics, targetPosition, width, height, arenaRadius, scale);
+      }
+
+      continue;
+    }
+
+    if (mechanic.kind === 'fanTelegraph') {
+      drawFanTelegraph(
+        graphics,
+        mechanic.center,
+        mechanic.direction,
+        mechanic.angle,
+        mechanic.radius,
+        width,
+        height,
+        arenaRadius,
+      );
       continue;
     }
 

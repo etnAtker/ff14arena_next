@@ -12,6 +12,8 @@ export type MechanicKind =
   | 'spread'
   | 'tower'
   | 'tether'
+  | 'actorMarker'
+  | 'fanTelegraph'
   | 'circleTelegraph';
 
 export interface MoveState {
@@ -155,6 +157,27 @@ export interface TetherMechanicSnapshot {
   resolveAt: number;
 }
 
+export interface ActorMarkerMechanicSnapshot {
+  id: string;
+  kind: 'actorMarker';
+  label: string;
+  sourceId: string;
+  targetId: string;
+  resolveAt: number;
+}
+
+export interface FanTelegraphMechanicSnapshot {
+  id: string;
+  kind: 'fanTelegraph';
+  label: string;
+  sourceId: string;
+  center: Vector2;
+  direction: number;
+  angle: number;
+  radius: number;
+  resolveAt: number;
+}
+
 export type MechanicSnapshot =
   | CircleMechanicSnapshot
   | DonutMechanicSnapshot
@@ -162,7 +185,9 @@ export type MechanicSnapshot =
   | SpreadMechanicSnapshot
   | TowerMechanicSnapshot
   | CircleTelegraphMechanicSnapshot
-  | TetherMechanicSnapshot;
+  | TetherMechanicSnapshot
+  | ActorMarkerMechanicSnapshot
+  | FanTelegraphMechanicSnapshot;
 
 export interface EncounterResult {
   outcome: EncounterOutcome;

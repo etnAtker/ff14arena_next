@@ -119,6 +119,21 @@ export interface BattleScriptContext {
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;
+    actorMarker(options: {
+      label: string;
+      target: BaseActorSnapshot;
+      resolveAfterMs?: number;
+      sourceId?: string;
+    }): MechanicSnapshot;
+    fanTelegraph(options: {
+      label: string;
+      center: Vector2;
+      direction: number;
+      angle: number;
+      radius: number;
+      resolveAfterMs?: number;
+      sourceId?: string;
+    }): MechanicSnapshot;
   };
   readonly status: {
     apply(

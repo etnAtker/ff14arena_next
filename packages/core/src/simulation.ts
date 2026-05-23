@@ -428,6 +428,8 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       case 'circleTelegraph':
       case 'tower':
       case 'tether':
+      case 'actorMarker':
+      case 'fanTelegraph':
         break;
     }
 
@@ -973,6 +975,31 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             allowTransfer: options.allowTransfer ?? true,
             allowDeadRetarget: options.allowDeadRetarget ?? true,
             preventTargetHoldingOtherTether: options.preventTargetHoldingOtherTether ?? true,
+            resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
+          });
+        },
+        actorMarker(options) {
+          const currentState = assertState(state);
+          return spawnMechanic({
+            id: nextMechanicId(),
+            kind: 'actorMarker',
+            label: options.label,
+            sourceId: options.sourceId ?? currentState.boss.id,
+            targetId: options.target.id,
+            resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
+          });
+        },
+        fanTelegraph(options) {
+          const currentState = assertState(state);
+          return spawnMechanic({
+            id: nextMechanicId(),
+            kind: 'fanTelegraph',
+            label: options.label,
+            sourceId: options.sourceId ?? currentState.boss.id,
+            center: cloneVector(options.center),
+            direction: options.direction,
+            angle: options.angle,
+            radius: options.radius,
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
