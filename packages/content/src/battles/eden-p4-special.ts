@@ -26,6 +26,8 @@ const LIGHT_LOCK_DURATION_MS = 7_000;
 const LIGHT_BONDAGE_START_AT = MECHANIC_START_AT + LIGHT_LOCK_DURATION_MS;
 const LIGHT_WAVE_CAST_MS = 11_000;
 const LIGHT_WAVE_RESOLVE_AT = MECHANIC_START_AT + LIGHT_WAVE_CAST_MS;
+const BOT_REACTION_DELAY_MS = 2_000;
+const BOT_SWAP1_STAGE_MS = 3_000;
 const LIGHT_BONDAGE_MIN_DISTANCE = 17;
 const LIGHT_BONDAGE_MAX_DISTANCE = 23;
 const FAN_ANGLE_RAD = Math.PI / 6;
@@ -113,16 +115,7 @@ const EDEN_P4_MAP_MARKERS: MapMarker[] = EDEN_P4_MAP_MARKER_BASES.map((marker, i
   ...(marker.shape === 'circle' ? { radius: ROUND_MARKER_RADIUS } : { size: SQUARE_MARKER_SIZE }),
 }));
 
-const INITIAL_POSITIONS: Record<PartySlot, Vector2> = {
-  MT: { x: -6, y: 14 },
-  ST: { x: -3, y: 14 },
-  H1: { x: 0, y: 14 },
-  H2: { x: 3, y: 14 },
-  D1: { x: 6, y: 14 },
-  D2: { x: -4.5, y: 16 },
-  D3: { x: 0, y: 16 },
-  D4: { x: 4.5, y: 16 },
-};
+const INITIAL_POSITIONS: Record<PartySlot, Vector2> = QUEUE_POSITIONS;
 
 function shuffleSlots(slots: readonly PartySlot[]): PartySlot[] {
   const shuffled = [...slots];
@@ -624,7 +617,9 @@ function swapNoSwap1DarkWaterFan(
   );
 }
 
-function createEdenP4NoSwap1Placement(assignments: EdenP4Assignments): EdenP4BotPlacement | null {
+function createEdenP4NoSwap1StagePlacement(
+  assignments: EdenP4Assignments,
+): EdenP4BotPlacement | null {
   const placement: Partial<EdenP4BotPlacement> = {};
   const lightSlotSet = new Set(assignments.lightOrder);
   const northLightSlots = NORTH_QUEUE.filter((slot) => lightSlotSet.has(slot));
@@ -641,14 +636,28 @@ function createEdenP4NoSwap1Placement(assignments: EdenP4Assignments): EdenP4Bot
   assignBotPoint(placement, southFanSlots[0], 'dSouth');
   assignBotPoint(placement, southFanSlots[1], 'bSouth');
 
+  return completeBotPlacement(placement);
+}
+
+function createEdenP4NoSwap1FinalPlacement(
+  assignments: EdenP4Assignments,
+): EdenP4BotPlacement | null {
+  const placement = createEdenP4NoSwap1StagePlacement(assignments);
+
+  if (placement === null) {
+    return null;
+  }
+
   if (hasDarkWaterInSameHalf(placement, assignments.darkWaterSlots)) {
     swapNoSwap1DarkWaterFan(placement, assignments.darkWaterSlots);
   }
 
-  return completeBotPlacement(placement);
+  return placement;
 }
 
-function createEdenP4Swap1Placement(assignments: EdenP4Assignments): EdenP4BotPlacement | null {
+function createEdenP4Swap1StagePlacement(
+  assignments: EdenP4Assignments,
+): EdenP4BotPlacement | null {
   const placement: Partial<EdenP4BotPlacement> = {};
   const queueGroups = getBotQueueGroups(assignments);
   const lightSlotSet = new Set(assignments.lightOrder);
@@ -676,27 +685,52 @@ function createEdenP4Swap1Placement(assignments: EdenP4Assignments): EdenP4BotPl
   assignBotPoint(placement, southFanSlots[1], 'bSouth');
   swapBotPoints(placement, 'dNorth', 'dSouth');
 
+  return completeBotPlacement(placement);
+}
+
+function createEdenP4Swap1FinalPlacement(
+  assignments: EdenP4Assignments,
+): EdenP4BotPlacement | null {
+  const placement = createEdenP4Swap1StagePlacement(assignments);
+
+  if (placement === null) {
+    return null;
+  }
+
   if (hasDarkWaterInSameHalf(placement, assignments.darkWaterSlots)) {
     swapAllEdenP4BotGroups(placement);
   }
 
-  return completeBotPlacement(placement);
+  return placement;
 }
 
-function createEdenP4BotPlacement(assignments: EdenP4Assignments): EdenP4BotPlacement | null {
+function createEdenP4BotStagePlacement(assignments: EdenP4Assignments): EdenP4BotPlacement | null {
   return needsEdenP4Swap1(assignments.lightOrder)
-    ? createEdenP4Swap1Placement(assignments)
-    : createEdenP4NoSwap1Placement(assignments);
+    ? createEdenP4Swap1StagePlacement(assignments)
+    : createEdenP4NoSwap1StagePlacement(assignments);
 }
 
-function getEdenP4BotTarget(slot: PartySlot, scriptState: Record<string, unknown>): Vector2 {
+function createEdenP4BotFinalPlacement(assignments: EdenP4Assignments): EdenP4BotPlacement | null {
+  return needsEdenP4Swap1(assignments.lightOrder)
+    ? createEdenP4Swap1FinalPlacement(assignments)
+    : createEdenP4NoSwap1FinalPlacement(assignments);
+}
+
+function getEdenP4BotTarget(
+  slot: PartySlot,
+  timeMs: number,
+  scriptState: Record<string, unknown>,
+): Vector2 {
   const assignments = getEdenP4AssignmentsFromScriptState(scriptState);
 
-  if (assignments === null) {
+  if (assignments === null || timeMs < MECHANIC_START_AT + BOT_REACTION_DELAY_MS) {
     return QUEUE_POSITIONS[slot];
   }
 
-  const placement = createEdenP4BotPlacement(assignments);
+  const placement =
+    timeMs < MECHANIC_START_AT + BOT_REACTION_DELAY_MS + BOT_SWAP1_STAGE_MS
+      ? createEdenP4BotStagePlacement(assignments)
+      : createEdenP4BotFinalPlacement(assignments);
 
   if (placement === null) {
     return QUEUE_POSITIONS[slot];
@@ -718,7 +752,7 @@ export const EDEN_P4_SPECIAL_BATTLE: BattleDefinition = {
       slot,
       {
         position: INITIAL_POSITIONS[slot],
-        facing: createFacingTowards(INITIAL_POSITIONS[slot], CENTER),
+        facing: NORTH_ANGLE,
       },
     ]),
   ) as BattleDefinition['initialPartyPositions'],
@@ -827,7 +861,7 @@ export const EDEN_P4_SPECIAL_BATTLE: BattleDefinition = {
 };
 
 export const EDEN_P4_SPECIAL_BOT_CONTROLLER: BattleBotController = ({ snapshot, slot, actor }) => {
-  const target = getEdenP4BotTarget(slot, snapshot.scriptState);
+  const target = getEdenP4BotTarget(slot, snapshot.timeMs, snapshot.scriptState);
   const faceAngle = createFacingTowards(actor.position, snapshot.boss.position);
 
   return {

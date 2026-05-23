@@ -15,6 +15,27 @@ const LIGHT_MIN_DISTANCE = 17;
 const LIGHT_MAX_DISTANCE = 23;
 const FAN_HALF_ANGLE_RAD = Math.PI / 12;
 const ARENA_RADIUS = 20;
+const NORTH_ANGLE = -Math.PI / 2;
+const QUEUE_POSITIONS = {
+  MT: { x: -3, y: -5 },
+  ST: { x: -1, y: -5 },
+  H1: { x: 1, y: -5 },
+  H2: { x: 3, y: -5 },
+  D1: { x: -3, y: 5 },
+  D2: { x: -1, y: 5 },
+  D3: { x: 1, y: 5 },
+  D4: { x: 3, y: 5 },
+};
+const BOT_FINAL_POINTS = {
+  northTowerLeft: { x: -0.6, y: -9 },
+  northTowerRight: { x: 0.6, y: -9 },
+  southTowerLeft: { x: -0.6, y: 9 },
+  southTowerRight: { x: 0.6, y: 9 },
+  dNorth: { x: -4, y: -1.2 },
+  dSouth: { x: -4, y: 1.2 },
+  bNorth: { x: 4, y: -1.2 },
+  bSouth: { x: 4, y: 1.2 },
+};
 
 function withMockedRandom(randomValues, fn) {
   const originalRandom = Math.random;
@@ -104,6 +125,32 @@ function getDistance(left, right) {
   return Math.hypot(left.x - right.x, left.y - right.y);
 }
 
+function assertNearPoint(actual, expected, message) {
+  assert.ok(getDistance(actual, expected) <= 0.0001, message);
+}
+
+function getNormalizedDirection(current, target) {
+  const delta = {
+    x: target.x - current.x,
+    y: target.y - current.y,
+  };
+  const length = Math.hypot(delta.x, delta.y);
+
+  if (length <= 0.35) {
+    return { x: 0, y: 0 };
+  }
+
+  return {
+    x: delta.x / length,
+    y: delta.y / length,
+  };
+}
+
+function assertNearDirection(actual, expected, message) {
+  assert.ok(Math.abs(actual.x - expected.x) <= 0.0001, `${message} x`);
+  assert.ok(Math.abs(actual.y - expected.y) <= 0.0001, `${message} y`);
+}
+
 function getAngleDiff(left, right) {
   const diff = Math.abs(left - right) % (Math.PI * 2);
 
@@ -165,6 +212,100 @@ function lightOrderHasInternalTether(lightOrder) {
 
     return bothTh || bothDps;
   });
+}
+
+function getLightEdges(lightOrder) {
+  return lightOrder.map((slot, index) => [slot, lightOrder[(index + 1) % lightOrder.length]]);
+}
+
+function getLinkedDpsForHealer(lightOrder, healerSlot) {
+  for (const [sourceSlot, targetSlot] of getLightEdges(lightOrder)) {
+    if (sourceSlot === healerSlot && DPS_SLOTS.includes(targetSlot)) {
+      return targetSlot;
+    }
+
+    if (targetSlot === healerSlot && DPS_SLOTS.includes(sourceSlot)) {
+      return sourceSlot;
+    }
+  }
+
+  return null;
+}
+
+function swapPlacementPoints(placement, leftPointKey, rightPointKey) {
+  const leftSlot = PARTY_SLOT_ORDER.find((slot) => placement[slot] === leftPointKey);
+  const rightSlot = PARTY_SLOT_ORDER.find((slot) => placement[slot] === rightPointKey);
+  assert.ok(leftSlot);
+  assert.ok(rightSlot);
+  placement[leftSlot] = rightPointKey;
+  placement[rightSlot] = leftPointKey;
+}
+
+function createSwap1StagePlacement(assignments) {
+  const lightSlotSet = new Set(assignments.lightOrder);
+  const healerSlot = assignments.lightOrder.find((slot) => ['H1', 'H2'].includes(slot));
+  assert.ok(healerSlot);
+  const linkedDpsSlot = getLinkedDpsForHealer(assignments.lightOrder, healerSlot);
+  assert.ok(linkedDpsSlot);
+
+  const northQueue = ['MT', 'ST', 'H1', 'H2'];
+  const southQueue = ['D1', 'D2', 'D3', 'D4'];
+  const northIndex = northQueue.indexOf(healerSlot);
+  const southIndex = southQueue.indexOf(linkedDpsSlot);
+  northQueue[northIndex] = linkedDpsSlot;
+  southQueue[southIndex] = healerSlot;
+
+  const tankSlot = assignments.lightOrder.find((slot) => ['MT', 'ST'].includes(slot));
+  const otherDpsSlot = assignments.lightOrder.find(
+    (slot) => DPS_SLOTS.includes(slot) && slot !== linkedDpsSlot,
+  );
+  assert.ok(tankSlot);
+  assert.ok(otherDpsSlot);
+
+  const placement = {};
+  placement[tankSlot] = 'northTowerLeft';
+  placement[linkedDpsSlot] = 'northTowerRight';
+  placement[otherDpsSlot] = 'southTowerLeft';
+  placement[healerSlot] = 'southTowerRight';
+
+  const northFanSlots = northQueue.filter((slot) => !lightSlotSet.has(slot));
+  const southFanSlots = southQueue.filter((slot) => !lightSlotSet.has(slot));
+  placement[northFanSlots[0]] = 'dNorth';
+  placement[northFanSlots[1]] = 'bNorth';
+  placement[southFanSlots[0]] = 'dSouth';
+  placement[southFanSlots[1]] = 'bSouth';
+  swapPlacementPoints(placement, 'dNorth', 'dSouth');
+
+  return placement;
+}
+
+function createSwap1FinalPlacement(assignments) {
+  const placement = createSwap1StagePlacement(assignments);
+  const darkWaterHalves = assignments.darkWaterSlots.map((slot) =>
+    Math.sign(BOT_FINAL_POINTS[placement[slot]].y),
+  );
+
+  if (darkWaterHalves[0] !== 0 && darkWaterHalves[0] === darkWaterHalves[1]) {
+    swapPlacementPoints(placement, 'northTowerLeft', 'northTowerRight');
+    swapPlacementPoints(placement, 'southTowerLeft', 'southTowerRight');
+    swapPlacementPoints(placement, 'dNorth', 'dSouth');
+    swapPlacementPoints(placement, 'bNorth', 'bSouth');
+  }
+
+  return placement;
+}
+
+function isSwap1SameHalfAssignment(assignments) {
+  if (!lightOrderHasInternalTether(assignments.lightOrder)) {
+    return false;
+  }
+
+  const stagePlacement = createSwap1StagePlacement(assignments);
+  const darkWaterHalves = assignments.darkWaterSlots.map((slot) =>
+    Math.sign(BOT_FINAL_POINTS[stagePlacement[slot]].y),
+  );
+
+  return darkWaterHalves[0] !== 0 && darkWaterHalves[0] === darkWaterHalves[1];
 }
 
 function getActorBySlot(snapshot, slot) {
@@ -413,6 +554,10 @@ test('伊甸P4特殊：场地、标点和开场读条正确', () => {
   const simulation = createEdenP4Simulation();
   const initialSnapshot = simulation.getSnapshot();
 
+  for (const actor of initialSnapshot.actors) {
+    assertNearPoint(actor.position, QUEUE_POSITIONS[actor.slot], `${actor.slot} 初始站位错误`);
+    assert.equal(actor.facing, NORTH_ANGLE, `${actor.slot} 初始面向错误`);
+  }
   assert.equal(initialSnapshot.arenaRadius, 20);
   assert.equal(initialSnapshot.bossTargetRingRadius, 5);
   assert.deepEqual(
@@ -580,6 +725,86 @@ test('伊甸P4特殊：黑暗狂水没有分处上下半场会团灭', () =>
 
 test('伊甸P4特殊：Bot controller 已登记', () => {
   assert.ok(getBattleBotController('eden_p4_special'));
+});
+
+test('伊甸P4特殊：Bot 在读条结束后延迟 2 秒再移动', () =>
+  withMockedRandom(createSeededRandomValues(6, 64), () => {
+    const controller = getBattleBotController('eden_p4_special');
+    assert.ok(controller);
+    const simulation = createEdenP4BotSimulation();
+
+    advanceTo(simulation, 9_950);
+    const snapshot = simulation.getSnapshot();
+    assert.ok(snapshot.scriptState['edenP4:assignments']);
+
+    for (const actor of snapshot.actors) {
+      assert.ok(actor.slot);
+      const frame = controller({
+        snapshot,
+        slot: actor.slot,
+        actor,
+      });
+      assert.ok(frame.pose);
+      assert.equal(frame.pose.moveState.moving, false);
+      assertNearPoint(frame.pose.position, actor.position, `${actor.slot} 不应在延迟期间移动`);
+    }
+  }));
+
+test('伊甸P4特殊：Bot 先执行换位1假设位置再执行换位2', () => {
+  const controller = getBattleBotController('eden_p4_special');
+  assert.ok(controller);
+
+  for (let seed = 1; seed <= 200; seed += 1) {
+    const result = withMockedRandom(createSeededRandomValues(seed, 64), () => {
+      const simulation = createEdenP4BotSimulation();
+      advanceTo(simulation, 8_000);
+      const snapshot = simulation.getSnapshot();
+      const assignments = snapshot.scriptState['edenP4:assignments'];
+      assert.ok(assignments);
+
+      if (!isSwap1SameHalfAssignment(assignments)) {
+        return null;
+      }
+
+      const stagePlacement = createSwap1StagePlacement(assignments);
+      const finalPlacement = createSwap1FinalPlacement(assignments);
+      const changedSlot = PARTY_SLOT_ORDER.find(
+        (slot) => stagePlacement[slot] !== finalPlacement[slot],
+      );
+      assert.ok(changedSlot);
+      const actor = getActorBySlot(snapshot, changedSlot);
+      const stageFrame = controller({
+        snapshot: { ...snapshot, timeMs: 11_000 },
+        slot: changedSlot,
+        actor,
+      });
+      const finalFrame = controller({
+        snapshot: { ...snapshot, timeMs: 13_000 },
+        slot: changedSlot,
+        actor,
+      });
+      assert.ok(stageFrame.pose);
+      assert.ok(finalFrame.pose);
+      assertNearDirection(
+        stageFrame.pose.moveState.direction,
+        getNormalizedDirection(actor.position, BOT_FINAL_POINTS[stagePlacement[changedSlot]]),
+        `${changedSlot} 应先朝换位1假设位置移动`,
+      );
+      assertNearDirection(
+        finalFrame.pose.moveState.direction,
+        getNormalizedDirection(actor.position, BOT_FINAL_POINTS[finalPlacement[changedSlot]]),
+        `${changedSlot} 应再朝换位2最终位置移动`,
+      );
+
+      return true;
+    });
+
+    if (result === true) {
+      return;
+    }
+  }
+
+  assert.fail('没有找到需要换位1且换位2会改变目标的随机样本');
 });
 
 test('伊甸P4特殊：全 Bot 可以完成多组随机跑法', () => {

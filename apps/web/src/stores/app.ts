@@ -17,6 +17,7 @@ import type {
   PartySlot,
   RoomStatePayload,
   RoomStateDto,
+  RoomSpectatorState,
   RoomSummaryDto,
   SimulationEvent,
   SimulationInput,
@@ -71,6 +72,7 @@ export const useAppStore = defineStore('app', () => {
   const lastResyncRequestedAt = ref(0);
   const transportProbeLatencyMs = ref(0);
   const localControlledPose = ref<LocalControlledPose | null>(null);
+  const spectatePending = ref(false);
   let transportProbeTimer: number | null = null;
 
   const snapshot = computed<SimulationSnapshot | null>(() => {
@@ -96,6 +98,10 @@ export const useAppStore = defineStore('app', () => {
   });
 
   const currentPlayerSlot = computed<PartySlot | null>(() => {
+    if (spectatePending.value) {
+      return null;
+    }
+
     const currentRoom = room.value;
 
     if (currentRoom === null) {
@@ -116,7 +122,7 @@ export const useAppStore = defineStore('app', () => {
       currentRoom.spectators.find((spectator) => spectator.userId === profile.value.userId) ?? null
     );
   });
-  const isSpectating = computed(() => currentSpectator.value !== null);
+  const isSpectating = computed(() => spectatePending.value || currentSpectator.value !== null);
 
   const page = computed<'home' | 'battle'>(() => (room.value === null ? 'home' : 'battle'));
   const latencyDisplay = computed(() =>
@@ -155,11 +161,19 @@ export const useAppStore = defineStore('app', () => {
     localControlledPose.value = null;
   }
 
+  function clearLocalControlState(): void {
+    clearLocalControlledPose();
+    clearFacingPreview();
+  }
+
+  function canSendPlayerInput(): boolean {
+    return !spectatePending.value && currentSpectator.value === null;
+  }
+
   function resetSyncState(options?: { clearInputSeq?: boolean }): void {
     authoritativeSnapshot.value = null;
     currentSyncId.value = 0;
-    clearLocalControlledPose();
-    clearFacingPreview();
+    clearLocalControlState();
 
     if (options?.clearInputSeq ?? true) {
       inputSeq.value = 0;
@@ -408,12 +422,14 @@ export const useAppStore = defineStore('app', () => {
       nextSocket.on('disconnect', () => {
         connected.value = false;
         stopTransportProbeLoop();
+        spectatePending.value = false;
         clearLocalControlledPose();
         appendLog('与服务器断开连接');
       });
 
       nextSocket.on('server:error', (payload) => {
         serverError.value = payload.message;
+        spectatePending.value = false;
         appendLog(`错误：${payload.message}`);
       });
 
@@ -426,6 +442,15 @@ export const useAppStore = defineStore('app', () => {
         }
 
         room.value = payload.room;
+
+        if (
+          spectatePending.value &&
+          payload.room.spectators.some(
+            (spectator: RoomSpectatorState) => spectator.userId === profile.value.userId,
+          )
+        ) {
+          spectatePending.value = false;
+        }
       });
 
       nextSocket.on('room:slots', (payload) => {
@@ -448,6 +473,7 @@ export const useAppStore = defineStore('app', () => {
 
         appendLog(payload.reason);
         room.value = null;
+        spectatePending.value = false;
         resetBattleState();
         loadLobbyData().catch(() => undefined);
       });
@@ -630,6 +656,7 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
+    spectatePending.value = false;
     const currentSocket = socket.value ?? (await ensureSocket());
     currentSocket.emit('room:switch-slot', {
       roomId: room.value.roomId,
@@ -642,6 +669,8 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
+    spectatePending.value = true;
+    clearLocalControlState();
     const currentSocket = socket.value ?? (await ensureSocket());
     currentSocket.emit('room:spectate', {
       roomId: room.value.roomId,
@@ -709,7 +738,12 @@ export const useAppStore = defineStore('app', () => {
     facing: number;
     moveState: LocalControlledPose['moveState'];
   }): void {
-    if (room.value === null || socket.value === null || authoritativeSnapshot.value === null) {
+    if (
+      room.value === null ||
+      socket.value === null ||
+      authoritativeSnapshot.value === null ||
+      !canSendPlayerInput()
+    ) {
       return;
     }
 
@@ -756,7 +790,7 @@ export const useAppStore = defineStore('app', () => {
   function emitSimulationInput(
     input: Omit<SimulationInput, 'roomId' | 'inputSeq' | 'issuedAt'>,
   ): boolean {
-    if (room.value === null || socket.value === null) {
+    if (room.value === null || socket.value === null || !canSendPlayerInput()) {
       return false;
     }
 
@@ -782,7 +816,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function sendContinuousInputFrame(frame: { moveDirection: Vector2; facing?: number }): void {
-    if (room.value === null || socket.value === null) {
+    if (room.value === null || socket.value === null || !canSendPlayerInput()) {
       return;
     }
 
@@ -860,7 +894,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function useKnockbackImmune(currentTimeMs?: number): void {
-    if (snapshot.value?.phase !== 'running') {
+    if (snapshot.value?.phase !== 'running' || !canSendPlayerInput()) {
       return;
     }
 
@@ -897,7 +931,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function useSprint(currentTimeMs?: number): void {
-    if (snapshot.value?.phase !== 'running') {
+    if (snapshot.value?.phase !== 'running' || !canSendPlayerInput()) {
       return;
     }
 
