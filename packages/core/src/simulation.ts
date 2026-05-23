@@ -33,7 +33,6 @@ import { add, angleTo, distance, fromAngle, length, normalize, scale, subtract }
 import {
   cloneVector,
   createMovementRuntime,
-  HARD_CORRECTION_DISTANCE,
   isPointOnSegment,
   POSITION_EPSILON,
   pruneMovementRuntime,
@@ -488,11 +487,23 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         continue;
       }
 
-      const direction = normalize(subtract(target.position, source));
-      target.position = add(target.position, scale(direction, knockbackDistance));
-      resetMovementRuntime(target, currentState.timeMs);
-      emitActorMoved(target, 'hard');
-      checkOutOfBounds(target);
+      if (target.kind === 'player') {
+        emit({
+          type: 'actorForcedMovementRequested',
+          payload: {
+            actorId: target.id,
+            kind: 'knockback',
+            source: cloneVector(source),
+            distance: knockbackDistance,
+          },
+        });
+      } else {
+        const direction = normalize(subtract(target.position, source));
+        target.position = add(target.position, scale(direction, knockbackDistance));
+        resetMovementRuntime(target, currentState.timeMs);
+        emitActorMoved(target);
+        checkOutOfBounds(target);
+      }
     }
   }
 
@@ -501,14 +512,13 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     resetActorMovementRuntime(runtime, actor, currentTimeMs);
   }
 
-  function emitActorMoved(actor: BaseActorSnapshot, correctionMode: 'smooth' | 'hard'): void {
+  function emitActorMoved(actor: BaseActorSnapshot): void {
     emit({
       type: 'actorMoved',
       payload: {
         actorId: actor.id,
         position: cloneVector(actor.position),
         facing: actor.facing,
-        correctionMode,
       },
     });
   }
@@ -541,14 +551,13 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       checkOutOfBounds(actor);
     }
 
-    const positionDelta = distance(previousPosition, actor.position);
     const moved =
-      positionDelta > POSITION_EPSILON ||
+      distance(previousPosition, actor.position) > POSITION_EPSILON ||
       Math.abs(previousFacing - actor.facing) > POSITION_EPSILON ||
       !sameMoveState(previousMoveState, actor.moveState);
 
     if (moved) {
-      emitActorMoved(actor, positionDelta >= HARD_CORRECTION_DISTANCE ? 'hard' : 'smooth');
+      emitActorMoved(actor);
     }
   }
 

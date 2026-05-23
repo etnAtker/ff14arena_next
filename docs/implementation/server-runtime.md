@@ -102,6 +102,8 @@
   下发一轮新同步流的起始快照
 - `sim:events`
   下发当前同步流中的增量事件
+  - `actorMoved` 用于广播服务端已采信的角色位姿
+  - `actorForcedMovementRequested` 用于通知真人客户端执行击退等强制位移
 - `sim:snapshot`
   下发 join / rejoin / resync 快照以及周期性权威快照
 
@@ -127,7 +129,9 @@
 - Bot controller 运行在 `core` 外部，只读取快照与 `scriptState`，再向 `core` 提交统一控制帧
 - 普通移动不再做 `issuedAtServerTimeEstimate` 时间补偿，也不再回传输入确认序号
 - 当前服务端不对玩家上传位姿样本执行移动速度上限校验
-- 击退、越界修正等强修正仍通过事件直接下发位置结果
+- 真人玩家的击退等强制位移由服务端下发强制位移请求，目标客户端本地执行后通过 `sim:input-frame` 回传位姿结果
+- Bot 的击退等强制位移仍由服务端直接执行，并通过 `actorMoved` 广播结果
+- 服务端不再使用 `hard` 位置修正覆盖真人玩家本机位置
 
 ## 6. 当前边界
 

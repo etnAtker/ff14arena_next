@@ -2,11 +2,15 @@ import { computed, ref, shallowRef } from 'vue';
 import { defineStore } from 'pinia';
 import type { Socket } from 'socket.io-client';
 import {
+  add,
   getActorMoveSpeed,
   KNOCKBACK_IMMUNE_COOLDOWN_MS,
   movePosition,
+  normalize,
   normalizeMoveDirection,
+  scale,
   SPRINT_COOLDOWN_MS,
+  subtract,
 } from '@ff14arena/core';
 import type {
   BattleSummary,
@@ -699,6 +703,56 @@ export const useAppStore = defineStore('app', () => {
     return nextPose;
   }
 
+  function submitLocalControlledPose(options: {
+    actorId: string;
+    position: Vector2;
+    facing: number;
+    moveState: LocalControlledPose['moveState'];
+  }): void {
+    if (room.value === null || socket.value === null || authoritativeSnapshot.value === null) {
+      return;
+    }
+
+    const actor = authoritativeSnapshot.value.actors.find(
+      (candidate) => candidate.id === options.actorId,
+    );
+
+    if (actor === undefined || !actor.alive) {
+      return;
+    }
+
+    const nextPose = {
+      actorId: actor.id,
+      position: cloneVector(options.position),
+      facing: options.facing,
+      moveState: {
+        direction: cloneVector(options.moveState.direction),
+        moving: options.moveState.moving,
+      },
+    };
+
+    actor.position = cloneVector(nextPose.position);
+    actor.facing = nextPose.facing;
+    actor.moveState = {
+      direction: cloneVector(nextPose.moveState.direction),
+      moving: nextPose.moveState.moving,
+    };
+    localControlledPose.value = nextPose;
+
+    inputSeq.value += 1;
+    socket.value.emit('sim:input-frame', {
+      roomId: room.value.roomId,
+      actorId: actor.id,
+      inputSeq: inputSeq.value,
+      issuedAt: Date.now(),
+      payload: {
+        position: cloneVector(nextPose.position),
+        moveDirection: cloneVector(nextPose.moveState.direction),
+        facing: nextPose.facing,
+      },
+    });
+  }
+
   function emitSimulationInput(
     input: Omit<SimulationInput, 'roomId' | 'inputSeq' | 'issuedAt'>,
   ): boolean {
@@ -891,26 +945,42 @@ export const useAppStore = defineStore('app', () => {
         );
 
         if (actor !== undefined) {
-          if (
-            event.payload.actorId === localControlledPose.value?.actorId &&
-            event.payload.correctionMode !== 'hard'
-          ) {
+          if (event.payload.actorId === localControlledPose.value?.actorId) {
             break;
           }
 
           actor.position = event.payload.position;
           actor.facing = event.payload.facing;
+        }
+        break;
+      }
+      case 'actorForcedMovementRequested': {
+        const actor = getCurrentPlayerActor();
 
-          if (event.payload.actorId === localControlledPose.value?.actorId) {
-            localControlledPose.value = {
+        if (actor === null || actor.id !== event.payload.actorId) {
+          break;
+        }
+
+        switch (event.payload.kind) {
+          case 'knockback': {
+            const nextPosition = add(
+              actor.position,
+              scale(
+                normalize(subtract(actor.position, event.payload.source)),
+                event.payload.distance,
+              ),
+            );
+
+            submitLocalControlledPose({
               actorId: actor.id,
-              position: cloneVector(event.payload.position),
-              facing: event.payload.facing,
+              position: nextPosition,
+              facing: actor.facing,
               moveState: {
                 direction: cloneVector(actor.moveState.direction),
                 moving: actor.moveState.moving,
               },
-            };
+            });
+            break;
           }
         }
         break;

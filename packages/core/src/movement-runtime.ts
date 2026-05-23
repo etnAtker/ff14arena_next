@@ -16,7 +16,6 @@ export interface ActorMovementRuntime {
 }
 
 export const MOVEMENT_HISTORY_WINDOW_MS = 1_000;
-export const HARD_CORRECTION_DISTANCE = 0.9;
 export const POSITION_EPSILON = 0.001;
 
 export function cloneVector(vector: Vector2): Vector2 {

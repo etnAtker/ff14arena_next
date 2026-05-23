@@ -1,9 +1,4 @@
-import type {
-  EncounterOutcome,
-  MechanicSnapshot,
-  PositionCorrectionMode,
-  StatusSnapshot,
-} from './simulation';
+import type { EncounterOutcome, MechanicSnapshot, StatusSnapshot } from './simulation';
 import type { Vector2 } from './base';
 
 export interface BaseSimulationEvent<TType extends string, TPayload> {
@@ -20,7 +15,16 @@ export type ActorMovedEvent = BaseSimulationEvent<
     actorId: string;
     position: Vector2;
     facing: number;
-    correctionMode: PositionCorrectionMode;
+  }
+>;
+
+export type ActorForcedMovementRequestedEvent = BaseSimulationEvent<
+  'actorForcedMovementRequested',
+  {
+    actorId: string;
+    kind: 'knockback';
+    source: Vector2;
+    distance: number;
   }
 >;
 
@@ -97,6 +101,7 @@ export type EncounterCompletedEvent = BaseSimulationEvent<
 
 export type SimulationEvent =
   | ActorMovedEvent
+  | ActorForcedMovementRequestedEvent
   | BossCastStartedEvent
   | BossCastResolvedEvent
   | AoeSpawnedEvent

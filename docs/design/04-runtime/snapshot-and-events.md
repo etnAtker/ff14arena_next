@@ -31,6 +31,7 @@
 事件类型包括：
 
 - `actorMoved`
+- `actorForcedMovementRequested`
 - `bossCastStarted`
 - `bossCastResolved`
 - `aoeSpawned`

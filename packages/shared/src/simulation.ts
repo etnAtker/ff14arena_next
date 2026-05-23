@@ -269,8 +269,6 @@ export interface ActorControlFrame {
   commands?: ActorControlCommand[];
 }
 
-export type PositionCorrectionMode = 'smooth' | 'hard';
-
 export type SimulationInputPayload =
   | MoveInputPayload
   | FaceInputPayload
