@@ -2,6 +2,8 @@ import type { BattleDefinition, BattleScriptContext } from '@ff14arena/core';
 import { FIXED_TICK_MS, createFacingTowards, createPointOnRadius, distance } from '@ff14arena/core';
 import type { BaseActorSnapshot, MapMarker, PartySlot, StatusId, Vector2 } from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
+import type { BattleBotController } from '../runtime/bot';
+import { createMoveDirection, createPose } from '../runtime/bot';
 
 const ARENA_RADIUS = 20;
 const BOSS_TARGET_RING_RADIUS = 5;
@@ -24,8 +26,8 @@ const LIGHT_LOCK_DURATION_MS = 7_000;
 const LIGHT_BONDAGE_START_AT = MECHANIC_START_AT + LIGHT_LOCK_DURATION_MS;
 const LIGHT_WAVE_CAST_MS = 11_000;
 const LIGHT_WAVE_RESOLVE_AT = MECHANIC_START_AT + LIGHT_WAVE_CAST_MS;
-const LIGHT_BONDAGE_MIN_DISTANCE = 7;
-const LIGHT_BONDAGE_MAX_DISTANCE = 13;
+const LIGHT_BONDAGE_MIN_DISTANCE = 17;
+const LIGHT_BONDAGE_MAX_DISTANCE = 23;
 const FAN_ANGLE_RAD = Math.PI / 6;
 const FAN_HALF_ANGLE_RAD = FAN_ANGLE_RAD / 2;
 const FAN_TELEGRAPH_MS = 500;
@@ -33,6 +35,38 @@ const FAN_TELEGRAPH_MS = 500;
 const TANK_SLOTS = ['MT', 'ST'] as const satisfies readonly PartySlot[];
 const HEALER_SLOTS = ['H1', 'H2'] as const satisfies readonly PartySlot[];
 const DPS_SLOTS = ['D1', 'D2', 'D3', 'D4'] as const satisfies readonly PartySlot[];
+const TH_SLOTS = [...TANK_SLOTS, ...HEALER_SLOTS] as const satisfies readonly PartySlot[];
+const NORTH_QUEUE = ['MT', 'ST', 'H1', 'H2'] as const satisfies readonly PartySlot[];
+const SOUTH_QUEUE = ['D1', 'D2', 'D3', 'D4'] as const satisfies readonly PartySlot[];
+
+const QUEUE_POSITIONS: Record<PartySlot, Vector2> = {
+  MT: { x: -3, y: -5 },
+  ST: { x: -1, y: -5 },
+  H1: { x: 1, y: -5 },
+  H2: { x: 3, y: -5 },
+  D1: { x: -3, y: 5 },
+  D2: { x: -1, y: 5 },
+  D3: { x: 1, y: 5 },
+  D4: { x: 3, y: 5 },
+};
+
+const BOT_FINAL_POINTS = {
+  northTowerLeft: { x: -0.6, y: -9 },
+  northTowerRight: { x: 0.6, y: -9 },
+  southTowerLeft: { x: -0.6, y: 9 },
+  southTowerRight: { x: 0.6, y: 9 },
+  dNorth: { x: -4, y: -1.2 },
+  dSouth: { x: -4, y: 1.2 },
+  bNorth: { x: 4, y: -1.2 },
+  bSouth: { x: 4, y: 1.2 },
+} as const satisfies Record<string, Vector2>;
+
+type EdenP4BotFinalPointKey = keyof typeof BOT_FINAL_POINTS;
+type EdenP4BotFanPointKey = Extract<
+  EdenP4BotFinalPointKey,
+  'dNorth' | 'dSouth' | 'bNorth' | 'bSouth'
+>;
+type EdenP4BotPlacement = Record<PartySlot, EdenP4BotFinalPointKey>;
 
 const LIGHT_LOCK_STATUS_ID = 'eden_p4_light_lock';
 const LIGHT_BONDAGE_STATUS_ID = 'eden_p4_light_bondage';
@@ -48,6 +82,11 @@ const STATUS_NAME_BY_ID: Record<StatusId, string> = {
 interface EdenP4Assignments {
   lightOrder: PartySlot[];
   darkWaterSlots: [PartySlot, PartySlot];
+}
+
+interface EdenP4BotQueueGroups {
+  north: PartySlot[];
+  south: PartySlot[];
 }
 
 const MARKER_COLORS = {
@@ -383,6 +422,289 @@ function validateDpsArrangement(ctx: BattleScriptContext, actors: BaseActorSnaps
   }
 }
 
+function isPartySlot(value: unknown): value is PartySlot {
+  return typeof value === 'string' && (PARTY_SLOT_ORDER as readonly string[]).includes(value);
+}
+
+function isEdenP4Assignments(value: unknown): value is EdenP4Assignments {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const assignment = value as Partial<EdenP4Assignments>;
+
+  return (
+    Array.isArray(assignment.lightOrder) &&
+    assignment.lightOrder.length === 4 &&
+    assignment.lightOrder.every(isPartySlot) &&
+    new Set(assignment.lightOrder).size === 4 &&
+    Array.isArray(assignment.darkWaterSlots) &&
+    assignment.darkWaterSlots.length === 2 &&
+    assignment.darkWaterSlots.every(isPartySlot)
+  );
+}
+
+function getEdenP4AssignmentsFromScriptState(
+  scriptState: Record<string, unknown>,
+): EdenP4Assignments | null {
+  const assignments = scriptState['edenP4:assignments'];
+
+  return isEdenP4Assignments(assignments) ? assignments : null;
+}
+
+function getLightEdges(lightOrder: PartySlot[]): Array<[PartySlot, PartySlot]> {
+  return lightOrder.map((sourceSlot, index) => [
+    sourceSlot,
+    lightOrder[(index + 1) % lightOrder.length]!,
+  ]);
+}
+
+function isThSlot(slot: PartySlot): boolean {
+  return (TH_SLOTS as readonly PartySlot[]).includes(slot);
+}
+
+function isDpsSlot(slot: PartySlot): boolean {
+  return (DPS_SLOTS as readonly PartySlot[]).includes(slot);
+}
+
+function isSameLightGroup(left: PartySlot, right: PartySlot): boolean {
+  return (isThSlot(left) && isThSlot(right)) || (isDpsSlot(left) && isDpsSlot(right));
+}
+
+function needsEdenP4Swap1(lightOrder: PartySlot[]): boolean {
+  return getLightEdges(lightOrder).some(([sourceSlot, targetSlot]) =>
+    isSameLightGroup(sourceSlot, targetSlot),
+  );
+}
+
+function getLinkedDpsForHealer(lightOrder: PartySlot[], healerSlot: PartySlot): PartySlot | null {
+  for (const [sourceSlot, targetSlot] of getLightEdges(lightOrder)) {
+    if (sourceSlot === healerSlot && isDpsSlot(targetSlot)) {
+      return targetSlot;
+    }
+
+    if (targetSlot === healerSlot && isDpsSlot(sourceSlot)) {
+      return sourceSlot;
+    }
+  }
+
+  return null;
+}
+
+function getBotQueueGroups(assignments: EdenP4Assignments): EdenP4BotQueueGroups {
+  const north: PartySlot[] = [...NORTH_QUEUE];
+  const south: PartySlot[] = [...SOUTH_QUEUE];
+
+  if (!needsEdenP4Swap1(assignments.lightOrder)) {
+    return { north, south };
+  }
+
+  const healerSlot = assignments.lightOrder.find((slot) =>
+    (HEALER_SLOTS as readonly PartySlot[]).includes(slot),
+  );
+  const linkedDpsSlot =
+    healerSlot === undefined ? null : getLinkedDpsForHealer(assignments.lightOrder, healerSlot);
+
+  if (healerSlot === undefined || linkedDpsSlot === null) {
+    return { north, south };
+  }
+
+  const northIndex = north.indexOf(healerSlot);
+  const southIndex = south.indexOf(linkedDpsSlot);
+
+  if (northIndex < 0 || southIndex < 0) {
+    return { north, south };
+  }
+
+  north[northIndex] = linkedDpsSlot;
+  south[southIndex] = healerSlot;
+
+  return { north, south };
+}
+
+function assignBotPoint(
+  placement: Partial<EdenP4BotPlacement>,
+  slot: PartySlot | undefined,
+  pointKey: EdenP4BotFinalPointKey,
+): void {
+  if (slot !== undefined) {
+    placement[slot] = pointKey;
+  }
+}
+
+function getSlotAtBotPoint(
+  placement: Partial<EdenP4BotPlacement>,
+  pointKey: EdenP4BotFinalPointKey,
+): PartySlot | null {
+  return PARTY_SLOT_ORDER.find((slot) => placement[slot] === pointKey) ?? null;
+}
+
+function swapBotPoints(
+  placement: Partial<EdenP4BotPlacement>,
+  leftPointKey: EdenP4BotFinalPointKey,
+  rightPointKey: EdenP4BotFinalPointKey,
+): void {
+  const leftSlot = getSlotAtBotPoint(placement, leftPointKey);
+  const rightSlot = getSlotAtBotPoint(placement, rightPointKey);
+
+  if (leftSlot === null || rightSlot === null) {
+    return;
+  }
+
+  placement[leftSlot] = rightPointKey;
+  placement[rightSlot] = leftPointKey;
+}
+
+function completeBotPlacement(placement: Partial<EdenP4BotPlacement>): EdenP4BotPlacement | null {
+  if (!PARTY_SLOT_ORDER.every((slot) => placement[slot] !== undefined)) {
+    return null;
+  }
+
+  return placement as EdenP4BotPlacement;
+}
+
+function getBotPointHalf(pointKey: EdenP4BotFinalPointKey): -1 | 0 | 1 {
+  return Math.sign(BOT_FINAL_POINTS[pointKey].y) as -1 | 0 | 1;
+}
+
+function hasDarkWaterInSameHalf(
+  placement: Partial<EdenP4BotPlacement>,
+  darkWaterSlots: [PartySlot, PartySlot],
+): boolean {
+  const halves = darkWaterSlots.map((slot) => {
+    const pointKey = placement[slot];
+
+    return pointKey === undefined ? 0 : getBotPointHalf(pointKey);
+  });
+
+  return halves[0] !== 0 && halves[0] === halves[1];
+}
+
+function swapAllEdenP4BotGroups(placement: Partial<EdenP4BotPlacement>): void {
+  swapBotPoints(placement, 'northTowerLeft', 'northTowerRight');
+  swapBotPoints(placement, 'southTowerLeft', 'southTowerRight');
+  swapBotPoints(placement, 'dNorth', 'dSouth');
+  swapBotPoints(placement, 'bNorth', 'bSouth');
+}
+
+function isEdenP4BotFanPointKey(
+  pointKey: EdenP4BotFinalPointKey | undefined,
+): pointKey is EdenP4BotFanPointKey {
+  return (
+    pointKey === 'dNorth' || pointKey === 'dSouth' || pointKey === 'bNorth' || pointKey === 'bSouth'
+  );
+}
+
+function swapNoSwap1DarkWaterFan(
+  placement: Partial<EdenP4BotPlacement>,
+  darkWaterSlots: [PartySlot, PartySlot],
+): void {
+  const fanPointByDarkWaterSlot = darkWaterSlots
+    .map((slot) => [slot, placement[slot]] as const)
+    .find(([, pointKey]) => isEdenP4BotFanPointKey(pointKey));
+
+  if (
+    fanPointByDarkWaterSlot === undefined ||
+    !isEdenP4BotFanPointKey(fanPointByDarkWaterSlot[1])
+  ) {
+    return;
+  }
+
+  const oppositeFanPointByPoint: Record<EdenP4BotFanPointKey, EdenP4BotFanPointKey> = {
+    dNorth: 'bSouth',
+    bSouth: 'dNorth',
+    dSouth: 'bNorth',
+    bNorth: 'dSouth',
+  };
+
+  swapBotPoints(
+    placement,
+    fanPointByDarkWaterSlot[1],
+    oppositeFanPointByPoint[fanPointByDarkWaterSlot[1]],
+  );
+}
+
+function createEdenP4NoSwap1Placement(assignments: EdenP4Assignments): EdenP4BotPlacement | null {
+  const placement: Partial<EdenP4BotPlacement> = {};
+  const lightSlotSet = new Set(assignments.lightOrder);
+  const northLightSlots = NORTH_QUEUE.filter((slot) => lightSlotSet.has(slot));
+  const southLightSlots = SOUTH_QUEUE.filter((slot) => lightSlotSet.has(slot));
+  const northFanSlots = NORTH_QUEUE.filter((slot) => !lightSlotSet.has(slot));
+  const southFanSlots = SOUTH_QUEUE.filter((slot) => !lightSlotSet.has(slot));
+
+  assignBotPoint(placement, northLightSlots[0], 'northTowerLeft');
+  assignBotPoint(placement, northLightSlots[1], 'northTowerRight');
+  assignBotPoint(placement, southLightSlots[0], 'southTowerLeft');
+  assignBotPoint(placement, southLightSlots[1], 'southTowerRight');
+  assignBotPoint(placement, northFanSlots[0], 'dNorth');
+  assignBotPoint(placement, northFanSlots[1], 'bNorth');
+  assignBotPoint(placement, southFanSlots[0], 'dSouth');
+  assignBotPoint(placement, southFanSlots[1], 'bSouth');
+
+  if (hasDarkWaterInSameHalf(placement, assignments.darkWaterSlots)) {
+    swapNoSwap1DarkWaterFan(placement, assignments.darkWaterSlots);
+  }
+
+  return completeBotPlacement(placement);
+}
+
+function createEdenP4Swap1Placement(assignments: EdenP4Assignments): EdenP4BotPlacement | null {
+  const placement: Partial<EdenP4BotPlacement> = {};
+  const queueGroups = getBotQueueGroups(assignments);
+  const lightSlotSet = new Set(assignments.lightOrder);
+  const tankSlot = assignments.lightOrder.find((slot) =>
+    (TANK_SLOTS as readonly PartySlot[]).includes(slot),
+  );
+  const healerSlot = assignments.lightOrder.find((slot) =>
+    (HEALER_SLOTS as readonly PartySlot[]).includes(slot),
+  );
+  const linkedDpsSlot =
+    healerSlot === undefined ? null : getLinkedDpsForHealer(assignments.lightOrder, healerSlot);
+  const otherDpsSlot = assignments.lightOrder.find(
+    (slot) => isDpsSlot(slot) && slot !== linkedDpsSlot,
+  );
+  const northFanSlots = queueGroups.north.filter((slot) => !lightSlotSet.has(slot));
+  const southFanSlots = queueGroups.south.filter((slot) => !lightSlotSet.has(slot));
+
+  assignBotPoint(placement, tankSlot, 'northTowerLeft');
+  assignBotPoint(placement, linkedDpsSlot ?? undefined, 'northTowerRight');
+  assignBotPoint(placement, otherDpsSlot, 'southTowerLeft');
+  assignBotPoint(placement, healerSlot, 'southTowerRight');
+  assignBotPoint(placement, northFanSlots[0], 'dNorth');
+  assignBotPoint(placement, northFanSlots[1], 'bNorth');
+  assignBotPoint(placement, southFanSlots[0], 'dSouth');
+  assignBotPoint(placement, southFanSlots[1], 'bSouth');
+  swapBotPoints(placement, 'dNorth', 'dSouth');
+
+  if (hasDarkWaterInSameHalf(placement, assignments.darkWaterSlots)) {
+    swapAllEdenP4BotGroups(placement);
+  }
+
+  return completeBotPlacement(placement);
+}
+
+function createEdenP4BotPlacement(assignments: EdenP4Assignments): EdenP4BotPlacement | null {
+  return needsEdenP4Swap1(assignments.lightOrder)
+    ? createEdenP4Swap1Placement(assignments)
+    : createEdenP4NoSwap1Placement(assignments);
+}
+
+function getEdenP4BotTarget(slot: PartySlot, scriptState: Record<string, unknown>): Vector2 {
+  const assignments = getEdenP4AssignmentsFromScriptState(scriptState);
+
+  if (assignments === null) {
+    return QUEUE_POSITIONS[slot];
+  }
+
+  const placement = createEdenP4BotPlacement(assignments);
+
+  if (placement === null) {
+    return QUEUE_POSITIONS[slot];
+  }
+
+  return BOT_FINAL_POINTS[placement[slot]];
+}
+
 export const EDEN_P4_SPECIAL_BATTLE: BattleDefinition = {
   id: 'eden_p4_special',
   name: '伊甸P4特殊',
@@ -502,4 +824,13 @@ export const EDEN_P4_SPECIAL_BATTLE: BattleDefinition = {
       ctx.state.complete();
     });
   },
+};
+
+export const EDEN_P4_SPECIAL_BOT_CONTROLLER: BattleBotController = ({ snapshot, slot, actor }) => {
+  const target = getEdenP4BotTarget(slot, snapshot.scriptState);
+  const faceAngle = createFacingTowards(actor.position, snapshot.boss.position);
+
+  return {
+    pose: createPose(actor, createMoveDirection(actor.position, target), faceAngle),
+  };
 };

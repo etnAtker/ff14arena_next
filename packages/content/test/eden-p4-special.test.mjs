@@ -2,16 +2,17 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createSimulation } from '@ff14arena/core';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
-import { getBattleDefinition } from '../src/index.ts';
+import { getBattleBotController, getBattleDefinition } from '../src/index.ts';
 
+const TH_SLOTS = ['MT', 'ST', 'H1', 'H2'];
 const DPS_SLOTS = ['D1', 'D2', 'D3', 'D4'];
 const TOWER_POSITIONS = [
   { x: 0, y: -9 },
   { x: 0, y: 9 },
 ];
 const TOWER_RADIUS = 3;
-const LIGHT_MIN_DISTANCE = 7;
-const LIGHT_MAX_DISTANCE = 13;
+const LIGHT_MIN_DISTANCE = 17;
+const LIGHT_MAX_DISTANCE = 23;
 const FAN_HALF_ANGLE_RAD = Math.PI / 12;
 const ARENA_RADIUS = 20;
 
@@ -48,6 +49,26 @@ function createEdenP4Simulation() {
       name: slot,
       kind: 'player',
       actorId: `player_${slot}`,
+    })),
+  });
+  simulation.start();
+
+  return simulation;
+}
+
+function createEdenP4BotSimulation() {
+  const battle = getBattleDefinition('eden_p4_special');
+  assert.ok(battle);
+
+  const simulation = createSimulation();
+  simulation.loadBattle({
+    battle,
+    roomId: 'eden-p4-special-bot-test-room',
+    party: PARTY_SLOT_ORDER.map((slot) => ({
+      slot,
+      name: slot,
+      kind: 'bot',
+      actorId: `bot_${slot}`,
     })),
   });
   simulation.start();
@@ -134,6 +155,84 @@ function areDpsSlotsConsecutive(sortedSlots) {
   }
 
   return false;
+}
+
+function lightOrderHasInternalTether(lightOrder) {
+  return lightOrder.some((slot, index) => {
+    const nextSlot = lightOrder[(index + 1) % lightOrder.length];
+    const bothTh = TH_SLOTS.includes(slot) && TH_SLOTS.includes(nextSlot);
+    const bothDps = DPS_SLOTS.includes(slot) && DPS_SLOTS.includes(nextSlot);
+
+    return bothTh || bothDps;
+  });
+}
+
+function getActorBySlot(snapshot, slot) {
+  const actor = snapshot.actors.find((candidate) => candidate.slot === slot);
+  assert.ok(actor);
+
+  return actor;
+}
+
+function runEdenP4WithBots(randomValues) {
+  return withMockedRandom(randomValues, () => {
+    const controller = getBattleBotController('eden_p4_special');
+    assert.ok(controller);
+
+    const simulation = createEdenP4BotSimulation();
+    let inputSeq = 0;
+    let assignmentSnapshot = null;
+
+    for (let elapsedMs = 0; elapsedMs <= 25_000 && simulation.running; elapsedMs += 50) {
+      const snapshot = simulation.getSnapshot();
+
+      if (snapshot.scriptState['edenP4:assignments'] !== undefined && assignmentSnapshot === null) {
+        assignmentSnapshot = snapshot;
+      }
+
+      for (const actor of snapshot.actors) {
+        if (actor.slot === null || !actor.alive) {
+          continue;
+        }
+
+        const frame = controller({
+          snapshot,
+          slot: actor.slot,
+          actor,
+        });
+
+        simulation.submitActorControlFrame({
+          actorId: actor.id,
+          inputSeq: ++inputSeq,
+          issuedAt: elapsedMs,
+          ...frame,
+        });
+      }
+
+      simulation.tick(50);
+    }
+
+    return {
+      assignmentSnapshot,
+      finalSnapshot: simulation.getSnapshot(),
+    };
+  });
+}
+
+function isNoSwap1SameHalfAssignment(snapshot) {
+  const assignments = snapshot.scriptState['edenP4:assignments'];
+  assert.ok(assignments);
+
+  if (lightOrderHasInternalTether(assignments.lightOrder)) {
+    return false;
+  }
+
+  const darkWaterActors = assignments.darkWaterSlots.map((slot) => getActorBySlot(snapshot, slot));
+
+  return (
+    Math.sign(darkWaterActors[0].position.y) !== 0 &&
+    Math.sign(darkWaterActors[0].position.y) === Math.sign(darkWaterActors[1].position.y)
+  );
 }
 
 function getPermutations(items, length = items.length) {
@@ -226,12 +325,12 @@ function isValidPlacement(assignments, placement) {
 function findValidPlacement(assignments) {
   const towerPairByHalf = {
     north: [
-      { x: -1.2, y: -6.3 },
-      { x: 1.2, y: -6.3 },
+      { x: -0.6, y: -9 },
+      { x: 0.6, y: -9 },
     ],
     south: [
-      { x: -1.2, y: 6.3 },
-      { x: 1.2, y: 6.3 },
+      { x: -0.6, y: 9 },
+      { x: 0.6, y: 9 },
     ],
   };
   const baitPositions = Array.from({ length: 8 }, (_, index) => {
@@ -478,3 +577,40 @@ test('伊甸P4特殊：黑暗狂水没有分处上下半场会团灭', () =>
     );
     assert.ok(simulation.getSnapshot().actors.every((actor) => !actor.alive));
   }));
+
+test('伊甸P4特殊：Bot controller 已登记', () => {
+  assert.ok(getBattleBotController('eden_p4_special'));
+});
+
+test('伊甸P4特殊：全 Bot 可以完成多组随机跑法', () => {
+  for (let seed = 1; seed <= 24; seed += 1) {
+    const { finalSnapshot } = runEdenP4WithBots(createSeededRandomValues(seed, 64));
+    const result = finalSnapshot.latestResult;
+
+    assert.ok(result, `seed ${seed} 缺少结算结果`);
+    assert.equal(result.outcome, 'success', `seed ${seed}: ${result.failureReasons.join(',')}`);
+    assert.deepEqual(result.failureReasons, []);
+  }
+});
+
+test('伊甸P4特殊：Bot 未换位1时通过狂水对角扇形交换保持 DPS 排列', () => {
+  for (let seed = 1; seed <= 200; seed += 1) {
+    const { assignmentSnapshot, finalSnapshot } = runEdenP4WithBots(
+      createSeededRandomValues(seed, 64),
+    );
+
+    assert.ok(assignmentSnapshot);
+
+    if (!isNoSwap1SameHalfAssignment(assignmentSnapshot)) {
+      continue;
+    }
+
+    const result = finalSnapshot.latestResult;
+    assert.ok(result, `seed ${seed} 缺少结算结果`);
+    assert.equal(result.outcome, 'success', `seed ${seed}: ${result.failureReasons.join(',')}`);
+    assert.deepEqual(result.failureReasons, []);
+    return;
+  }
+
+  assert.fail('没有找到未换位1且黑暗狂水同半场的随机样本');
+});
