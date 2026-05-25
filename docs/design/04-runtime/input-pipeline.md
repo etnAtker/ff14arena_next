@@ -18,7 +18,7 @@
 
 - `roomId`
 - `actorId`
-- `inputSeq`
+- `syncId`
 - `issuedAt`
 - `payload.position`
 - `payload.facing`
@@ -27,7 +27,6 @@
 Bot 控制帧包含：
 
 - `actorId`
-- `inputSeq`
 - `issuedAt`
 - `pose`
 - `commands`
@@ -38,12 +37,13 @@ Bot 控制帧包含：
 
 1. Socket 收到输入
 2. 服务端校验房间、玩家、槽位和权限
-3. 对玩家连续移动样本按 `actorId + inputSeq` 去重，只保留每个 Actor 的最新位姿样本
-4. 房间 Tick 开始时，服务端先把待处理位姿样本写入同一个 `SimulationInstance`
-5. 等待态与运行态都走同一套位姿样本写入链路，这条链路不分叉
-6. Bot 指令和一次性主动能力继续进入同一个控制帧处理链
-7. `core` 在当前 Tick 中推进移动、状态与战斗逻辑
-8. `core` 产出状态变化与事件
+3. 服务端校验输入 `syncId`，旧同步轮输入直接丢弃
+4. 对玩家连续移动样本按到达顺序覆盖当前 Actor 的待处理位姿样本
+5. 房间 Tick 开始时，服务端先把待处理位姿样本写入同一个 `SimulationInstance`
+6. 等待态与运行态都走同一套位姿样本写入链路，这条链路不分叉
+7. Bot 指令和一次性主动能力继续进入同一个控制帧处理链
+8. `core` 在当前 Tick 中推进移动、状态与战斗逻辑
+9. `core` 产出状态变化与事件
 
 ## 权限校验
 

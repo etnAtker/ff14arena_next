@@ -76,8 +76,6 @@ export class RoomManager {
       loopHandle: null,
       snapshotBroadcastCounter: 0,
       latestResult: null,
-      inputSeqByActorId: new Map(),
-      lastPoseSeqByActorId: new Map(),
       pendingControlByActorId: new Map(),
       syncId: 1,
     };
@@ -96,7 +94,6 @@ export class RoomManager {
   }
 
   private resetPoseSyncState(room: RoomRecord): void {
-    room.lastPoseSeqByActorId.clear();
     room.pendingControlByActorId.clear();
   }
 
@@ -197,11 +194,8 @@ export class RoomManager {
           actor,
         });
         botControllerDurationMs += performance.now() - botControllerStartedAt;
-        const nextSeq = (room.inputSeqByActorId.get(actor.id) ?? 0) + 1;
-        room.inputSeqByActorId.set(actor.id, nextSeq);
         room.simulation.submitActorControlFrame({
           actorId: actor.id,
-          inputSeq: nextSeq,
           issuedAt: Date.now(),
           ...(control.pose === undefined ? {} : { pose: control.pose }),
           ...(control.commands === undefined ? {} : { commands: control.commands }),
@@ -666,9 +660,21 @@ export class RoomManager {
       return;
     }
 
+    if (input.syncId !== room.syncId) {
+      console.warn('[sim-input-diagnostic:drop-sync-mismatch]', {
+        roomId: room.roomId,
+        phase: room.phase,
+        currentSyncId: room.syncId,
+        inputSyncId: input.syncId,
+        socketId: socket.id,
+        actorId: input.actorId,
+        type: input.type,
+      });
+      return;
+    }
+
     room.simulation.submitActorControlFrame({
       actorId: input.actorId,
-      inputSeq: input.inputSeq,
       issuedAt: input.issuedAt,
       commands: [
         {
@@ -699,19 +705,27 @@ export class RoomManager {
       return;
     }
 
-    const lastSeq = room.lastPoseSeqByActorId.get(inputFrame.actorId) ?? 0;
-
-    if (inputFrame.inputSeq <= lastSeq) {
+    if (inputFrame.syncId !== room.syncId) {
+      console.warn('[sim-input-diagnostic:drop-sync-mismatch]', {
+        roomId: room.roomId,
+        phase: room.phase,
+        currentSyncId: room.syncId,
+        inputSyncId: inputFrame.syncId,
+        socketId: socket.id,
+        actorId: inputFrame.actorId,
+        moving:
+          Math.hypot(inputFrame.payload.moveDirection.x, inputFrame.payload.moveDirection.y) > 0,
+        position: inputFrame.payload.position,
+        moveDirection: inputFrame.payload.moveDirection,
+      });
       this.metrics?.recordInputFrame(room.roomId);
       this.metrics?.recordDroppedInputFrame(room.roomId);
       return;
     }
 
     this.metrics?.recordInputFrame(room.roomId);
-    room.lastPoseSeqByActorId.set(inputFrame.actorId, inputFrame.inputSeq);
     room.pendingControlByActorId.set(inputFrame.actorId, {
       actorId: inputFrame.actorId,
-      inputSeq: inputFrame.inputSeq,
       issuedAt: inputFrame.issuedAt,
       pose: {
         position: {
@@ -820,8 +834,14 @@ export class RoomManager {
   private startSimulation(room: RoomRecord): void {
     room.latestResult = null;
     room.snapshotBroadcastCounter = 0;
-    room.inputSeqByActorId.clear();
     room.syncId += 1;
+    if (room.pendingControlByActorId.size > 0) {
+      console.warn('[sim-input-diagnostic:start-reset]', {
+        roomId: room.roomId,
+        syncId: room.syncId,
+        pendingControlActors: [...room.pendingControlByActorId.keys()],
+      });
+    }
     this.resetPoseSyncState(room);
     const simulation = room.simulation ?? createSimulation({ tickRate: 20 });
 

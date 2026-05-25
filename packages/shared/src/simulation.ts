@@ -238,7 +238,6 @@ export interface ContinuousInputFramePayload {
 
 export interface ActorPoseSample {
   actorId: string;
-  inputSeq: number;
   issuedAt: number;
   position: Vector2;
   facing: number;
@@ -263,7 +262,6 @@ export type ActorControlCommand =
 
 export interface ActorControlFrame {
   actorId: string;
-  inputSeq: number;
   issuedAt: number;
   pose?: ActorControlPose;
   commands?: ActorControlCommand[];
@@ -277,8 +275,8 @@ export type SimulationInputPayload =
 
 export interface SimulationInputBase<TType extends SimulationInputType, TPayload> {
   roomId: string;
+  syncId: number;
   actorId: string;
-  inputSeq: number;
   issuedAt: number;
   type: TType;
   payload: TPayload;
@@ -294,8 +292,8 @@ export type UseSprintSimulationInput = SimulationInputBase<'use-sprint', UseSpri
 
 export interface ContinuousSimulationInputFrame {
   roomId: string;
+  syncId: number;
   actorId: string;
-  inputSeq: number;
   issuedAt: number;
   payload: ContinuousInputFramePayload;
 }

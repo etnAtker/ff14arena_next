@@ -11,8 +11,6 @@ export interface ActorMovementRuntime {
   anchorTimeMs: number;
   anchorPosition: Vector2;
   segments: MovementSegment[];
-  lastMoveInputSeq: number;
-  lastFacingInputSeq: number;
 }
 
 export const MOVEMENT_HISTORY_WINDOW_MS = 1_000;
@@ -120,8 +118,6 @@ export function createMovementRuntime(
         direction,
       },
     ],
-    lastMoveInputSeq: 0,
-    lastFacingInputSeq: 0,
   };
 }
 

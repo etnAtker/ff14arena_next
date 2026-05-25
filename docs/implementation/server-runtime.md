@@ -86,7 +86,7 @@
 当前连续覆盖型输入统一通过 `sim:input-frame` 发送。  
 该输入帧当前携带：
 
-- `inputSeq`
+- `syncId`
 - `issuedAt`
 - `payload.position`
 - `payload.facing`
@@ -107,7 +107,7 @@
 - `sim:snapshot`
   下发 join / rejoin / resync 快照以及周期性权威快照
 
-当前 `sim:start`、`sim:events` 和 `sim:snapshot` 都会携带 `syncId`。
+当前 `sim:start`、`sim:events`、`sim:snapshot` 和客户端上行输入都会携带 `syncId`。
 
 ## 5. 权威同步行为
 
@@ -122,7 +122,8 @@
 当前同步模型中：
 
 - 玩家普通移动由客户端本地模拟，并以上传位姿样本的方式同步给服务端
-- 服务端按 `actorId + inputSeq` 去重，只保留每个 Actor 最新的位姿样本
+- 服务端先校验上行输入的 `syncId`，旧同步轮输入直接丢弃，不参与位姿序号去重
+- 服务端按到达顺序接收连续位姿样本，并只保留当前 Tick 前每个 Actor 最新的待处理位姿样本
 - 服务端在每个房间 Tick 开始时先收集玩家与 Bot 的统一控制帧，再推进 `packages/core`
 - `waiting` 与 `running` 永远共用同一套移动链路，不维护独立实现
 - `running` 只是比 `waiting` 多推进战斗脚本、AOE、伤害、Buff 与结算

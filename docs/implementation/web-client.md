@@ -90,9 +90,9 @@
   - `position`
   - `facing`
   - `moveDirection`
-  - `inputSeq`
+  - `syncId`
   - `issuedAt`
-- 客户端本地维护递增的 `inputSeq`
+- 客户端所有上行模拟输入都携带当前 `syncId`
 - 客户端先本地推进自己的移动，再把当前位姿样本上报给服务端
 - 疾跑状态存在时，客户端本地移动按 `1.3` 倍移动速度推进
 - 客户端收到本机角色的强制位移请求后，在本地执行位移并通过 `sim:input-frame` 回传结果
@@ -107,6 +107,7 @@
 - `sim:snapshot` 下发 join / rejoin / resync 快照以及周期性权威快照
 - 每一轮快照与事件都带 `syncId`
 - 客户端只接受当前 `syncId` 的同步流，旧 `syncId` 数据会被丢弃
+- 客户端发现房间状态已进入 `running` 但本地还没有运行态快照时，会主动请求重同步
 
 ### 当前重同步行为
 

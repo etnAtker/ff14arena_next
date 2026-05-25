@@ -1,5 +1,35 @@
 # Scripts
 
+## 8 人网页复现
+
+脚本：
+
+- [repro-8p-web.mjs](/home/etnatker/workspace/code/ff14arena_next/scripts/repro-8p-web.mjs)
+
+用途：
+
+- 使用 Playwright 打开 8 个独立浏览器上下文
+- 为每个上下文写入独立本地用户身份
+- 通过页面创建 / 加入房间、准备、开始
+- 通过网页键盘事件模拟 8 人同时移动
+- 统计每个客户端是否发出 `sim:input-frame`
+- 统计观察客户端收到的 `actorMoved` 覆盖人数
+- 统计最新快照中实际发生位移的槽位数
+
+用法：
+
+```bash
+node scripts/repro-8p-web.mjs --base-url https://arena.etnatker.top
+```
+
+可选参数：
+
+- `--headed`：使用有头浏览器
+- `--hold-ms <ms>`：移动持续时间，默认 `3000`
+- `--timeout-ms <ms>`：页面操作超时，默认 `20000`
+- `--artifacts-dir <dir>`：失败截图目录
+- `--keep-open`：结束后保持浏览器打开，便于人工检查
+
 ## 网络延迟模拟
 
 仓库提供两套 `tc netem` 脚本，用于在 Linux / WSL 环境下从网卡层模拟延迟。

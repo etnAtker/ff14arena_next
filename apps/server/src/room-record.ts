@@ -44,8 +44,6 @@ export interface RoomRecord {
   loopHandle: NodeJS.Timeout | null;
   snapshotBroadcastCounter: number;
   latestResult: EncounterResult | null;
-  inputSeqByActorId: Map<string, number>;
-  lastPoseSeqByActorId: Map<string, number>;
   pendingControlByActorId: Map<string, ActorControlFrame>;
   syncId: number;
 }

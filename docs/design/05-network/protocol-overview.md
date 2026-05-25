@@ -37,7 +37,7 @@
 ## 协议规则
 
 - 所有房间内消息都带 `roomId`
-- 所有输入都带 `inputSeq`
+- 所有模拟输入都带当前 `syncId`
 - 连续覆盖型输入统一通过 `sim:input-frame` 发送，载荷为绝对位姿样本
 - `sim:input-frame` 在 `waiting` 与 `running` 中永远共用同一套移动链路
 - 一次性指令仍保持独立事件，例如防击退

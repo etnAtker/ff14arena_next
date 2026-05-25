@@ -568,7 +568,6 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     if (frame.pose !== undefined) {
       applyActorPoseSample({
         actorId: frame.actorId,
-        inputSeq: frame.inputSeq,
         issuedAt: frame.issuedAt,
         position: frame.pose.position,
         facing: frame.pose.facing,
@@ -1379,7 +1378,6 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     submitActorControlFrame(frame) {
       assertState(state).inputQueue.push({
         actorId: frame.actorId,
-        inputSeq: frame.inputSeq,
         issuedAt: frame.issuedAt,
         ...(frame.pose === undefined
           ? {}

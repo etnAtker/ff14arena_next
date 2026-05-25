@@ -105,10 +105,9 @@ function advanceTo(simulation, timeMs) {
   }
 }
 
-function submitPose(simulation, actor, position, inputSeq) {
+function submitPose(simulation, actor, position) {
   simulation.submitActorControlFrame({
     actorId: actor.id,
-    inputSeq,
     issuedAt: simulation.getSnapshot().timeMs,
     pose: {
       position,
@@ -321,7 +320,6 @@ function runEdenP4WithBots(randomValues) {
     assert.ok(controller);
 
     const simulation = createEdenP4BotSimulation();
-    let inputSeq = 0;
     let assignmentSnapshot = null;
 
     for (let elapsedMs = 0; elapsedMs <= 25_000 && simulation.running; elapsedMs += 50) {
@@ -344,7 +342,6 @@ function runEdenP4WithBots(randomValues) {
 
         simulation.submitActorControlFrame({
           actorId: actor.id,
-          inputSeq: ++inputSeq,
           issuedAt: elapsedMs,
           ...frame,
         });
@@ -621,7 +618,6 @@ test('伊甸P4特殊：光与暗的龙诗结束后生成点名、闭合连线、
 test('伊甸P4特殊：合法站位可以通过光之波动结算', () =>
   withMockedRandom(createSeededRandomValues(2, 64), () => {
     const simulation = createEdenP4Simulation();
-    let inputSeq = 0;
 
     advanceTo(simulation, 8_000);
     const snapshot = simulation.getSnapshot();
@@ -629,7 +625,7 @@ test('伊甸P4特殊：合法站位可以通过光之波动结算', () =>
     const placement = findValidPlacement(assignments);
 
     for (const actor of snapshot.actors) {
-      submitPose(simulation, actor, placement[actor.slot], ++inputSeq);
+      submitPose(simulation, actor, placement[actor.slot]);
     }
 
     advanceTo(simulation, 18_500);
@@ -649,7 +645,6 @@ test('伊甸P4特殊：合法站位可以通过光之波动结算', () =>
 test('伊甸P4特殊：非束缚玩家同次光之波动内重复吃扇形会死亡', () =>
   withMockedRandom(createSeededRandomValues(5, 64), () => {
     const simulation = createEdenP4Simulation();
-    let inputSeq = 0;
 
     advanceTo(simulation, 8_000);
     const snapshot = simulation.getSnapshot();
@@ -657,7 +652,7 @@ test('伊甸P4特殊：非束缚玩家同次光之波动内重复吃扇形会死
     const { placement, repeatedSlot } = findRepeatedFanHitPlacement(assignments);
 
     for (const actor of snapshot.actors) {
-      submitPose(simulation, actor, placement[actor.slot], ++inputSeq);
+      submitPose(simulation, actor, placement[actor.slot]);
     }
 
     advanceTo(simulation, 19_050);
@@ -676,7 +671,6 @@ test('伊甸P4特殊：非束缚玩家同次光之波动内重复吃扇形会死
 test('伊甸P4特殊：光之束缚连线长度不合规会团灭', () =>
   withMockedRandom(createSeededRandomValues(3, 64), () => {
     const simulation = createEdenP4Simulation();
-    let inputSeq = 0;
 
     advanceTo(simulation, 8_000);
     const snapshot = simulation.getSnapshot();
@@ -685,7 +679,7 @@ test('伊甸P4特殊：光之束缚连线长度不合规会团灭', () =>
     for (const actor of snapshot.actors.filter((candidate) =>
       assignments.lightOrder.includes(candidate.slot),
     )) {
-      submitPose(simulation, actor, { x: 0, y: 0 }, ++inputSeq);
+      submitPose(simulation, actor, { x: 0, y: 0 });
     }
 
     advanceTo(simulation, 15_050);
@@ -699,7 +693,6 @@ test('伊甸P4特殊：光之束缚连线长度不合规会团灭', () =>
 test('伊甸P4特殊：黑暗狂水没有分处上下半场会团灭', () =>
   withMockedRandom(createSeededRandomValues(4, 64), () => {
     const simulation = createEdenP4Simulation();
-    let inputSeq = 0;
 
     advanceTo(simulation, 8_000);
     const snapshot = simulation.getSnapshot();
@@ -712,7 +705,7 @@ test('伊甸P4特殊：黑暗狂水没有分处上下半场会团灭', () =>
     };
 
     for (const actor of snapshot.actors) {
-      submitPose(simulation, actor, placement[actor.slot], ++inputSeq);
+      submitPose(simulation, actor, placement[actor.slot]);
     }
 
     advanceTo(simulation, 19_050);

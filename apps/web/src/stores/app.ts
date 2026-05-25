@@ -65,7 +65,6 @@ export const useAppStore = defineStore('app', () => {
   const authoritativeSnapshot = ref<SimulationSnapshot | null>(null);
   const serverError = ref<string | null>(null);
   const connected = ref(false);
-  const inputSeq = ref(0);
   const logs = ref<string[]>([]);
   const currentSyncId = ref(0);
   const facingPreview = ref<FacingPreviewState | null>(null);
@@ -170,20 +169,14 @@ export const useAppStore = defineStore('app', () => {
     return !spectatePending.value && currentSpectator.value === null;
   }
 
-  function resetSyncState(options?: { clearInputSeq?: boolean }): void {
+  function resetSyncState(): void {
     authoritativeSnapshot.value = null;
     currentSyncId.value = 0;
     clearLocalControlState();
-
-    if (options?.clearInputSeq ?? true) {
-      inputSeq.value = 0;
-    }
   }
 
-  function resetBattleState(options?: { clearLogs?: boolean; clearInputSeq?: boolean }): void {
-    resetSyncState(
-      options?.clearInputSeq === undefined ? undefined : { clearInputSeq: options.clearInputSeq },
-    );
+  function resetBattleState(options?: { clearLogs?: boolean }): void {
+    resetSyncState();
 
     if (options?.clearLogs ?? true) {
       logs.value = [];
@@ -348,6 +341,10 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
+    requestResyncWithSocket(socket.value, room.value.roomId, reason);
+  }
+
+  function requestResyncWithSocket(currentSocket: AppSocket, roomId: string, reason: string): void {
     const now = Date.now();
 
     if (now - lastResyncRequestedAt.value < RESYNC_THROTTLE_MS) {
@@ -355,8 +352,8 @@ export const useAppStore = defineStore('app', () => {
     }
 
     lastResyncRequestedAt.value = now;
-    socket.value.emit('sim:request-resync', {
-      roomId: room.value.roomId,
+    currentSocket.emit('sim:request-resync', {
+      roomId,
       reason,
     });
   }
@@ -443,6 +440,10 @@ export const useAppStore = defineStore('app', () => {
 
         room.value = payload.room;
 
+        if (payload.room.phase === 'running' && authoritativeSnapshot.value?.phase !== 'running') {
+          requestResyncWithSocket(nextSocket, payload.room.roomId, 'running_snapshot_missing');
+        }
+
         if (
           spectatePending.value &&
           payload.room.spectators.some(
@@ -488,7 +489,6 @@ export const useAppStore = defineStore('app', () => {
         }
 
         authoritativeSnapshot.value = payload.snapshot;
-        inputSeq.value = 0;
         clearLocalControlledPose();
         clearFacingPreview();
         logs.value = [];
@@ -773,11 +773,10 @@ export const useAppStore = defineStore('app', () => {
     };
     localControlledPose.value = nextPose;
 
-    inputSeq.value += 1;
     socket.value.emit('sim:input-frame', {
       roomId: room.value.roomId,
+      syncId: currentSyncId.value,
       actorId: actor.id,
-      inputSeq: inputSeq.value,
       issuedAt: Date.now(),
       payload: {
         position: cloneVector(nextPose.position),
@@ -788,18 +787,17 @@ export const useAppStore = defineStore('app', () => {
   }
 
   function emitSimulationInput(
-    input: Omit<SimulationInput, 'roomId' | 'inputSeq' | 'issuedAt'>,
+    input: Omit<SimulationInput, 'roomId' | 'syncId' | 'issuedAt'>,
   ): boolean {
     if (room.value === null || socket.value === null || !canSendPlayerInput()) {
       return false;
     }
 
-    inputSeq.value += 1;
     const issuedAt = Date.now();
     const payload = {
       ...input,
       roomId: room.value.roomId,
-      inputSeq: inputSeq.value,
+      syncId: currentSyncId.value,
       issuedAt,
     } as SimulationInput;
 
@@ -826,8 +824,6 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
-    inputSeq.value += 1;
-    const nextInputSeq = inputSeq.value;
     const issuedAt = Date.now();
     const moveDirection = normalizeMoveDirection(frame.moveDirection);
     const nextPose = applyOptimisticContinuousInput({
@@ -841,8 +837,8 @@ export const useAppStore = defineStore('app', () => {
 
     socket.value.emit('sim:input-frame', {
       roomId: room.value.roomId,
+      syncId: currentSyncId.value,
       actorId: actor.id,
-      inputSeq: nextInputSeq,
       issuedAt,
       payload: {
         position: nextPose.position,

@@ -104,8 +104,8 @@ function displacementBetween(from, to) {
 function emitPoseFrame(socket, options) {
   socket.emit('sim:input-frame', {
     roomId: options.roomId,
+    syncId: options.syncId,
     actorId: options.actorId,
-    inputSeq: options.inputSeq,
     issuedAt: Date.now(),
     payload: {
       position: options.position,
@@ -743,8 +743,8 @@ test('运行态位姿样本会同步到服务端当前权威位置', async () =>
 
     emitPoseFrame(owner, {
       roomId,
+      syncId: startPayload.syncId,
       actorId: ownerActor.id,
-      inputSeq: 1,
       position: targetPosition,
       facing: targetFacing,
       moveDirection: { x: 1, y: 0 },
@@ -820,8 +820,8 @@ test('等待态位姿样本通过统一事件链返回位移事件', async () =>
 
     emitPoseFrame(owner, {
       roomId,
+      syncId: waitingSnapshot.syncId,
       actorId: ownerActor.id,
-      inputSeq: 1,
       position: targetPosition,
       facing: ownerActor.facing,
       moveDirection: { x: 1, y: 0 },
@@ -898,8 +898,8 @@ test('疾跑会为玩家附加状态并记录冷却', async () => {
 
     owner.emit('sim:use-sprint', {
       roomId,
+      syncId: startPayload.syncId,
       actorId: ownerActor.id,
-      inputSeq: 1,
       issuedAt: Date.now(),
       type: 'use-sprint',
       payload: {
@@ -1012,8 +1012,8 @@ test('准备态与战斗态位姿样本使用同一套移动链路', async () =>
 
       emitPoseFrame(owner, {
         roomId,
+        syncId: waitingSnapshot.syncId,
         actorId: ownerSlot.id,
-        inputSeq: seq,
         position: waitingCurrentPosition,
         facing: ownerSlot.facing,
         moveDirection: { x: 0, y: 1 },
@@ -1035,8 +1035,8 @@ test('准备态与战斗态位姿样本使用同一套移动链路', async () =>
     );
     emitPoseFrame(owner, {
       roomId,
+      syncId: waitingSnapshot.syncId,
       actorId: ownerSlot.id,
-      inputSeq: 4,
       position: waitingCurrentPosition,
       facing: ownerSlot.facing,
       moveDirection: { x: 0, y: 0 },
@@ -1090,8 +1090,8 @@ test('准备态与战斗态位姿样本使用同一套移动链路', async () =>
 
       emitPoseFrame(owner, {
         roomId,
+        syncId: startPayload.syncId,
         actorId: ownerSlot.id,
-        inputSeq: seq,
         position: runningCurrentPosition,
         facing: ownerSlot.facing,
         moveDirection: { x: 0, y: 1 },
@@ -1113,8 +1113,8 @@ test('准备态与战斗态位姿样本使用同一套移动链路', async () =>
     );
     emitPoseFrame(owner, {
       roomId,
+      syncId: startPayload.syncId,
       actorId: ownerSlot.id,
-      inputSeq: 4,
       position: runningCurrentPosition,
       facing: ownerSlot.facing,
       moveDirection: { x: 0, y: 0 },
@@ -1146,6 +1146,99 @@ test('准备态与战斗态位姿样本使用同一套移动链路', async () =>
       )}m 应基本一致`,
     );
   } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
+test('旧同步轮高序号位姿样本不会阻塞当前战斗态移动', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const originalWarn = globalThis.console.warn;
+
+  try {
+    globalThis.console.warn = () => undefined;
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '旧同步轮输入隔离测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    const waitingSnapshot = await waitingSnapshotPromise;
+
+    const startPromise = waitForEvent(owner, 'sim:start');
+    owner.emit('room:start', {
+      roomId,
+    });
+    const startPayload = await startPromise;
+    const ownerActor = startPayload.snapshot.actors.find((actor) => actor.slot === 'MT');
+    assert.ok(ownerActor, '应找到房主控制的 MT 角色');
+
+    emitPoseFrame(owner, {
+      roomId,
+      syncId: waitingSnapshot.syncId,
+      actorId: ownerActor.id,
+      position: ownerActor.position,
+      facing: ownerActor.facing,
+      moveDirection: { x: 0, y: 0 },
+    });
+
+    const targetPosition = {
+      x: ownerActor.position.x + 1,
+      y: ownerActor.position.y,
+    };
+    const movedEventPromise = waitForPayload(
+      owner,
+      'sim:events',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.events.some(
+          (event) => event.type === 'actorMoved' && event.payload.actorId === ownerActor.id,
+        ),
+      4000,
+    );
+
+    emitPoseFrame(owner, {
+      roomId,
+      syncId: startPayload.syncId,
+      actorId: ownerActor.id,
+      position: targetPosition,
+      facing: ownerActor.facing,
+      moveDirection: { x: 1, y: 0 },
+    });
+
+    const movedPayload = await movedEventPromise;
+    const actorMovedEvent = movedPayload.events.find(
+      (event) => event.type === 'actorMoved' && event.payload.actorId === ownerActor.id,
+    );
+    assert.ok(actorMovedEvent, '当前同步轮低序号输入不应被旧同步轮高序号输入阻塞');
+    assert.deepEqual(actorMovedEvent.payload.position, targetPosition);
+  } finally {
+    globalThis.console.warn = originalWarn;
     owner.close();
     await server.close();
   }
