@@ -254,6 +254,12 @@ function resetCameraZoom(): void {
   cameraZoom.value = 1;
 }
 
+function resetFacingInputState(): void {
+  lastTraditionalFacing.value = null;
+  pendingPointerFacing.value = null;
+  lastSentPointerFacing.value = null;
+}
+
 function handleKeyDown(event: KeyboardEvent): void {
   pressedKeys.add(event.code);
 
@@ -273,15 +279,15 @@ function handleKeyUp(event: KeyboardEvent): void {
 let movementTimer: number | null = null;
 
 watch(
-  () => snapshot.value?.tick,
-  (tick) => {
-    if (snapshot.value !== null && tick === 0) {
+  () => [snapshot.value?.tick, snapshot.value?.phase] as const,
+  ([tick, phase], [, previousPhase]) => {
+    const isBattleEndSnapshot = previousPhase === 'running' && phase === 'waiting';
+
+    if (snapshot.value !== null && tick === 0 && !isBattleEndSnapshot) {
       cameraYaw.value =
         currentActor.value === null ? 0 : getCameraYawForFacing(currentActor.value.facing);
       cameraZoom.value = 1;
-      lastTraditionalFacing.value = null;
-      pendingPointerFacing.value = null;
-      lastSentPointerFacing.value = null;
+      resetFacingInputState();
     }
   },
 );
@@ -297,10 +303,13 @@ watch(
       return;
     }
 
+    if (previousPhase === 'running' && phase === 'waiting') {
+      resetFacingInputState();
+      return;
+    }
+
     cameraYaw.value = getCameraYawForFacing(currentActor.value.facing);
-    lastTraditionalFacing.value = null;
-    pendingPointerFacing.value = null;
-    lastSentPointerFacing.value = null;
+    resetFacingInputState();
   },
 );
 
