@@ -128,16 +128,9 @@ const canStart = computed(() => {
     return false;
   }
 
-  return (
-    room.value.slots.every(
-      (slot) =>
-        slot.occupantType !== 'player' ||
-        slot.ownerUserId === room.value?.ownerUserId ||
-        slot.ready,
-    ) &&
-    room.value.spectators.every(
-      (spectator) => spectator.userId === room.value?.ownerUserId || spectator.ready,
-    )
+  return room.value.slots.every(
+    (slot) =>
+      slot.occupantType !== 'player' || slot.ownerUserId === room.value?.ownerUserId || slot.ready,
   );
 });
 const latestResult = computed(
@@ -233,6 +226,11 @@ async function handleCreateRoom(): Promise<void> {
 function handleJoinRoom(roomId: string): void {
   store.updateProfile(editUserName.value);
   void store.joinRoom(roomId);
+}
+
+function handleJoinSpectator(roomId: string): void {
+  store.updateProfile(editUserName.value);
+  void store.joinRoom(roomId, undefined, 'spectator');
 }
 
 function openMetricsPage(): void {
@@ -417,6 +415,7 @@ onBeforeUnmount(() => {
           @create-room="handleCreateRoom"
           @refresh-lobby="refreshLobby"
           @join-room="handleJoinRoom"
+          @join-spectator="handleJoinSpectator"
         />
 
         <div v-else class="battle-page-shell">

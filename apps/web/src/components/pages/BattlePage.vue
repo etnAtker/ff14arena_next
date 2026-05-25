@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SelectOption } from 'naive-ui';
-import { NButton, NCard, NEmpty, NInputNumber, NSelect, NText } from 'naive-ui';
+import { NButton, NCard, NEmpty, NInputNumber, NSelect, NTag, NText } from 'naive-ui';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type {
@@ -172,6 +172,34 @@ function handleSpectateButton(): void {
 
 function getSlotState(slot: PartySlot) {
   return slotMap.value.get(slot) ?? null;
+}
+
+function getReadyTag(slot: PartySlot): {
+  label: string;
+  type: 'default' | 'success' | 'warning';
+} | null {
+  const slotState = getSlotState(slot);
+
+  if (slotState === null || slotState.occupantType !== 'player') {
+    return null;
+  }
+
+  if (slotState.ownerUserId === props.room?.ownerUserId) {
+    return {
+      label: '房主',
+      type: 'default',
+    };
+  }
+
+  return slotState.ready
+    ? {
+        label: '已准备',
+        type: 'success',
+      }
+    : {
+        label: '未准备',
+        type: 'warning',
+      };
 }
 
 function getActor(slot: PartySlot) {
@@ -387,6 +415,17 @@ onBeforeUnmount(() => {
               }}
               ·
               {{ getSlotRole(slot).toUpperCase() }}
+              <template v-if="getReadyTag(slot) !== null">
+                ·
+                <n-tag
+                  class="ready-tag"
+                  :type="getReadyTag(slot)!.type"
+                  size="small"
+                  :bordered="false"
+                >
+                  {{ getReadyTag(slot)!.label }}
+                </n-tag>
+              </template>
             </span>
           </div>
 
@@ -676,7 +715,18 @@ onBeforeUnmount(() => {
 }
 
 .slot-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   color: rgba(246, 239, 228, 0.7);
+}
+
+.ready-tag {
+  height: 18px;
+  line-height: 18px;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .battle-main {

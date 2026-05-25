@@ -32,6 +32,7 @@ const emit = defineEmits<{
   createRoom: [];
   refreshLobby: [];
   joinRoom: [roomId: string];
+  joinSpectator: [roomId: string];
 }>();
 </script>
 
@@ -94,7 +95,12 @@ const emit = defineEmits<{
                   <n-text depth="3">人数：{{ roomItem.occupantCount }}</n-text>
                 </n-space>
               </div>
-              <n-button secondary @click="emit('joinRoom', roomItem.roomId)">加入</n-button>
+              <div class="room-actions">
+                <n-button secondary @click="emit('joinRoom', roomItem.roomId)">加入</n-button>
+                <n-button secondary type="info" @click="emit('joinSpectator', roomItem.roomId)">
+                  加入观战
+                </n-button>
+              </div>
             </div>
           </n-card>
         </n-space>
@@ -119,5 +125,13 @@ const emit = defineEmits<{
   gap: 8px;
   margin-bottom: 6px;
   flex-wrap: wrap;
+}
+
+.room-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 </style>

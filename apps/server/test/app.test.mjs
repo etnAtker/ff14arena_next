@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { io } from 'socket.io-client';
+import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import { startServer } from '../src/app.ts';
 
 function waitForConnect(socket) {
@@ -508,7 +509,100 @@ test('等待态玩家可以切换观战并点击槽位回到场内', async () =>
   }
 });
 
-test('房主观战后可以在所有真人准备时以 8 个 Bot 开始战斗', async () => {
+test('槽位满员时仍允许从大厅直接加入观战', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const sockets = [];
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '满员观战加入测试',
+        ownerUserId: 'player-0',
+        ownerName: '玩家0',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    const owner = io(baseUrl, { transports: ['websocket'] });
+    sockets.push(owner);
+    await waitForConnect(owner);
+    const ownerJoinPromise = waitForRoomState(
+      owner,
+      (room) => room.roomId === roomId && room.slots[0]?.ownerUserId === 'player-0',
+    );
+    owner.emit('room:join', {
+      roomId,
+      userId: 'player-0',
+      userName: '玩家0',
+      slot: PARTY_SLOT_ORDER[0],
+    });
+    await ownerJoinPromise;
+
+    for (const [index, slot] of PARTY_SLOT_ORDER.slice(1).entries()) {
+      const playerIndex = index + 1;
+      const player = io(baseUrl, { transports: ['websocket'] });
+      sockets.push(player);
+      await waitForConnect(player);
+      const joinPromise = waitForRoomState(
+        owner,
+        (room) =>
+          room.roomId === roomId &&
+          room.slots.find((slotState) => slotState.slot === slot)?.ownerUserId ===
+            `player-${playerIndex}`,
+      );
+      player.emit('room:join', {
+        roomId,
+        userId: `player-${playerIndex}`,
+        userName: `玩家${playerIndex}`,
+        slot,
+      });
+      await joinPromise;
+    }
+
+    const spectator = io(baseUrl, { transports: ['websocket'] });
+    sockets.push(spectator);
+    await waitForConnect(spectator);
+    const spectatorJoinPromise = waitForRoomState(
+      spectator,
+      (room) =>
+        room.roomId === roomId &&
+        room.slots.every((slot) => slot.occupantType === 'player') &&
+        room.spectators.some(
+          (roomSpectator) =>
+            roomSpectator.userId === 'spectator-user' && roomSpectator.ready === false,
+        ),
+    );
+    spectator.emit('room:join', {
+      roomId,
+      userId: 'spectator-user',
+      userName: '观战者',
+      mode: 'spectator',
+    });
+    const spectatorRoom = await spectatorJoinPromise;
+    assert.equal(spectatorRoom.slots.filter((slot) => slot.occupantType === 'player').length, 8);
+    assert.equal(spectatorRoom.spectators.length, 1);
+  } finally {
+    for (const socket of sockets) {
+      socket.close();
+    }
+    await server.close();
+  }
+});
+
+test('房主观战后可以在未准备观战者存在时以 8 个 Bot 开始战斗', async () => {
   const server = await startServer({
     host: '127.0.0.1',
     port: 0,
@@ -526,7 +620,7 @@ test('房主观战后可以在所有真人准备时以 8 个 Bot 开始战斗', 
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        name: '全 Bot 观战开始测试',
+        name: '未准备观战开始测试',
         ownerUserId: 'owner-user',
         ownerName: '房主',
         battleId,
@@ -557,25 +651,12 @@ test('房主观战后可以在所有真人准备时以 8 个 Bot 开始战斗', 
     await waitForRoomState(guest, (room) => room.roomId === roomId && room.phase === 'waiting');
     await guestWaitingSnapshotPromise;
 
-    const readyPromise = waitForPayload(
-      owner,
-      'room:slots',
-      (payload) =>
-        payload.roomId === roomId &&
-        payload.slots.find((slot) => slot.slot === 'ST')?.ready === true,
-    );
-    guest.emit('room:ready', {
-      roomId,
-      ready: true,
-    });
-    await readyPromise;
-
     const guestSpectatePromise = waitForRoomState(
       owner,
       (room) =>
         room.roomId === roomId &&
         room.spectators.some(
-          (spectator) => spectator.userId === 'guest-user' && spectator.ready === true,
+          (spectator) => spectator.userId === 'guest-user' && spectator.ready === false,
         ) &&
         room.slots.find((slot) => slot.slot === 'ST')?.occupantType === 'bot',
     );

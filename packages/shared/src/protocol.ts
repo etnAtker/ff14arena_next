@@ -12,6 +12,7 @@ import type { SimulationEvent } from './events';
 export interface RoomJoinPayload {
   roomId: string;
   userId: string;
+  mode?: 'player' | 'spectator';
   slot?: PartySlot;
   userName?: string;
 }

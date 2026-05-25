@@ -6,6 +6,7 @@ import type {
   ClientToServerEvents,
   ContinuousSimulationInputFrame,
   PartySlot,
+  RoomJoinPayload,
   RoomStateDto,
   RoomSummaryDto,
   ServerToClientEvents,
@@ -242,10 +243,7 @@ export class RoomManager {
     });
   }
 
-  joinRoom(
-    socket: TypedSocket,
-    payload: { roomId: string; userId: string; userName?: string; slot?: PartySlot },
-  ): void {
+  joinRoom(socket: TypedSocket, payload: RoomJoinPayload): void {
     const room = this.rooms.get(payload.roomId);
 
     if (room === undefined) {
@@ -315,6 +313,20 @@ export class RoomManager {
 
     if (room.phase !== 'waiting') {
       this.emitError(socket, 'room_not_joinable', '当前房间不可加入');
+      return;
+    }
+
+    if (payload.mode === 'spectator') {
+      room.spectators.set(payload.userId, {
+        userId: payload.userId,
+        name: userName,
+        socketId: socket.id,
+        online: true,
+        ready: payload.userId === room.ownerUserId,
+      });
+      this.userRooms.set(payload.userId, room.roomId);
+      socket.join(room.roomId);
+      this.broadcastWaitingState(room, 'join');
       return;
     }
 
@@ -612,17 +624,12 @@ export class RoomManager {
       return;
     }
 
-    const unreadyPlayers = [
-      ...Object.values(room.slots).filter(
-        (slotOccupant) =>
-          slotOccupant.type === 'player' &&
-          slotOccupant.userId !== room.ownerUserId &&
-          !slotOccupant.ready,
-      ),
-      ...[...room.spectators.values()].filter(
-        (spectator) => spectator.userId !== room.ownerUserId && !spectator.ready,
-      ),
-    ];
+    const unreadyPlayers = Object.values(room.slots).filter(
+      (slotOccupant) =>
+        slotOccupant.type === 'player' &&
+        slotOccupant.userId !== room.ownerUserId &&
+        !slotOccupant.ready,
+    );
 
     if (unreadyPlayers.length > 0) {
       this.emitError(socket, 'players_not_ready', '仍有玩家未准备');

@@ -602,7 +602,11 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
-  async function joinRoom(roomId: string, slot?: PartySlot): Promise<void> {
+  async function joinRoom(
+    roomId: string,
+    slot?: PartySlot,
+    mode?: 'player' | 'spectator',
+  ): Promise<void> {
     const currentSocket = socket.value ?? (await ensureSocket());
     resetBattleState();
     room.value = null;
@@ -610,6 +614,7 @@ export const useAppStore = defineStore('app', () => {
       roomId,
       userId: profile.value.userId,
       userName: profile.value.userName,
+      ...(mode !== undefined ? { mode } : {}),
       ...(slot !== undefined ? { slot } : {}),
     });
   }
