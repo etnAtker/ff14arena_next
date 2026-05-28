@@ -624,6 +624,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -750,13 +751,16 @@ onBeforeUnmount(() => {
   grid-template-rows: auto minmax(0, 1fr) auto;
   flex: 1 1 auto;
   gap: 8px;
+  min-width: 0;
   min-height: 0;
 }
 
 .stage-shell {
   position: relative;
+  min-width: 0;
   min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
 
 .stage-actions {
@@ -876,6 +880,12 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.stage-header > div:first-child {
+  min-width: 0;
 }
 
 .stage-meta {
@@ -883,6 +893,8 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+  min-width: 0;
+  justify-content: flex-end;
 }
 
 .eyebrow {
@@ -895,8 +907,11 @@ onBeforeUnmount(() => {
 
 .section-title {
   margin: 0;
+  overflow: hidden;
   font-size: 18px;
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stage-mode-select {
