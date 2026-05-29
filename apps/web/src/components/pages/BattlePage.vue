@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SelectOption } from 'naive-ui';
-import { NButton, NCard, NEmpty, NInputNumber, NSelect, NTag, NText } from 'naive-ui';
+import { NButton, NCard, NEmpty, NInputNumber, NModal, NSelect, NTag, NText } from 'naive-ui';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type {
@@ -13,11 +13,11 @@ import type {
 import {
   formatSkillCooldownLabel,
   getSlotCardBackground,
-  getSlotRole,
   isCooldownReady,
   type OperationMode,
   type SelectValue,
 } from '../../utils/ui';
+import { loadPartyListOrder, savePartyListOrder } from '../../utils/party-list-order';
 import BattleStage from '../battle/BattleStage.vue';
 const MIN_ZOOM = 0.7;
 const MAX_ZOOM = 2.4;
@@ -78,6 +78,13 @@ const castAnimationBase = ref<{
   castKey: string;
   initialElapsedMs: number;
   totalDurationMs: number;
+} | null>(null);
+const partyListOrder = ref<PartySlot[]>(loadPartyListOrder());
+const pendingSlotAction = ref<{
+  slot: PartySlot;
+  title: string;
+  description: string;
+  confirmLabel: string;
 } | null>(null);
 let hudTimer: number | null = null;
 
@@ -166,6 +173,9 @@ const countdownBannerText = computed(() => {
   return props.serverCountdownSeconds <= 0 ? '战斗开始！' : String(props.serverCountdownSeconds);
 });
 const isStartCountdownActive = computed(() => props.room?.startCountdown != null);
+const isPartyListDefaultOrder = computed(() =>
+  partyListOrder.value.every((slot, index) => slot === PARTY_SLOT_ORDER[index]),
+);
 const spectateButtonLabel = computed(() => {
   if (props.isOwner && props.isSpectating) {
     return isStartCountdownActive.value ? '倒计时中' : '开始';
@@ -197,6 +207,49 @@ function handleSpectateButton(): void {
 
 function getSlotState(slot: PartySlot) {
   return slotMap.value.get(slot) ?? null;
+}
+
+function getSlotDisplayName(slot: PartySlot): string {
+  const slotState = getSlotState(slot);
+
+  if (slotState?.name !== null && slotState?.name !== undefined) {
+    return slotState.name;
+  }
+
+  if (slotState?.occupantType === 'empty') {
+    return `空位 [${slot}]`;
+  }
+
+  return `[${slot}]`;
+}
+
+function isFirstPartyListSlot(slot: PartySlot): boolean {
+  return partyListOrder.value[0] === slot;
+}
+
+function isLastPartyListSlot(slot: PartySlot): boolean {
+  return partyListOrder.value[partyListOrder.value.length - 1] === slot;
+}
+
+function movePartyListSlot(slot: PartySlot, offset: -1 | 1): void {
+  const currentIndex = partyListOrder.value.indexOf(slot);
+  const targetIndex = currentIndex + offset;
+
+  if (currentIndex < 0 || targetIndex < 0 || targetIndex >= partyListOrder.value.length) {
+    return;
+  }
+
+  const nextOrder = [...partyListOrder.value];
+  nextOrder.splice(currentIndex, 1);
+  nextOrder.splice(targetIndex, 0, slot);
+  partyListOrder.value = nextOrder;
+  savePartyListOrder(nextOrder);
+}
+
+function resetPartyListOrder(): void {
+  const nextOrder = [...PARTY_SLOT_ORDER];
+  partyListOrder.value = nextOrder;
+  savePartyListOrder(nextOrder);
 }
 
 function getOwnerTag(slot: PartySlot): {
@@ -245,7 +298,7 @@ function getMechanicStatusRows(slot: PartySlot): string[] {
       return `${status.name} ${Math.ceil(remainingMs / 1_000)}秒`;
     })
     .filter((name): name is string => name !== null)
-    .slice(0, 10);
+    .slice(0, 16);
 }
 
 function getSlotButtonLabel(slot: PartySlot): string {
@@ -304,7 +357,12 @@ function isSlotButtonDisabled(slot: PartySlot): boolean {
 
 function handleSlotAction(slot: PartySlot): void {
   if (props.isSpectating) {
-    emit('switchSlot', slot);
+    pendingSlotAction.value = {
+      slot,
+      title: '确认入场',
+      description: `确认进入 ${getSlotDisplayName(slot)} 吗？`,
+      confirmLabel: '确认入场',
+    };
     return;
   }
 
@@ -317,7 +375,27 @@ function handleSlotAction(slot: PartySlot): void {
     return;
   }
 
-  emit('switchSlot', slot);
+  pendingSlotAction.value = {
+    slot,
+    title: '确认换位',
+    description: `确认与 ${getSlotDisplayName(slot)} 交换位置吗？`,
+    confirmLabel: '确认换位',
+  };
+}
+
+function cancelPendingSlotAction(): void {
+  pendingSlotAction.value = null;
+}
+
+function confirmPendingSlotAction(): void {
+  const action = pendingSlotAction.value;
+
+  if (action === null) {
+    return;
+  }
+
+  pendingSlotAction.value = null;
+  emit('switchSlot', action.slot);
 }
 
 function getResultTitle(result: EncounterResult | null): string {
@@ -407,9 +485,24 @@ onBeforeUnmount(() => {
 <template>
   <div class="battle-layout">
     <aside class="battle-sidebar">
+      <div class="party-list-header">
+        <div>
+          <p class="eyebrow">小队</p>
+          <h2 class="section-title">成员列表</h2>
+        </div>
+        <n-button
+          tertiary
+          size="small"
+          class="party-reset-button"
+          :disabled="isPartyListDefaultOrder"
+          @click="resetPartyListOrder"
+        >
+          恢复默认
+        </n-button>
+      </div>
       <div class="slot-list">
         <div
-          v-for="slot in PARTY_SLOT_ORDER"
+          v-for="slot in partyListOrder"
           :key="slot"
           class="slot-card"
           :style="{ background: getSlotCardBackground(slot, slot === props.currentPlayerSlot) }"
@@ -431,6 +524,27 @@ onBeforeUnmount(() => {
             </n-button>
           </div>
 
+          <div class="slot-order-controls">
+            <n-button
+              tertiary
+              size="tiny"
+              class="slot-order-button"
+              :disabled="isFirstPartyListSlot(slot)"
+              @click="movePartyListSlot(slot, -1)"
+            >
+              上移
+            </n-button>
+            <n-button
+              tertiary
+              size="tiny"
+              class="slot-order-button"
+              :disabled="isLastPartyListSlot(slot)"
+              @click="movePartyListSlot(slot, 1)"
+            >
+              下移
+            </n-button>
+          </div>
+
           <div class="slot-row secondary">
             <span
               >{{ getActor(slot)?.currentHp ?? getSlotState(slot)?.currentHp ?? 0 }} /
@@ -441,11 +555,9 @@ onBeforeUnmount(() => {
                 slot === props.currentPlayerSlot
                   ? '自己'
                   : getSlotState(slot)?.occupantType === 'bot'
-                    ? '机器人'
+                    ? 'Bot'
                     : '玩家'
               }}
-              ·
-              {{ getSlotRole(slot).toUpperCase() }}
               <template v-if="getOwnerTag(slot) !== null">
                 ·
                 <n-tag
@@ -647,12 +759,29 @@ onBeforeUnmount(() => {
       </n-card>
     </aside>
   </div>
+
+  <n-modal
+    :show="pendingSlotAction !== null"
+    :mask-closable="false"
+    @update:show="(show) => !show && cancelPendingSlotAction()"
+  >
+    <div class="slot-confirm-modal">
+      <h3 class="slot-confirm-title">{{ pendingSlotAction?.title }}</h3>
+      <p class="slot-confirm-description">{{ pendingSlotAction?.description }}</p>
+      <div class="slot-confirm-actions">
+        <n-button tertiary @click="cancelPendingSlotAction">取消</n-button>
+        <n-button type="primary" @click="confirmPendingSlotAction">
+          {{ pendingSlotAction?.confirmLabel ?? '确认' }}
+        </n-button>
+      </div>
+    </div>
+  </n-modal>
 </template>
 
 <style scoped>
 .battle-layout {
   display: grid;
-  grid-template-columns: 286px minmax(0, 1fr) 320px;
+  grid-template-columns: minmax(408px, 440px) minmax(0, 1fr) 320px;
   gap: 14px;
   flex: 1 1 auto;
   min-height: 0;
@@ -683,20 +812,40 @@ onBeforeUnmount(() => {
 
 .battle-sidebar {
   min-height: 0;
+  gap: 10px;
+}
+
+.party-list-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.party-reset-button {
+  flex: 0 0 auto;
+  font-weight: 700;
 }
 
 .slot-list {
   display: grid;
-  grid-template-rows: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
   flex: 1 1 auto;
   gap: 8px;
   min-height: 0;
 }
 
 .slot-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  padding: 8px 11px;
+  border-radius: 8px;
+  padding: 8px 9px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
@@ -704,7 +853,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .slot-row.secondary {
@@ -715,12 +865,13 @@ onBeforeUnmount(() => {
 
 .slot-row.status-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   grid-auto-rows: minmax(19px, auto);
   gap: 4px;
   margin-top: 6px;
-  min-height: 42px;
+  min-height: 76px;
   align-items: start;
+  overflow: hidden;
 }
 
 .status-pill {
@@ -747,17 +898,36 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
+.slot-title span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .slot-label {
   color: rgba(255, 255, 255, 0.92);
 }
 
 .slot-button {
-  min-width: 72px;
+  min-width: 58px;
   font-weight: 700;
   color: #f6efe4;
   border-width: 1px;
   box-shadow: 0 10px 20px rgba(0, 0, 0, 0.26);
   backdrop-filter: blur(10px);
+}
+
+.slot-order-controls {
+  display: flex;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.slot-order-button {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 11px;
 }
 
 .slot-button:deep(.n-button__border) {
@@ -774,6 +944,9 @@ onBeforeUnmount(() => {
   gap: 4px;
   min-width: 0;
   color: rgba(246, 239, 228, 0.7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .owner-tag {
@@ -1106,5 +1279,34 @@ onBeforeUnmount(() => {
   background: transparent;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.slot-confirm-modal {
+  width: min(360px, calc(100vw - 32px));
+  border: 1px solid rgba(255, 223, 177, 0.14);
+  border-radius: 8px;
+  padding: 18px;
+  color: #f6efe4;
+  background: rgba(24, 18, 16, 0.96);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.slot-confirm-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.slot-confirm-description {
+  margin: 10px 0 0;
+  color: rgba(246, 239, 228, 0.78);
+  line-height: 1.5;
+}
+
+.slot-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
 }
 </style>

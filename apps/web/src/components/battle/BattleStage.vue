@@ -14,6 +14,9 @@ const REMOTE_SMOOTH_SPEED = 8;
 const HARD_SNAP_DISTANCE = 0.9;
 const ZOOM_STEP = 0.12;
 const ZOOM_EMIT_EPSILON = 0.001;
+const MAP_MARKER_FILL_ALPHA = 0.42;
+const MAP_MARKER_STROKE_ALPHA = 0.46;
+const MAP_MARKER_LABEL_ALPHA = 0.68;
 
 const props = defineProps<{
   snapshot: SimulationSnapshot | null;
@@ -358,11 +361,11 @@ function drawMapMarker(
 
   if (marker.shape === 'circle') {
     const radius = (marker.radius ?? 2) * scale;
-    graphics.circle(point.x, point.y, radius).fill({ color, alpha: 0.88 });
+    graphics.circle(point.x, point.y, radius).fill({ color, alpha: MAP_MARKER_FILL_ALPHA });
     graphics.circle(point.x, point.y, radius).stroke({
       width: 2,
       color: 0xffffff,
-      alpha: 0.78,
+      alpha: MAP_MARKER_STROKE_ALPHA,
     });
   } else {
     const halfSize = (marker.size ?? 3) / 2;
@@ -374,11 +377,11 @@ function drawMapMarker(
     ].map((corner) => toStagePoint(corner, width, height, arenaRadius));
     const points = corners.flatMap((corner) => [corner.x, corner.y]);
 
-    graphics.poly(points).fill({ color, alpha: 0.88 });
+    graphics.poly(points).fill({ color, alpha: MAP_MARKER_FILL_ALPHA });
     graphics.poly(points).stroke({
       width: 2,
       color: 0xffffff,
-      alpha: 0.78,
+      alpha: MAP_MARKER_STROKE_ALPHA,
     });
   }
 
@@ -387,6 +390,7 @@ function drawMapMarker(
   if (label !== undefined) {
     label.visible = true;
     label.text = marker.label;
+    label.alpha = MAP_MARKER_LABEL_ALPHA;
     label.x = point.x;
     label.y = point.y;
   }
