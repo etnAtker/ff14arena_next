@@ -68,11 +68,11 @@ const PROGRAM_START_AT = 10_000;
 const PROGRAM_END_AT = 47_500;
 // Blaster 读条 7.6s，读条结束与本轮塔和冲击波结算同 tick。
 const BLASTER_CAST_MS = 7_600;
-const MAP_MARKER_RADIUS = 15;
-const ROUND_MARKER_RADIUS = 2;
-const SQUARE_MARKER_SIZE = 3;
-const ARENA_RADIUS = 25;
-const BOSS_TARGET_RING_RADIUS = 15;
+const MAP_MARKER_RADIUS = 13;
+const ROUND_MARKER_RADIUS = 1.25;
+const SQUARE_MARKER_SIZE = 2.2;
+const ARENA_RADIUS = 20;
+const BOSS_TARGET_RING_RADIUS = 12;
 const NORTH_ANGLE = -Math.PI / 2;
 const MAP_MARKER_ANGLE_STEP = Math.PI / 4;
 const INITIAL_PARTY_FACING = NORTH_ANGLE;
@@ -82,28 +82,28 @@ const MEMORY_LOSS_DURATION_MS = 1_000;
 const PROGRAM_DURATION_BASE_MS = 7_000;
 const PROGRAM_DURATION_STEP_MS = 9_000;
 
-// Bot 等待点位于塔方向的内侧，避免和外侧冲击波点重叠。
-const BOT_WAITING_RADIUS = 10;
+const BOT_IDLE_WAITING_RADIUS = 13;
+const BOT_IDLE_WAITING_OFFSET = 1;
 // Bot 接线点取首领到持线者线段上的一段，随后再越过该点，确保触发穿线。
 const BOT_TETHER_PICKUP_DISTANCE = 6;
 const BOT_TETHER_PICKUP_MIN_RATIO = 0.25;
 const BOT_TETHER_PICKUP_MAX_RATIO = 0.65;
 const BOT_TETHER_CROSSING_OVERSHOOT = 1.5;
 const BOT_TETHER_PICKUP_STOP_DISTANCE = 0;
-const BOT_TETHER_STAGING_RADIUS = 10;
-const BOT_TETHER_FINAL_APPROACH_MS = 2_000;
-// 冲击波固定拉到正点 17m，避免 Bot 把线带到倾斜方向。
-const SHOCKWAVE_POSITION_RADIUS = 17;
+const BOT_TETHER_STAGING_RADIUS = 5;
+const BOT_TETHER_FINAL_APPROACH_MS = 2_500;
+// 冲击波固定拉到正点，避免 Bot 把线带到倾斜方向。
+const SHOCKWAVE_POSITION_RADIUS = 15;
 
 const TOWERS = {
-  N_W: { x: -3, y: -15 },
-  N_E: { x: 3, y: -15 },
-  E_N: { x: 15, y: -3 },
-  E_S: { x: 15, y: 3 },
-  S_E: { x: 3, y: 15 },
-  S_W: { x: -3, y: 15 },
-  W_S: { x: -15, y: 3 },
-  W_N: { x: -15, y: -3 },
+  N_W: { x: -3, y: -12 },
+  N_E: { x: 3, y: -12 },
+  E_N: { x: 12, y: -3 },
+  E_S: { x: 12, y: 3 },
+  S_E: { x: 3, y: 12 },
+  S_W: { x: -3, y: 12 },
+  W_S: { x: -12, y: 3 },
+  W_N: { x: -12, y: -3 },
 } as const satisfies Record<string, Vector2>;
 
 const TOWER_RING = [
@@ -146,14 +146,14 @@ const SHOCKWAVE_CARDINAL_POSITIONS = [
 ] as const satisfies readonly Vector2[];
 
 const INITIAL_SOUTH_POSITIONS: Record<PartySlot, Vector2> = {
-  MT: { x: -5.25, y: 15 },
-  ST: { x: -3.75, y: 15 },
-  H1: { x: -2.25, y: 15 },
-  H2: { x: -0.75, y: 15 },
-  D1: { x: 0.75, y: 15 },
-  D2: { x: 2.25, y: 15 },
-  D3: { x: 3.75, y: 15 },
-  D4: { x: 5.25, y: 15 },
+  MT: { x: -4.2, y: 12 },
+  ST: { x: -3, y: 12 },
+  H1: { x: -1.8, y: 12 },
+  H2: { x: -0.6, y: 12 },
+  D1: { x: 0.6, y: 12 },
+  D2: { x: 1.8, y: 12 },
+  D3: { x: 3, y: 12 },
+  D4: { x: 4.2, y: 12 },
 };
 
 const MARKER_COLORS = {
@@ -437,16 +437,39 @@ function shouldMoveToTetherFinalPoint(timeMs: number, round: ActiveProgramRound)
   return timeMs >= round.resolveAt - BOT_TETHER_FINAL_APPROACH_MS;
 }
 
-function getAssignedLane(slot: PartySlot, assignments: ProgramAssignments): number {
-  for (const number of PROGRAM_NUMBERS) {
-    const lane = getProgramSlotLane(slot, assignments, number);
+function getCardinalWaitingPoint(angle: number, offsetSign: number): Vector2 {
+  const base = createPointOnRadius(angle, BOT_IDLE_WAITING_RADIUS);
+  const tangent = {
+    x: -Math.sin(angle),
+    y: Math.cos(angle),
+  };
 
-    if (lane >= 0) {
-      return lane;
-    }
+  return {
+    x: base.x + tangent.x * BOT_IDLE_WAITING_OFFSET * offsetSign,
+    y: base.y + tangent.y * BOT_IDLE_WAITING_OFFSET * offsetSign,
+  };
+}
+
+function getTowerCardinalAngle(tower: Vector2): number {
+  if (Math.abs(tower.y) >= Math.abs(tower.x)) {
+    return tower.y < 0 ? NORTH_ANGLE : Math.PI / 2;
   }
 
-  return 0;
+  return tower.x > 0 ? 0 : Math.PI;
+}
+
+function getIdleWaitingPoint(slot: PartySlot, round: ActiveProgramRound): Vector2 {
+  const lane = TOWER_ASSIGNMENT_SLOT_PRIORITY.indexOf(slot) % 2;
+  const tower = round.towerPositions[lane]!;
+  const angle = getTowerCardinalAngle(tower);
+  const tangent = {
+    x: -Math.sin(angle),
+    y: Math.cos(angle),
+  };
+  const towerSide = tower.x * tangent.x + tower.y * tangent.y;
+  const offsetSign = towerSide <= 0 ? 1 : -1;
+
+  return getCardinalWaitingPoint(angle, offsetSign);
 }
 
 function getWaitingPoint(
@@ -458,9 +481,7 @@ function getWaitingPoint(
     return INITIAL_SOUTH_POSITIONS[slot];
   }
 
-  const towerIndex = getAssignedLane(slot, assignments);
-  const tower = round.towerPositions[towerIndex]!;
-  return createPointOnRadius(Math.atan2(tower.y, tower.x), BOT_WAITING_RADIUS);
+  return getIdleWaitingPoint(slot, round);
 }
 
 function getActorsInside(actors: BaseActorSnapshot[], center: Vector2, radius: number) {
