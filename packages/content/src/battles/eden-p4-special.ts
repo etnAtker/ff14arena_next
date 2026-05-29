@@ -4,6 +4,7 @@ import type { BaseActorSnapshot, MapMarker, PartySlot, StatusId, Vector2 } from 
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type { BattleBotController } from '../runtime/bot';
 import { createMoveDirection, createPose } from '../runtime/bot';
+import { getStatusDisplayName } from '../status-metadata';
 
 const ARENA_RADIUS = 20;
 const BOSS_TARGET_RING_RADIUS = 5;
@@ -74,13 +75,6 @@ const LIGHT_LOCK_STATUS_ID = 'eden_p4_light_lock';
 const LIGHT_BONDAGE_STATUS_ID = 'eden_p4_light_bondage';
 const DARK_WATER_STATUS_ID = 'eden_p4_dark_water';
 
-const STATUS_NAME_BY_ID: Record<StatusId, string> = {
-  [LIGHT_LOCK_STATUS_ID]: '光之锁',
-  [LIGHT_BONDAGE_STATUS_ID]: '光之束缚',
-  [DARK_WATER_STATUS_ID]: '黑暗狂水',
-  injury_up: '易伤',
-};
-
 interface EdenP4Assignments {
   lightOrder: PartySlot[];
   darkWaterSlots: [PartySlot, PartySlot];
@@ -143,7 +137,7 @@ function getActorById(actors: BaseActorSnapshot[], actorId: string): BaseActorSn
 }
 
 function getStatusName(statusId: StatusId): string {
-  return STATUS_NAME_BY_ID[statusId] ?? statusId;
+  return getStatusDisplayName(statusId);
 }
 
 function applyEdenStatus(

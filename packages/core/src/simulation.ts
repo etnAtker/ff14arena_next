@@ -60,8 +60,8 @@ const DEFAULT_TETHER_TRANSFER_COOLDOWN_MS = 500;
 const DEFAULT_BOT_TETHER_TRANSFER_COOLDOWN_MS = 0;
 const BUILTIN_STATUS_NAMES: Record<string, string> = {
   injury_up: '受伤加重',
-  knockback_immune: '防击退',
-  sprint: '疾跑',
+  knockback_immune: '亲疏自行',
+  sprint: '冲刺',
 };
 
 interface RuntimeState {

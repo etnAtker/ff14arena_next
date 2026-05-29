@@ -1,0 +1,32 @@
+{
+  "globalStatusIds": ["injury_up", "knockback_immune", "sprint"],
+  "battleStatusIds": {
+    "top_p1_program_loop": [
+      "program_loop_1",
+      "program_loop_2",
+      "program_loop_3",
+      "program_loop_4",
+      "twice_come_ruin",
+      "hp_penalty",
+      "doom",
+      "memory_loss"
+    ],
+    "eden_p4_special": ["eden_p4_light_lock", "eden_p4_light_bondage", "eden_p4_dark_water"]
+  },
+  "statusXivapiIds": {
+    "injury_up": 3366,
+    "knockback_immune": 1209,
+    "sprint": 50,
+    "program_loop_1": 3004,
+    "program_loop_2": 3005,
+    "program_loop_3": 3006,
+    "program_loop_4": 3451,
+    "twice_come_ruin": 2534,
+    "hp_penalty": 3401,
+    "doom": 2519,
+    "memory_loss": 1626,
+    "eden_p4_light_lock": 2253,
+    "eden_p4_light_bondage": 2255,
+    "eden_p4_dark_water": 2461
+  }
+}

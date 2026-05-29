@@ -1081,7 +1081,7 @@ test('等待态位姿样本通过统一事件链返回位移事件', async () =>
   }
 });
 
-test('疾跑会为玩家附加状态并记录冷却', async () => {
+test('冲刺会为玩家附加状态并记录冷却', async () => {
   const server = await startServer({
     host: '127.0.0.1',
     port: 0,
@@ -1098,7 +1098,7 @@ test('疾跑会为玩家附加状态并记录冷却', async () => {
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        name: '疾跑测试',
+        name: '冲刺测试',
         ownerUserId: 'owner-user',
         ownerName: '房主',
         battleId,
@@ -1157,8 +1157,8 @@ test('疾跑会为玩家附加状态并记录冷却', async () => {
         event.payload.targetId === ownerActor.id &&
         event.payload.status.id === 'sprint',
     );
-    assert.ok(sprintEvent, '应收到疾跑状态事件');
-    assert.equal(sprintEvent.payload.status.name, '疾跑');
+    assert.ok(sprintEvent, '应收到冲刺状态事件');
+    assert.equal(sprintEvent.payload.status.name, '冲刺');
     assert.equal(sprintEvent.payload.status.expiresAt - sprintEvent.timeMs, 10000);
 
     const resyncPromise = waitForPayload(

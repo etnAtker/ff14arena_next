@@ -11,6 +11,7 @@ import {
 } from './battles/top-p1-program-loop';
 import { EDEN_P4_SPECIAL_BATTLE, EDEN_P4_SPECIAL_BOT_CONTROLLER } from './battles/eden-p4-special';
 import type { BattleBotController } from './runtime/bot';
+import { getBattleStatusMetadata } from './status-metadata';
 
 export type {
   BattleBotControlFrame,
@@ -40,6 +41,7 @@ export const battleStaticCatalog: BattleStaticData[] = battleDefinitions.map((ba
   arenaRadius: battle.arenaRadius,
   bossTargetRingRadius: battle.bossTargetRingRadius,
   mapMarkers: battle.mapMarkers ?? [],
+  statusMetadata: getBattleStatusMetadata(battle.id),
   defaultPlayerMaxHp: DEFAULT_PLAYER_MAX_HP,
   initialPartyPositions: battle.initialPartyPositions,
 }));
@@ -57,3 +59,8 @@ export function getBattleBotController(battleId: string): BattleBotController | 
 }
 
 export { INJURY_UP_DURATION_MS, INJURY_UP_MULTIPLIER };
+export {
+  getBattleStatusMetadata,
+  getStatusDisplayName,
+  getStatusMetadata,
+} from './status-metadata';

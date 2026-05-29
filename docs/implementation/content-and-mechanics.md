@@ -44,21 +44,22 @@ core 只对少量内置状态保留通用行为：
 
 content 可以创建任意状态 ID。  
 状态展示名由 `ctx.status.apply(..., { name })` 传入；若未传入展示名，core 使用状态 ID 作为显示名。
+当前已配置 XIVAPI 状态映射的状态，会通过 `scripts/sync-status-assets.mjs` 同步中文名称、描述、图标路径与 `PartyListPriority`。前端状态栏展示优先使用这些同步元数据。
 
 当前 TOP P1 使用的状态包括：
 
-- `program_loop_1`：一号
-- `program_loop_2`：二号
-- `program_loop_3`：三号
-- `program_loop_4`：四号
-- `twice_come_ruin`：破灭
-- `hp_penalty`：衰减
-- `doom`：死宣
-- `memory_loss`：遗忘
+- `program_loop_1`
+- `program_loop_2`
+- `program_loop_3`
+- `program_loop_4`
+- `twice_come_ruin`
+- `hp_penalty`
+- `doom`
+- `memory_loss`
 
 这些状态的副作用不在 core 中实现。
 
-`sprint` 是全局主动能力状态，展示名为“疾跑”。该状态存在时，通用移动速度计算返回默认速度的 `1.3` 倍；状态持续 `10s`，冷却 `60s`。
+`sprint` 是全局主动能力状态，展示名为“冲刺”。该状态存在时，通用移动速度计算返回默认速度的 `1.3` 倍；状态持续 `10s`，冷却 `60s`。
 
 ## 3. 通用机制 primitive
 

@@ -1,8 +1,21 @@
 import type { MapMarker, PartySlot, Vector2 } from './base';
+import type { StatusId } from './simulation';
 
 export interface BattleSummary {
   id: string;
   name: string;
+}
+
+export interface StatusMetadata {
+  id: StatusId;
+  name: string;
+  description: string;
+  xivapiStatusId: number;
+  iconId: number;
+  iconPath: string;
+  iconUrl: string;
+  fallbackText: string;
+  partyListPriority: number;
 }
 
 export interface BattleStaticData {
@@ -12,6 +25,7 @@ export interface BattleStaticData {
   arenaRadius: number;
   bossTargetRingRadius: number;
   mapMarkers: MapMarker[];
+  statusMetadata: StatusMetadata[];
   defaultPlayerMaxHp: number;
   initialPartyPositions: Record<
     PartySlot,

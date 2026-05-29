@@ -11,6 +11,7 @@ import type {
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type { BattleBotController } from '../runtime/bot';
 import { createMoveDirection, createPose } from '../runtime/bot';
+import { getStatusDisplayName } from '../status-metadata';
 
 type ProgramNumber = 1 | 2 | 3 | 4;
 type ShockwaveTether = Extract<MechanicSnapshot, { kind: 'tether' }>;
@@ -43,17 +44,6 @@ const STATUS_BY_NUMBER: Record<ProgramNumber, StatusId> = {
 };
 
 const PROGRAM_STATUS_IDS = new Set<StatusId>(Object.values(STATUS_BY_NUMBER));
-
-const STATUS_NAME_BY_ID: Record<StatusId, string> = {
-  program_loop_1: '一号',
-  program_loop_2: '二号',
-  program_loop_3: '三号',
-  program_loop_4: '四号',
-  hp_penalty: '衰减',
-  twice_come_ruin: '破灭',
-  doom: '死宣',
-  memory_loss: '遗忘',
-};
 
 // 通用连线仍按真实穿线结算；这里的冷却只用于避免 Bot 固定脚本同轮连续传线。
 const TOP_TETHER_TRANSFER_COOLDOWN_MS = 500;
@@ -491,7 +481,7 @@ function applyTopStatus(
   durationMs: number,
 ): void {
   ctx.status.apply([actor.id], statusId, durationMs, {
-    name: STATUS_NAME_BY_ID[statusId] ?? statusId,
+    name: getStatusDisplayName(statusId),
   });
 }
 

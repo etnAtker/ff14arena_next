@@ -13,6 +13,7 @@ import {
   subtract,
 } from '@ff14arena/core';
 import type {
+  BattleStaticData,
   BattleSummary,
   PartySlot,
   RoomStatePayload,
@@ -60,10 +61,13 @@ export const useAppStore = defineStore('app', () => {
   const socket = shallowRef<AppSocket | null>(null);
   const socketPromise = shallowRef<Promise<AppSocket> | null>(null);
   const battles = ref<BattleSummary[]>([]);
+  const battleStaticDataById = ref(new Map<string, BattleStaticData>());
   const rooms = ref<RoomSummaryDto[]>([]);
   const room = ref<RoomStateDto | null>(null);
   const authoritativeSnapshot = ref<SimulationSnapshot | null>(null);
   const serverError = ref<string | null>(null);
+  const statusIconPreloadError = ref<string | null>(null);
+  const failedStatusIconUrls = ref<string[]>([]);
   const connected = ref(false);
   const logs = ref<string[]>([]);
   const currentSyncId = ref(0);
@@ -74,6 +78,9 @@ export const useAppStore = defineStore('app', () => {
   const transportProbeLatencyMs = ref(0);
   const localControlledPose = ref<LocalControlledPose | null>(null);
   const spectatePending = ref(false);
+  const battleStaticDataPromises = new Map<string, Promise<BattleStaticData>>();
+  const preloadedStatusIconUrls = new Set<string>();
+  const failedStatusIconUrlSet = new Set<string>();
   let transportProbeTimer: number | null = null;
 
   const snapshot = computed<SimulationSnapshot | null>(() => {
@@ -124,6 +131,15 @@ export const useAppStore = defineStore('app', () => {
     );
   });
   const isSpectating = computed(() => spectatePending.value || currentSpectator.value !== null);
+  const battleStaticData = computed<BattleStaticData | null>(() => {
+    const battleId = room.value?.battleId ?? authoritativeSnapshot.value?.battleId ?? null;
+
+    if (battleId === null) {
+      return null;
+    }
+
+    return battleStaticDataById.value.get(battleId) ?? null;
+  });
 
   const page = computed<'home' | 'battle'>(() => (room.value === null ? 'home' : 'battle'));
   const latencyDisplay = computed(() =>
@@ -152,6 +168,94 @@ export const useAppStore = defineStore('app', () => {
 
   function appendLog(message: string): void {
     logs.value = [message, ...logs.value].slice(0, 80);
+  }
+
+  function recordStatusIconLoadFailure(iconUrl: string): void {
+    if (failedStatusIconUrlSet.has(iconUrl)) {
+      return;
+    }
+
+    failedStatusIconUrlSet.add(iconUrl);
+    failedStatusIconUrls.value = [...failedStatusIconUrlSet];
+    statusIconPreloadError.value = `状态图标加载失败：${iconUrl}`;
+    appendLog(`错误：状态图标加载失败 ${iconUrl}`);
+  }
+
+  function preloadImage(iconUrl: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error(iconUrl));
+      image.src = iconUrl;
+    });
+  }
+
+  async function preloadStatusIcons(staticData: BattleStaticData): Promise<void> {
+    const pendingMetadata = staticData.statusMetadata.filter(
+      (status) =>
+        !preloadedStatusIconUrls.has(status.iconUrl) && !failedStatusIconUrlSet.has(status.iconUrl),
+    );
+
+    const results = await Promise.allSettled(
+      pendingMetadata.map(async (status) => {
+        await preloadImage(status.iconUrl);
+        return status.iconUrl;
+      }),
+    );
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        preloadedStatusIconUrls.add(result.value);
+        continue;
+      }
+
+      const iconUrl = result.reason instanceof Error ? result.reason.message : '未知图标';
+      recordStatusIconLoadFailure(iconUrl);
+    }
+  }
+
+  async function ensureBattleStaticData(battleId: string): Promise<BattleStaticData> {
+    const loadedStaticData = battleStaticDataById.value.get(battleId);
+
+    if (loadedStaticData !== undefined) {
+      await preloadStatusIcons(loadedStaticData);
+      return loadedStaticData;
+    }
+
+    const pendingStaticData = battleStaticDataPromises.get(battleId);
+
+    if (pendingStaticData !== undefined) {
+      return pendingStaticData;
+    }
+
+    const staticDataPromise = (async () => {
+      const response = await fetchJson<{ battle: BattleStaticData }>(`/battles/${battleId}/static`);
+      const nextStaticDataById = new Map(battleStaticDataById.value);
+      nextStaticDataById.set(battleId, response.battle);
+      battleStaticDataById.value = nextStaticDataById;
+      await preloadStatusIcons(response.battle);
+      return response.battle;
+    })();
+
+    battleStaticDataPromises.set(battleId, staticDataPromise);
+
+    try {
+      return await staticDataPromise;
+    } finally {
+      battleStaticDataPromises.delete(battleId);
+    }
+  }
+
+  function loadBattleStaticData(battleId: string | null): void {
+    if (battleId === null) {
+      return;
+    }
+
+    ensureBattleStaticData(battleId).catch((error) => {
+      const message = error instanceof Error ? error.message : '加载战斗静态数据失败';
+      serverError.value = message;
+      appendLog(`错误：${message}`);
+    });
   }
 
   function clearFacingPreview(): void {
@@ -444,6 +548,7 @@ export const useAppStore = defineStore('app', () => {
         }
 
         room.value = payload.room;
+        loadBattleStaticData(payload.room.battleId);
 
         if (payload.room.phase === 'running' && authoritativeSnapshot.value?.phase !== 'running') {
           requestResyncWithSocket(nextSocket, payload.room.roomId, 'running_snapshot_missing');
@@ -502,6 +607,7 @@ export const useAppStore = defineStore('app', () => {
         }
 
         authoritativeSnapshot.value = payload.snapshot;
+        loadBattleStaticData(payload.snapshot.battleId);
         clearLocalControlledPose();
         clearFacingPreview();
         logs.value = [];
@@ -1111,10 +1217,13 @@ export const useAppStore = defineStore('app', () => {
   return {
     profile,
     battles,
+    battleStaticData,
     rooms,
     room,
     snapshot,
     serverError,
+    statusIconPreloadError,
+    failedStatusIconUrls,
     connected,
     latencyDisplay,
     logs,
@@ -1137,5 +1246,6 @@ export const useAppStore = defineStore('app', () => {
     previewFaceAngle,
     useKnockbackImmune,
     useSprint,
+    recordStatusIconLoadFailure,
   };
 });

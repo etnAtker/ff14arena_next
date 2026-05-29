@@ -68,6 +68,7 @@ const store = useAppStore();
 const {
   profile,
   battles,
+  battleStaticData,
   rooms,
   room,
   snapshot,
@@ -75,6 +76,8 @@ const {
   connected,
   latencyDisplay,
   serverError,
+  statusIconPreloadError,
+  failedStatusIconUrls,
   currentPlayerSlot,
   isSpectating,
   serverCountdownSeconds,
@@ -404,6 +407,15 @@ onBeforeUnmount(() => {
         <n-alert v-if="serverError" type="error" :show-icon="false" closable class="content-alert">
           {{ serverError }}
         </n-alert>
+        <n-alert
+          v-if="statusIconPreloadError"
+          type="error"
+          :show-icon="false"
+          closable
+          class="content-alert"
+        >
+          {{ statusIconPreloadError }}
+        </n-alert>
 
         <HomePage
           v-if="page === 'home'"
@@ -438,6 +450,8 @@ onBeforeUnmount(() => {
             :battle-start-notice-until-ms="battleStartNoticeUntilMs"
             :logs="logs"
             :latest-result="latestResult"
+            :status-metadata="battleStaticData?.statusMetadata ?? []"
+            :failed-status-icon-urls="failedStatusIconUrls"
             :operation-mode-options="[
               { label: '传统', value: 'traditional' },
               { label: '标准', value: 'standard' },
@@ -454,6 +468,7 @@ onBeforeUnmount(() => {
             @camera-zoom-change="updateCameraZoom"
             @operation-mode-change="updateOperationMode"
             @face-angle="handlePointerFaceAngle"
+            @status-icon-load-error="store.recordStatusIconLoadFailure($event)"
           />
         </div>
       </main>

@@ -1,5 +1,31 @@
 # Scripts
 
+## 状态图标同步
+
+脚本：
+
+- [sync-status-assets.mjs](/home/etnatker/workspace/code/ff14arena_next/scripts/sync-status-assets.mjs)
+
+用途：
+
+- 从 XIVAPI Status 接口同步项目状态的名称、描述、图标路径和小队列表排序权重
+- 从 XIVAPI asset 接口下载状态图标
+- 生成 `packages/content/src/generated/status-metadata.ts`
+
+用法：
+
+```bash
+pnpm sync:status-assets
+pnpm sync:status-assets -- -f
+```
+
+说明：
+
+- 状态资料接口：`https://xivapi-v2.xivcdn.com/api/sheet/Status/{id}?language=chs`
+- 图标资源接口：`https://v2.xivapi.com/api/asset?path={Icon.path}&format=png`
+- 默认跳过已经存在的图标
+- `-f` 会强制重新下载所有图标
+
 ## 8 人网页复现
 
 脚本：

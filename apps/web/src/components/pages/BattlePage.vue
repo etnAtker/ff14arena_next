@@ -9,6 +9,7 @@ import type {
   PartySlot,
   RoomStateDto,
   SimulationSnapshot,
+  StatusMetadata,
 } from '@ff14arena/shared';
 import {
   formatSkillCooldownLabel,
@@ -41,6 +42,8 @@ const props = defineProps<{
   battleStartNoticeUntilMs: number;
   logs: string[];
   latestResult: EncounterResult | null;
+  statusMetadata: StatusMetadata[];
+  failedStatusIconUrls: string[];
   operationModeOptions: SelectOption[];
 }>();
 
@@ -56,7 +59,21 @@ const emit = defineEmits<{
   cameraZoomChange: [zoom: number];
   faceAngle: [facing: number];
   operationModeChange: [value: SelectValue];
+  statusIconLoadError: [iconUrl: string];
 }>();
+
+interface StatusViewModel {
+  key: string;
+  name: string;
+  description: string;
+  iconUrl: string | null;
+  fallbackText: string;
+  countdownLabel: string;
+  title: string;
+  iconFailed: boolean;
+  partyListPriority: number;
+  originalIndex: number;
+}
 
 const slotMap = computed(() => {
   const entries = props.room?.slots ?? [];
@@ -80,6 +97,7 @@ const castAnimationBase = ref<{
   totalDurationMs: number;
 } | null>(null);
 const partyListOrder = ref<PartySlot[]>(loadPartyListOrder());
+const localFailedStatusIconUrls = ref(new Set<string>());
 const pendingSlotAction = ref<{
   slot: PartySlot;
   title: string;
@@ -106,6 +124,15 @@ const currentActor = computed<BaseActorSnapshot | null>(() => {
 
   return props.snapshot.actors.find((actor) => actor.id === props.controlledActorId) ?? null;
 });
+const statusMetadataMap = computed(
+  () => new Map(props.statusMetadata.map((status) => [status.id, status])),
+);
+const failedStatusIconUrlSet = computed(
+  () => new Set([...props.failedStatusIconUrls, ...localFailedStatusIconUrls.value]),
+);
+const currentActorStatuses = computed(() =>
+  createStatusViewModels(currentActor.value?.statuses ?? []),
+);
 
 const castFillStyle = computed(() => {
   const base = castAnimationBase.value;
@@ -148,11 +175,11 @@ const knockbackButtonLabel = computed(() => {
 });
 const sprintButtonLabel = computed(() => {
   if (currentActor.value === null) {
-    return '疾跑（2）';
+    return '冲刺（2）';
   }
 
   return formatSkillCooldownLabel({
-    label: '疾跑',
+    label: '冲刺',
     hotkey: '2',
     cooldown: currentActor.value.sprintCooldown,
     currentTimeMs: renderSimulationTimeMs.value,
@@ -276,29 +303,91 @@ function getActor(slot: PartySlot) {
   return actorMap.value.get(slot) ?? null;
 }
 
-function getMechanicStatusRows(slot: PartySlot): string[] {
-  const actor = getActor(slot);
+function createFallbackText(name: string): string {
+  return Array.from(name.trim()).slice(0, 2).join('') || '??';
+}
 
-  if (actor === null) {
-    return [];
+function formatStatusCountdown(expiresAt: number): string {
+  if (!Number.isFinite(expiresAt)) {
+    return '';
   }
 
-  return actor.statuses
-    .map((status) => {
-      if (!Number.isFinite(status.expiresAt)) {
-        return status.name;
-      }
+  const remainingMs = expiresAt - renderSimulationTimeMs.value;
 
+  if (remainingMs <= 0) {
+    return '';
+  }
+
+  return `${Math.ceil(remainingMs / 1_000)}秒`;
+}
+
+function getStatusTitle(status: StatusViewModel): string {
+  const lines = [status.name];
+
+  if (status.countdownLabel !== '') {
+    lines.push(`剩余：${status.countdownLabel}`);
+  }
+
+  if (status.description !== '') {
+    lines.push(status.description);
+  }
+
+  return lines.join('\n');
+}
+
+function createStatusViewModels(statuses: BaseActorSnapshot['statuses']): StatusViewModel[] {
+  return statuses
+    .map((status, index) => {
       const remainingMs = status.expiresAt - renderSimulationTimeMs.value;
 
-      if (remainingMs <= 0) {
+      if (Number.isFinite(status.expiresAt) && remainingMs <= 0) {
         return null;
       }
 
-      return `${status.name} ${Math.ceil(remainingMs / 1_000)}秒`;
+      const metadata = statusMetadataMap.value.get(status.id);
+      const name = metadata?.name ?? status.name;
+      const iconUrl = metadata?.iconUrl ?? null;
+      const iconFailed = iconUrl !== null && failedStatusIconUrlSet.value.has(iconUrl);
+      const viewModel: StatusViewModel = {
+        key: status.id,
+        name,
+        description: metadata?.description ?? '',
+        iconUrl,
+        fallbackText: metadata?.fallbackText ?? createFallbackText(name),
+        countdownLabel: formatStatusCountdown(status.expiresAt),
+        title: '',
+        iconFailed,
+        partyListPriority: metadata?.partyListPriority ?? Number.MAX_SAFE_INTEGER,
+        originalIndex: index,
+      };
+      viewModel.title = getStatusTitle(viewModel);
+
+      return viewModel;
     })
-    .filter((name): name is string => name !== null)
-    .slice(0, 16);
+    .filter((status): status is StatusViewModel => status !== null)
+    .sort((left, right) => {
+      if (left.partyListPriority !== right.partyListPriority) {
+        return right.partyListPriority - left.partyListPriority;
+      }
+
+      return right.originalIndex - left.originalIndex;
+    })
+    .slice(0, 24);
+}
+
+function getMechanicStatusRows(slot: PartySlot): StatusViewModel[] {
+  return createStatusViewModels(getActor(slot)?.statuses ?? []);
+}
+
+function handleStatusIconError(status: StatusViewModel): void {
+  if (status.iconUrl === null) {
+    return;
+  }
+
+  const nextFailedUrls = new Set(localFailedStatusIconUrls.value);
+  nextFailedUrls.add(status.iconUrl);
+  localFailedStatusIconUrls.value = nextFailedUrls;
+  emit('statusIconLoadError', status.iconUrl);
 }
 
 function getSlotButtonLabel(slot: PartySlot): string {
@@ -574,11 +663,21 @@ onBeforeUnmount(() => {
 
           <div class="slot-row status-row">
             <span
-              v-for="statusName in getMechanicStatusRows(slot)"
-              :key="statusName"
-              class="status-pill"
+              v-for="status in getMechanicStatusRows(slot)"
+              :key="status.key"
+              class="status-icon-cell"
+              :title="status.title"
             >
-              {{ statusName }}
+              <img
+                v-if="status.iconUrl !== null && !status.iconFailed"
+                class="status-icon"
+                :src="status.iconUrl"
+                :alt="status.name"
+                draggable="false"
+                @error="handleStatusIconError(status)"
+              />
+              <span v-else class="status-icon-fallback">{{ status.fallbackText }}</span>
+              <span class="status-countdown">{{ status.countdownLabel }}</span>
             </span>
           </div>
         </div>
@@ -674,6 +773,25 @@ onBeforeUnmount(() => {
             <div v-if="!props.snapshot" class="empty-stage">等待战斗场景数据</div>
             <div v-if="countdownBannerText !== null" class="countdown-banner">
               <div class="countdown-banner-value">{{ countdownBannerText }}</div>
+            </div>
+            <div v-if="currentActorStatuses.length > 0" class="self-status-hud">
+              <span
+                v-for="status in currentActorStatuses"
+                :key="status.key"
+                class="status-icon-cell"
+                :title="status.title"
+              >
+                <img
+                  v-if="status.iconUrl !== null && !status.iconFailed"
+                  class="status-icon"
+                  :src="status.iconUrl"
+                  :alt="status.name"
+                  draggable="false"
+                  @error="handleStatusIconError(status)"
+                />
+                <span v-else class="status-icon-fallback">{{ status.fallbackText }}</span>
+                <span class="status-countdown">{{ status.countdownLabel }}</span>
+              </span>
             </div>
           </div>
 
@@ -865,27 +983,58 @@ onBeforeUnmount(() => {
 
 .slot-row.status-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  grid-auto-rows: minmax(19px, auto);
-  gap: 4px;
+  grid-template-columns: repeat(auto-fill, 28px);
+  grid-auto-rows: 45px;
+  justify-content: start;
+  gap: 4px 5px;
   margin-top: 6px;
-  min-height: 76px;
+  min-height: 94px;
   align-items: start;
   overflow: hidden;
 }
 
-.status-pill {
+.status-icon-cell {
+  display: grid;
+  grid-template-rows: 32px 11px;
+  justify-items: center;
+  align-items: start;
+  width: 28px;
   min-width: 0;
+  overflow: hidden;
+}
+
+.status-icon,
+.status-icon-fallback {
+  width: 24px;
+  height: 32px;
   border: 1px solid rgba(246, 239, 228, 0.18);
-  border-radius: 4px;
-  padding: 2px 3px;
+  border-radius: 3px;
+  box-sizing: border-box;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.status-icon {
+  display: block;
+  object-fit: cover;
+}
+
+.status-icon-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: rgba(246, 239, 228, 0.88);
   font-size: 11px;
-  line-height: 1.25;
+  font-weight: 700;
+  line-height: 1.1;
   text-align: center;
-  background: rgba(0, 0, 0, 0.18);
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.status-countdown {
+  width: 28px;
+  color: rgba(246, 239, 228, 0.78);
+  font-size: 10px;
+  line-height: 11px;
+  text-align: center;
   white-space: nowrap;
 }
 
@@ -987,6 +1136,22 @@ onBeforeUnmount(() => {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+}
+
+.self-status-hud {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 28px);
+  grid-auto-rows: 45px;
+  justify-content: start;
+  gap: 4px 5px;
+  width: min(236px, calc(100% - 28px));
+  max-height: 94px;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .countdown-banner {
