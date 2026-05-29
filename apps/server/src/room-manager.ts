@@ -1123,7 +1123,7 @@ export class RoomManager {
 
     this.io.to(room.roomId).emit('room:countdown', {
       roomId: room.roomId,
-      remainingSeconds: Math.max(Math.ceil((countdown.endsAt - Date.now()) / 1_000), 0),
+      remainingSeconds: Math.max(Math.round((countdown.endsAt - Date.now()) / 1_000), 0),
     });
   }
 }
