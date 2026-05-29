@@ -218,6 +218,11 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       roomManager.startRoom(socket, payload);
     });
 
+    socket.on('room:quick-fail', (payload) => {
+      metrics.recordSocketInbound('room:quick-fail');
+      roomManager.quickFail(socket, payload.roomId);
+    });
+
     socket.on('sim:input-frame', (payload) => {
       metrics.recordSocketInbound('sim:input-frame');
       roomManager.enqueueContinuousInput(socket, payload);

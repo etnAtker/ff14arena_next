@@ -38,6 +38,7 @@ type TypedIo = SocketServer<ClientToServerEvents, ServerToClientEvents>;
 const DEFAULT_START_COUNTDOWN_MS = 5_000;
 const MIN_START_COUNTDOWN_MS = 1_000;
 const MAX_START_COUNTDOWN_MS = 30_000;
+const QUICK_FAIL_REASON = '房主手动结束本轮模拟';
 
 export class RoomManager {
   private readonly rooms = new Map<string, RoomRecord>();
@@ -616,6 +617,45 @@ export class RoomManager {
     }
 
     this.startCountdown(room, countdownMs);
+  }
+
+  quickFail(socket: TypedSocket, roomId: string): void {
+    const room = this.rooms.get(roomId);
+
+    if (room === undefined) {
+      this.emitError(socket, 'room_not_found', '房间不存在');
+      return;
+    }
+
+    const occupant = this.getRoomMemberBySocket(room, socket.id);
+
+    if (occupant?.userId !== room.ownerUserId) {
+      this.emitError(socket, 'not_owner', '只有房主可以快速失败');
+      return;
+    }
+
+    if (room.phase !== 'running' || room.simulation === null) {
+      this.emitError(socket, 'room_not_running', '当前房间不在模拟中');
+      return;
+    }
+
+    room.simulation.failImmediately(QUICK_FAIL_REASON);
+    const events = room.simulation.drainEvents();
+
+    if (events.length > 0) {
+      this.metrics?.recordSimEvents(room.roomId, events.length);
+      this.io.to(room.roomId).emit('sim:events', {
+        roomId: room.roomId,
+        syncId: room.syncId,
+        events,
+      });
+    }
+
+    const snapshot = room.simulation.getSnapshot();
+
+    if (snapshot.latestResult !== null) {
+      this.finishSimulation(room, snapshot);
+    }
   }
 
   enqueueInput(

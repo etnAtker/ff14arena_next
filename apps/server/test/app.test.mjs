@@ -687,6 +687,117 @@ test('房主观战后可以以 8 个 Bot 开始战斗倒计时', async () => {
   }
 });
 
+test('房主可以在运行中快速失败并结束本轮模拟', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '快速失败测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    await ownerWaitingSnapshotPromise;
+
+    await waitForConnect(guest);
+    const guestWaitingSnapshotPromise = waitForEvent(guest, 'sim:snapshot');
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      slot: 'ST',
+    });
+    await waitForRoomState(guest, (room) => room.roomId === roomId && room.phase === 'waiting');
+    await guestWaitingSnapshotPromise;
+
+    const startPromise = waitForEvent(owner, 'sim:start');
+    owner.emit('room:start', {
+      roomId,
+      countdownMs: 1000,
+    });
+    const startPayload = await startPromise;
+    assert.equal(startPayload.snapshot.phase, 'running');
+
+    const guestErrorPromise = waitForPayload(
+      guest,
+      'server:error',
+      (payload) => payload.code === 'not_owner',
+      4000,
+    );
+    guest.emit('room:quick-fail', {
+      roomId,
+    });
+    const guestError = await guestErrorPromise;
+    assert.equal(guestError.message, '只有房主可以快速失败');
+
+    const endPromise = waitForPayload(
+      owner,
+      'sim:end',
+      (payload) => payload.roomId === roomId && payload.latestResult.outcome === 'failure',
+      4000,
+    );
+    const waitingRoomPromise = waitForRoomState(
+      guest,
+      (room) =>
+        room.roomId === roomId &&
+        room.phase === 'waiting' &&
+        room.latestResult?.outcome === 'failure',
+    );
+    const failureEventPromise = waitForPayload(
+      guest,
+      'sim:events',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.events.some((event) => event.type === 'battleFailureMarked'),
+      4000,
+    );
+
+    owner.emit('room:quick-fail', {
+      roomId,
+    });
+
+    const failureEvents = await failureEventPromise;
+    const endPayload = await endPromise;
+    const waitingRoom = await waitingRoomPromise;
+    const failureEvent = failureEvents.events.find((event) => event.type === 'battleFailureMarked');
+
+    assert.ok(failureEvent, '应广播快速失败原因事件');
+    assert.deepEqual(failureEvent.payload.failureReasons, ['房主手动结束本轮模拟']);
+    assert.deepEqual(endPayload.latestResult.failureReasons, ['房主手动结束本轮模拟']);
+    assert.equal(waitingRoom.latestResult.outcome, 'failure');
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
 test('倒计时期间移动会保留到正式开战快照', async () => {
   const server = await startServer({
     host: '127.0.0.1',

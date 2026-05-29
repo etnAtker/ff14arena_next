@@ -1360,6 +1360,16 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     stop() {
       running = false;
     },
+    failImmediately(reason) {
+      const currentState = assertState(state);
+
+      if (currentState.phase !== 'running' || currentState.latestResult !== null) {
+        return;
+      }
+
+      setFailure(reason);
+      setResult('failure');
+    },
     tick(deltaMs) {
       const currentState = assertState(state);
 

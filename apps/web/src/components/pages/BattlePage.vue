@@ -52,6 +52,7 @@ const emit = defineEmits<{
   useSprint: [currentTimeMs: number];
   spectate: [];
   startBattle: [countdownMs: number];
+  quickFail: [];
   startCountdownSecondsChange: [seconds: number];
   switchSlot: [slot: PartySlot];
   resetZoom: [];
@@ -161,6 +162,7 @@ const canUseSprint = computed(
     currentActor.value.alive &&
     isCooldownReady(currentActor.value.sprintCooldown, renderSimulationTimeMs.value),
 );
+const canQuickFail = computed(() => props.isOwner && props.snapshot?.phase === 'running');
 const knockbackButtonLabel = computed(() => {
   if (currentActor.value === null) {
     return '防击退（1）';
@@ -811,6 +813,15 @@ onBeforeUnmount(() => {
               {{ sprintButtonLabel }}
             </n-button>
             <n-button tertiary @click="emit('resetZoom')">重置缩放</n-button>
+            <n-button
+              v-if="props.isOwner"
+              tertiary
+              type="error"
+              :disabled="!canQuickFail"
+              @click="emit('quickFail')"
+            >
+              快速失败
+            </n-button>
             <n-text depth="3" class="stage-hint">
               {{
                 props.operationMode === 'traditional'

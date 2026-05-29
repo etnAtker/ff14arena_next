@@ -461,6 +461,7 @@ onBeforeUnmount(() => {
             @use-sprint="store.useSprint($event)"
             @spectate="store.spectate"
             @start-battle="store.startBattle($event)"
+            @quick-fail="store.quickFail"
             @start-countdown-seconds-change="startCountdownSeconds = $event"
             @switch-slot="store.switchSlot($event)"
             @reset-zoom="resetCameraZoom"

@@ -40,6 +40,10 @@ export interface RoomStartPayload {
   countdownMs?: number;
 }
 
+export interface RoomQuickFailPayload {
+  roomId: string;
+}
+
 export interface RoomStatePayload {
   room: RoomStateDto;
 }
@@ -112,6 +116,7 @@ export interface ClientToServerEvents {
   'room:switch-slot': (payload: RoomSwitchSlotPayload) => void;
   'room:spectate': (payload: RoomSpectatePayload) => void;
   'room:start': (payload: RoomStartPayload) => void;
+  'room:quick-fail': (payload: RoomQuickFailPayload) => void;
   'sim:input-frame': (payload: ContinuousSimulationInputFrame) => void;
   'sim:use-knockback-immune': (payload: UseKnockbackImmuneSimulationInput) => void;
   'sim:use-sprint': (payload: UseSprintSimulationInput) => void;

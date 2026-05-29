@@ -803,6 +803,17 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
+  async function quickFail(): Promise<void> {
+    if (room.value === null) {
+      return;
+    }
+
+    const currentSocket = socket.value ?? (await ensureSocket());
+    currentSocket.emit('room:quick-fail', {
+      roomId: room.value.roomId,
+    });
+  }
+
   function applyOptimisticContinuousInput(frame: {
     moveDirection: Vector2;
     facing?: number;
@@ -1252,6 +1263,7 @@ export const useAppStore = defineStore('app', () => {
     switchSlot,
     spectate,
     startBattle,
+    quickFail,
     sendContinuousInputFrame,
     previewFaceAngle,
     useKnockbackImmune,

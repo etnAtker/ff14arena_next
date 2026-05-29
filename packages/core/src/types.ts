@@ -203,6 +203,7 @@ export interface SimulationInstance {
   }): void;
   start(): void;
   stop(): void;
+  failImmediately(reason: string): void;
   tick(deltaMs: number): void;
   submitActorControlFrame(frame: ActorControlFrame): void;
   getSnapshot(): SimulationSnapshot;
