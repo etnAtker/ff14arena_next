@@ -4,7 +4,12 @@ const OPERATION_MODE_STORAGE_KEY = 'ff14arena:operation-mode';
 
 export function loadOperationMode(): OperationMode {
   const raw = window.localStorage.getItem(OPERATION_MODE_STORAGE_KEY);
-  return raw === 'standard' ? 'standard' : 'traditional';
+
+  if (raw === 'standard' || raw === 'fixed') {
+    return raw;
+  }
+
+  return 'traditional';
 }
 
 export function saveOperationMode(operationMode: OperationMode): void {

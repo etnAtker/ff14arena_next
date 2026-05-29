@@ -5,7 +5,7 @@ import type {
   RoomSummaryDto,
 } from '@ff14arena/shared';
 
-export type OperationMode = 'traditional' | 'standard';
+export type OperationMode = 'traditional' | 'standard' | 'fixed';
 export type SelectValue = string | number | null;
 export type TagType = 'default' | 'primary' | 'info' | 'success' | 'warning' | 'error';
 export type PartyRole = 'tank' | 'healer' | 'dps';

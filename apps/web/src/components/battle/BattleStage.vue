@@ -3,9 +3,7 @@ import { Application, Graphics, Text, TextStyle } from 'pixi.js';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import type { MapMarker, SimulationSnapshot, Vector2 } from '@ff14arena/shared';
 import { getFacingForCameraYaw } from './camera';
-import { getSlotColor, getSlotStageText } from '../../utils/ui';
-
-type OperationMode = 'traditional' | 'standard';
+import { getSlotColor, getSlotStageText, type OperationMode } from '../../utils/ui';
 
 const MIN_ZOOM = 0.7;
 const MAX_ZOOM = 2.4;
@@ -84,6 +82,10 @@ function getRenderActorState(actorId: string): RenderActorState | null {
 }
 
 function getCameraFocus(): Vector2 {
+  if (props.operationMode === 'fixed') {
+    return { x: 0, y: 0 };
+  }
+
   const controlledActor = getControlledActor();
 
   if (controlledActor === null) {
@@ -94,6 +96,13 @@ function getCameraFocus(): Vector2 {
 }
 
 function getScreenAnchor(width: number, height: number): Vector2 {
+  if (props.operationMode === 'fixed') {
+    return {
+      x: width / 2,
+      y: height / 2,
+    };
+  }
+
   if (getControlledActor() === null) {
     return {
       x: width / 2,
@@ -120,7 +129,8 @@ function toStagePoint(point: Vector2, width: number, height: number, arenaRadius
     x: point.x - focus.x,
     y: point.y - focus.y,
   };
-  const rotated = rotatePoint(relative, -props.cameraYaw);
+  const cameraYaw = props.operationMode === 'fixed' ? 0 : props.cameraYaw;
+  const rotated = rotatePoint(relative, -cameraYaw);
 
   return {
     x: anchor.x + rotated.x * scale,
@@ -689,7 +699,11 @@ function runRenderLoop(now: number): void {
 }
 
 function handleMouseDown(event: MouseEvent): void {
-  if ((event.button !== 0 && event.button !== 2) || props.snapshot === null) {
+  if (
+    (event.button !== 0 && event.button !== 2) ||
+    props.snapshot === null ||
+    props.operationMode === 'fixed'
+  ) {
     return;
   }
 
@@ -709,6 +723,10 @@ function handleMouseMove(event: MouseEvent): void {
     return;
   }
 
+  if (props.operationMode === 'fixed') {
+    return;
+  }
+
   pendingYawDelta += deltaX * DRAG_ROTATION_SENSITIVITY;
 
   if (dragUpdateFrame !== null) {
@@ -718,7 +736,8 @@ function handleMouseMove(event: MouseEvent): void {
   dragUpdateFrame = requestAnimationFrame(() => {
     dragUpdateFrame = null;
 
-    if (pendingYawDelta === 0) {
+    if (pendingYawDelta === 0 || props.operationMode === 'fixed') {
+      pendingYawDelta = 0;
       return;
     }
 

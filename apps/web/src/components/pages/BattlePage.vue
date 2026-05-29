@@ -534,7 +534,9 @@ onBeforeUnmount(() => {
               {{
                 props.operationMode === 'traditional'
                   ? '传统：移动方向跟随镜头，移动时人物自动转向。'
-                  : '标准：右键拖拽同时转镜头和人物，移动方向跟随人物朝向。'
+                  : props.operationMode === 'standard'
+                    ? '标准：右键拖拽同时转镜头和人物，移动方向跟随人物朝向。'
+                    : '固定：地图固定在中央且不旋转，WASD 按地图方向移动。'
               }}
             </n-text>
           </div>

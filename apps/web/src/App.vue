@@ -171,6 +171,13 @@ function movementVector(): { x: number; y: number } {
     );
   }
 
+  if (operationMode.value === 'fixed') {
+    return {
+      x: horizontal,
+      y: vertical,
+    };
+  }
+
   const facing = currentActor.value?.facing ?? 0;
   const forward = {
     x: Math.cos(facing),
@@ -188,7 +195,7 @@ function movementVector(): { x: number; y: number } {
 }
 
 function updateOperationMode(value: SelectValue): void {
-  operationMode.value = value === 'standard' ? 'standard' : 'traditional';
+  operationMode.value = value === 'standard' || value === 'fixed' ? value : 'traditional';
   saveOperationMode(operationMode.value);
   pendingPointerFacing.value = null;
   lastSentPointerFacing.value = null;
@@ -332,7 +339,7 @@ onMounted(async () => {
     const direction = movementVector();
     let facing: number | undefined;
 
-    if (operationMode.value !== 'traditional') {
+    if (operationMode.value === 'standard') {
       lastTraditionalFacing.value = null;
 
       if (pendingPointerFacing.value !== null) {
@@ -445,6 +452,7 @@ onBeforeUnmount(() => {
             :operation-mode-options="[
               { label: '传统', value: 'traditional' },
               { label: '标准', value: 'standard' },
+              { label: '固定', value: 'fixed' },
             ]"
             @use-knockback-immune="store.useKnockbackImmune($event)"
             @use-sprint="store.useSprint($event)"
