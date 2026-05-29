@@ -54,6 +54,15 @@ export type AoeResolvedEvent = BaseSimulationEvent<
   }
 >;
 
+export type TetherTransferredEvent = BaseSimulationEvent<
+  'tetherTransferred',
+  {
+    mechanicId: string;
+    previousTargetId: string;
+    targetId: string;
+  }
+>;
+
 export type DamageAppliedEvent = BaseSimulationEvent<
   'damageApplied',
   {
@@ -106,6 +115,7 @@ export type SimulationEvent =
   | BossCastResolvedEvent
   | AoeSpawnedEvent
   | AoeResolvedEvent
+  | TetherTransferredEvent
   | DamageAppliedEvent
   | StatusAppliedEvent
   | ActorDiedEvent

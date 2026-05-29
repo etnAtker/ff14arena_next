@@ -1158,6 +1158,16 @@ export const useAppStore = defineStore('app', () => {
         );
         appendLog(`机制结算：${event.payload.mechanicId}`);
         break;
+      case 'tetherTransferred': {
+        const mechanic = authoritativeSnapshot.value.mechanics.find(
+          (candidate) => candidate.id === event.payload.mechanicId,
+        );
+
+        if (mechanic?.kind === 'tether') {
+          mechanic.targetId = event.payload.targetId;
+        }
+        break;
+      }
       case 'damageApplied': {
         const actor = authoritativeSnapshot.value.actors.find(
           (candidate) => candidate.id === event.payload.targetId,

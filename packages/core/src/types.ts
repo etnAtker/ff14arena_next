@@ -149,6 +149,7 @@ export interface BattleScriptContext {
   };
   readonly mechanics: {
     all(): MechanicSnapshot[];
+    setTetherBotTransferSequence(mechanicId: string, targets: BaseActorSnapshot[]): void;
   };
   readonly damage: {
     apply(targetIds: string[], amount: number, sourceLabel: string): void;

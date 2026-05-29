@@ -45,9 +45,9 @@ const STATUS_BY_NUMBER: Record<ProgramNumber, StatusId> = {
 
 const PROGRAM_STATUS_IDS = new Set<StatusId>(Object.values(STATUS_BY_NUMBER));
 
-// 通用连线仍按真实穿线结算；这里的冷却只用于避免 Bot 固定脚本同轮连续传线。
+// 通用连线仍按真实穿线结算；Bot 顺序由 botTransferSequence 限制，不额外设置 Bot 冷却。
 const TOP_TETHER_TRANSFER_COOLDOWN_MS = 500;
-const TOP_BOT_TETHER_TRANSFER_COOLDOWN_MS = 8_000;
+const TOP_BOT_TETHER_TRANSFER_COOLDOWN_MS = 0;
 const GEOMETRY_EPSILON = 0.001;
 
 const DEFAULT_ASSIGNMENTS: ProgramAssignments = {
@@ -89,6 +89,7 @@ const BOT_TETHER_PICKUP_DISTANCE = 6;
 const BOT_TETHER_PICKUP_MIN_RATIO = 0.25;
 const BOT_TETHER_PICKUP_MAX_RATIO = 0.65;
 const BOT_TETHER_CROSSING_OVERSHOOT = 1.5;
+const BOT_TETHER_PICKUP_STOP_DISTANCE = 0;
 const BOT_TETHER_STAGING_RADIUS = 10;
 const BOT_TETHER_FINAL_APPROACH_MS = 2_000;
 // 冲击波固定拉到正点 17m，避免 Bot 把线带到倾斜方向。
@@ -566,6 +567,37 @@ function getShockwaveTethers(mechanics: MechanicSnapshot[]): ShockwaveTether[] {
   return mechanics.filter(isShockwaveTether).sort((left, right) => left.id.localeCompare(right.id));
 }
 
+function setRoundBotTetherTransferTargets(
+  ctx: BattleScriptContext,
+  activeRound: ActiveProgramRound,
+  assignments: ProgramAssignments,
+): void {
+  const actors = ctx.select.allPlayers();
+  const activeTethers = getShockwaveTethers(ctx.mechanics.all());
+  const tetherSlots = getProgramSlotsByPriority(assignments, activeRound.tetherNumber);
+
+  tetherSlots.forEach((slot, tetherIndex) => {
+    const tether = activeTethers[tetherIndex];
+
+    if (tether === undefined) {
+      return;
+    }
+
+    const currentActor = getActorById(actors, tether.targetId);
+    const expectedActor = getActorBySlot(actors, slot);
+
+    if (currentActor === null) {
+      return;
+    }
+
+    ctx.mechanics.setTetherBotTransferSequence(tether.id, [
+      currentActor,
+      expectedActor,
+      expectedActor,
+    ]);
+  });
+}
+
 function getTetherLane(
   slot: PartySlot,
   round: ProgramRound,
@@ -867,7 +899,10 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
           ctx.state.getValue<ActiveProgramRound[]>('top:rounds') ?? createFallbackRounds(),
           round.index,
         );
+        const assignments =
+          ctx.state.getValue<ProgramAssignments>('top:assignments') ?? DEFAULT_ASSIGNMENTS;
         ctx.state.setValue('top:activeRound', activeRound.index);
+        setRoundBotTetherTransferTargets(ctx, activeRound, assignments);
 
         for (const towerPosition of activeRound.towerPositions) {
           ctx.spawn.tower({
@@ -987,6 +1022,7 @@ export const TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER: BattleBotController = ({
   const botTetherLanes = getBotTetherLanesFromScriptState(snapshot.scriptState);
   const heldLane = getHeldTetherLane(actor.id, tethers);
   let target = getWaitingPoint(slot, round, assignments);
+  let stopDistance: number | undefined;
 
   if (round !== null && assignments !== null) {
     const tetherLane = getTetherLane(slot, round, assignments);
@@ -1008,6 +1044,7 @@ export const TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER: BattleBotController = ({
           : getTetherStagingTarget(tetherTarget);
       } else if (nextBotTetherSlot === slot) {
         target = createTetherCrossingTarget(actor.position, pickupTarget);
+        stopDistance = BOT_TETHER_PICKUP_STOP_DISTANCE;
       } else {
         target = getTowerTarget(slot, round, assignments) ?? target;
       }
@@ -1020,6 +1057,6 @@ export const TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER: BattleBotController = ({
   }
 
   return {
-    pose: createPose(actor, createMoveDirection(actor.position, target), faceAngle),
+    pose: createPose(actor, createMoveDirection(actor.position, target, stopDistance), faceAngle),
   };
 };

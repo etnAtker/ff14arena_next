@@ -210,15 +210,27 @@ test('通用连线：玩家单 tick 穿过连线时也能完成传递', () => {
   });
   simulation.start();
   simulation.tick(50);
+  simulation.drainEvents();
 
   const receiver = simulation.getSnapshot().actors.find((actor) => actor.slot === 'ST');
   assert.ok(receiver);
   submitPose(simulation, receiver, { x: 1, y: 5 }, 1);
   simulation.tick(50);
+  const events = simulation.drainEvents();
 
   const tether = simulation.getSnapshot().mechanics.find((mechanic) => mechanic.kind === 'tether');
   assert.ok(tether);
   assert.equal(tether.targetId, receiver.id);
+  assert.deepEqual(
+    events.filter((event) => event.type === 'tetherTransferred').map((event) => event.payload),
+    [
+      {
+        mechanicId: tether.id,
+        previousTargetId: 'player_MT',
+        targetId: receiver.id,
+      },
+    ],
+  );
 });
 
 test('通用连线：玩家无需白名单即可误穿接线', () => {
@@ -480,6 +492,16 @@ test('欧米茄绝境战 P1 循环程序：Bot 不会提前接走非自身轮次
 
   assert.equal(result?.outcome, 'success');
   assert.deepEqual(result?.failureReasons, []);
+});
+
+test('欧米茄绝境战 P1 循环程序：Bot 接线回归样本可以完成机制', () => {
+  for (const seed of [19, 121, 144, 185, 204, 215]) {
+    const snapshot = runTopProgramLoopWithBots(createSeededRandomValues(seed, 64));
+    const result = snapshot.latestResult;
+
+    assert.equal(result?.outcome, 'success', `seed ${seed}: ${result?.failureReasons.join(',')}`);
+    assert.deepEqual(result?.failureReasons, [], `seed ${seed}`);
+  }
 });
 
 test('欧米茄绝境战 P1 循环程序：Bot 接到当前轮连线后先在 10m 点等待', () => {

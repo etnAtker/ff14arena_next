@@ -16,6 +16,7 @@ import type {
   SimulationSnapshot,
   StatusAppliedEvent,
   StatusId,
+  TetherTransferredEvent,
   Vector2,
 } from '@ff14arena/shared';
 import {
@@ -616,6 +617,23 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
   function updateTethers(previousActorPositions: Map<string, Vector2>): void {
     const currentState = assertState(state);
 
+    function transferTetherTarget(
+      mechanic: Extract<MechanicSnapshot, { kind: 'tether' }>,
+      nextTarget: BaseActorSnapshot,
+    ): void {
+      const previousTargetId = mechanic.targetId;
+      mechanic.targetId = nextTarget.id;
+
+      emit<TetherTransferredEvent>({
+        type: 'tetherTransferred',
+        payload: {
+          mechanicId: mechanic.id,
+          previousTargetId,
+          targetId: nextTarget.id,
+        },
+      });
+    }
+
     function canTransferToActor(
       mechanic: Extract<MechanicSnapshot, { kind: 'tether' }>,
       actor: BaseActorSnapshot,
@@ -689,7 +707,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           continue;
         }
 
-        mechanic.targetId = fallback.id;
+        transferTetherTarget(mechanic, fallback);
         target = fallback;
         if (fallback.kind === 'bot') {
           currentState.botTetherReadyAt.set(
@@ -735,7 +753,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         continue;
       }
 
-      mechanic.targetId = nextTarget.id;
+      transferTetherTarget(mechanic, nextTarget);
       if (nextTarget.kind === 'bot') {
         currentState.botTetherReadyAt.set(
           mechanic.id,
@@ -1057,6 +1075,15 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           return [...assertState(state).mechanics.values()].map((mechanic) =>
             structuredClone(mechanic),
           );
+        },
+        setTetherBotTransferSequence(mechanicId, targets) {
+          const mechanic = assertState(state).mechanics.get(mechanicId);
+
+          if (mechanic?.kind !== 'tether') {
+            return;
+          }
+
+          mechanic.botTransferSequenceIds = targets.map((target) => target.id);
         },
       },
       damage: {

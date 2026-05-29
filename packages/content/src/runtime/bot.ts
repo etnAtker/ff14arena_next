@@ -26,13 +26,17 @@ export interface BattleBotControlFrame {
 
 export type BattleBotController = (context: BattleBotControllerContext) => BattleBotControlFrame;
 
-export function createMoveDirection(current: Vector2, target: Vector2): Vector2 {
+export function createMoveDirection(
+  current: Vector2,
+  target: Vector2,
+  stopDistance = 0.35,
+): Vector2 {
   const delta = {
     x: target.x - current.x,
     y: target.y - current.y,
   };
 
-  if (Math.hypot(delta.x, delta.y) <= 0.35) {
+  if (Math.hypot(delta.x, delta.y) <= stopDistance) {
     return {
       x: 0,
       y: 0,
