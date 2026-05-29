@@ -1221,7 +1221,6 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             readyAt: 0,
           },
           online: member.online ?? member.kind === 'bot',
-          ready: member.ready ?? member.kind === 'bot',
         };
 
         if (

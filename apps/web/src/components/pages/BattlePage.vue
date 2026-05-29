@@ -22,6 +22,8 @@ import BattleStage from '../battle/BattleStage.vue';
 const MIN_ZOOM = 0.7;
 const MAX_ZOOM = 2.4;
 const HUD_TICK_MS = 100;
+const MIN_START_COUNTDOWN_SECONDS = 1;
+const MAX_START_COUNTDOWN_SECONDS = 30;
 
 const props = defineProps<{
   room: RoomStateDto | null;
@@ -33,8 +35,10 @@ const props = defineProps<{
   operationMode: OperationMode;
   isOwner: boolean;
   isSpectating: boolean;
-  currentReady: boolean;
   canStart: boolean;
+  startCountdownSeconds: number;
+  serverCountdownSeconds: number | null;
+  battleStartNoticeUntilMs: number;
   logs: string[];
   latestResult: EncounterResult | null;
   operationModeOptions: SelectOption[];
@@ -44,8 +48,8 @@ const emit = defineEmits<{
   useKnockbackImmune: [currentTimeMs: number];
   useSprint: [currentTimeMs: number];
   spectate: [];
-  startBattle: [];
-  setReady: [];
+  startBattle: [countdownMs: number];
+  startCountdownSecondsChange: [seconds: number];
   switchSlot: [slot: PartySlot];
   resetZoom: [];
   cameraYawChange: [yaw: number];
@@ -147,7 +151,28 @@ const sprintButtonLabel = computed(() => {
     currentTimeMs: renderSimulationTimeMs.value,
   });
 });
-const spectateButtonLabel = computed(() => (props.isOwner && props.isSpectating ? '开始' : '观战'));
+const showBattleStartNotice = computed(
+  () => props.battleStartNoticeUntilMs > 0 && hudNowMs.value < props.battleStartNoticeUntilMs,
+);
+const countdownBannerText = computed(() => {
+  if (showBattleStartNotice.value) {
+    return '战斗开始！';
+  }
+
+  if (props.serverCountdownSeconds === null) {
+    return null;
+  }
+
+  return props.serverCountdownSeconds <= 0 ? '战斗开始！' : String(props.serverCountdownSeconds);
+});
+const isStartCountdownActive = computed(() => props.room?.startCountdown != null);
+const spectateButtonLabel = computed(() => {
+  if (props.isOwner && props.isSpectating) {
+    return isStartCountdownActive.value ? '倒计时中' : '开始';
+  }
+
+  return '观战';
+});
 const spectateButtonType = computed(() =>
   props.isOwner && props.isSpectating ? 'warning' : 'info',
 );
@@ -163,7 +188,7 @@ const spectateButtonDisabled = computed(() => {
 
 function handleSpectateButton(): void {
   if (props.isOwner && props.isSpectating) {
-    emit('startBattle');
+    emit('startBattle', props.startCountdownSeconds * 1_000);
     return;
   }
 
@@ -174,9 +199,9 @@ function getSlotState(slot: PartySlot) {
   return slotMap.value.get(slot) ?? null;
 }
 
-function getReadyTag(slot: PartySlot): {
+function getOwnerTag(slot: PartySlot): {
   label: string;
-  type: 'default' | 'success' | 'warning';
+  type: 'default';
 } | null {
   const slotState = getSlotState(slot);
 
@@ -191,15 +216,7 @@ function getReadyTag(slot: PartySlot): {
     };
   }
 
-  return slotState.ready
-    ? {
-        label: '已准备',
-        type: 'success',
-      }
-    : {
-        label: '未准备',
-        type: 'warning',
-      };
+  return null;
 }
 
 function getActor(slot: PartySlot) {
@@ -238,10 +255,14 @@ function getSlotButtonLabel(slot: PartySlot): string {
 
   if (slot === props.currentPlayerSlot) {
     if (props.isOwner) {
-      return props.snapshot?.phase === 'running' ? '房主' : '开始';
+      if (props.snapshot?.phase === 'running') {
+        return '房主';
+      }
+
+      return isStartCountdownActive.value ? '倒计时中' : '开始';
     }
 
-    return props.currentReady ? '已准备' : '准备';
+    return '自己';
   }
 
   return '切换';
@@ -259,7 +280,7 @@ function getSlotButtonType(
       return 'warning';
     }
 
-    return 'success';
+    return 'default';
   }
 
   return 'info';
@@ -275,7 +296,7 @@ function isSlotButtonDisabled(slot: PartySlot): boolean {
       return props.snapshot?.phase !== 'waiting' || !props.canStart;
     }
 
-    return props.snapshot?.phase !== 'waiting' || props.currentReady;
+    return true;
   }
 
   return props.snapshot?.phase !== 'waiting';
@@ -289,11 +310,10 @@ function handleSlotAction(slot: PartySlot): void {
 
   if (slot === props.currentPlayerSlot) {
     if (props.isOwner) {
-      emit('startBattle');
+      emit('startBattle', props.startCountdownSeconds * 1_000);
       return;
     }
 
-    emit('setReady');
     return;
   }
 
@@ -314,6 +334,17 @@ function handleZoomInput(value: number | null): void {
   }
 
   emit('cameraZoomChange', Math.min(Math.max(value, MIN_ZOOM), MAX_ZOOM));
+}
+
+function handleStartCountdownSecondsInput(value: number | null): void {
+  if (value === null || Number.isNaN(value)) {
+    return;
+  }
+
+  emit(
+    'startCountdownSecondsChange',
+    Math.min(Math.max(Math.round(value), MIN_START_COUNTDOWN_SECONDS), MAX_START_COUNTDOWN_SECONDS),
+  );
 }
 
 function tickHudClock(): void {
@@ -415,15 +446,15 @@ onBeforeUnmount(() => {
               }}
               ·
               {{ getSlotRole(slot).toUpperCase() }}
-              <template v-if="getReadyTag(slot) !== null">
+              <template v-if="getOwnerTag(slot) !== null">
                 ·
                 <n-tag
-                  class="ready-tag"
-                  :type="getReadyTag(slot)!.type"
+                  class="owner-tag"
+                  :type="getOwnerTag(slot)!.type"
                   size="small"
                   :bordered="false"
                 >
-                  {{ getReadyTag(slot)!.label }}
+                  {{ getOwnerTag(slot)!.label }}
                 </n-tag>
               </template>
             </span>
@@ -453,6 +484,23 @@ onBeforeUnmount(() => {
               </h2>
             </div>
             <div class="stage-meta">
+              <div
+                v-if="props.isOwner && props.snapshot?.phase === 'waiting'"
+                class="countdown-control"
+              >
+                <span class="countdown-label">倒计时</span>
+                <n-input-number
+                  size="small"
+                  class="countdown-input"
+                  :min="MIN_START_COUNTDOWN_SECONDS"
+                  :max="MAX_START_COUNTDOWN_SECONDS"
+                  :step="1"
+                  :precision="0"
+                  :disabled="isStartCountdownActive"
+                  :value="props.startCountdownSeconds"
+                  @update:value="handleStartCountdownSecondsInput"
+                />
+              </div>
               <n-button
                 secondary
                 strong
@@ -512,6 +560,9 @@ onBeforeUnmount(() => {
             />
 
             <div v-if="!props.snapshot" class="empty-stage">等待战斗场景数据</div>
+            <div v-if="countdownBannerText !== null" class="countdown-banner">
+              <div class="countdown-banner-value">{{ countdownBannerText }}</div>
+            </div>
           </div>
 
           <div class="stage-actions">
@@ -725,7 +776,7 @@ onBeforeUnmount(() => {
   color: rgba(246, 239, 228, 0.7);
 }
 
-.ready-tag {
+.owner-tag {
   height: 18px;
   line-height: 18px;
   font-size: 11px;
@@ -763,6 +814,31 @@ onBeforeUnmount(() => {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+}
+
+.countdown-banner {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at center,
+    rgba(0, 0, 0, 0.2),
+    rgba(0, 0, 0, 0.04) 44%,
+    transparent 68%
+  );
+}
+
+.countdown-banner-value {
+  color: #fff7e8;
+  font-size: 76px;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow:
+    0 4px 18px rgba(0, 0, 0, 0.62),
+    0 0 32px rgba(240, 208, 139, 0.46);
 }
 
 .stage-actions {
@@ -897,6 +973,23 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   min-width: 0;
   justify-content: flex-end;
+}
+
+.countdown-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.countdown-label {
+  color: rgba(246, 239, 228, 0.72);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.countdown-input {
+  width: 86px;
 }
 
 .eyebrow {

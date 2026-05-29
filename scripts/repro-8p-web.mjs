@@ -12,6 +12,8 @@ const DEFAULT_BASE_URL = 'http://127.0.0.1:5173';
 const DEFAULT_HOLD_MS = 3_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MOVE_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyW', 'KeyA', 'KeyS', 'KeyD'];
+const CAMERA_DRAG_DELTA_X = 240;
+const DRAG_ROTATION_SENSITIVITY = 0.005;
 const KEY_TEXT = {
   KeyW: 'w',
   KeyA: 'a',
@@ -189,12 +191,18 @@ function createClientStats(index) {
     lastMovingPosition: null,
     lastInputPosition: null,
     lastInputDirection: null,
+    preStartLastInputDirection: null,
+    postStartLastInputDirection: null,
+    preStartLastMovingInputDirection: null,
+    postStartLastMovingInputDirection: null,
     sentInputActorIds: new Set(),
     sentMoveDirections: new Set(),
     receivedMovedActorIds: new Set(),
     receivedMovedSlots: new Set(),
     startSnapshot: null,
+    countdownResetSnapshot: null,
     latestSnapshot: null,
+    latestSnapshotSyncId: 0,
     lastRoomId: null,
     errors: [],
   };
@@ -229,6 +237,19 @@ function recordPacket(stats, packet, actorSlotById) {
         x: Number(direction.x.toFixed(3)),
         y: Number(direction.y.toFixed(3)),
       };
+      const isMovingDirection = Math.hypot(direction.x, direction.y) > 0.001;
+
+      if (stats.startSnapshot === null) {
+        stats.preStartLastInputDirection = stats.lastInputDirection;
+        if (isMovingDirection) {
+          stats.preStartLastMovingInputDirection = stats.lastInputDirection;
+        }
+      } else {
+        stats.postStartLastInputDirection = stats.lastInputDirection;
+        if (isMovingDirection) {
+          stats.postStartLastMovingInputDirection = stats.lastInputDirection;
+        }
+      }
     }
     if (typeof packet.payload?.actorId === 'string') {
       stats.sentInputActorIds.add(packet.payload.actorId);
@@ -271,7 +292,14 @@ function recordPacket(stats, packet, actorSlotById) {
 
   if (packet.eventName === 'sim:snapshot') {
     stats.latestSnapshot = packet.payload?.snapshot ?? null;
+    if (typeof packet.payload?.syncId === 'number') {
+      stats.latestSnapshotSyncId = Math.max(stats.latestSnapshotSyncId, packet.payload.syncId);
+    }
     stats.lastRoomId = packet.payload?.roomId ?? stats.lastRoomId;
+
+    if (packet.payload?.reason === 'waiting-state' && stats.latestSnapshot?.phase === 'waiting') {
+      stats.countdownResetSnapshot = stats.latestSnapshot;
+    }
 
     for (const actor of stats.latestSnapshot?.actors ?? []) {
       if (typeof actor.id === 'string' && typeof actor.slot === 'string') {
@@ -394,12 +422,8 @@ async function joinRoomFromUi(page, roomName) {
   const roomRow = page.locator('.room-row').filter({
     hasText: roomName,
   });
-  await roomRow.getByRole('button', { name: '加入' }).click();
+  await roomRow.getByRole('button', { name: '加入', exact: true }).click();
   await page.getByText(roomName).waitFor();
-}
-
-async function clickReady(page) {
-  await page.getByRole('button', { name: '准备' }).click();
 }
 
 async function clickStart(page) {
@@ -423,6 +447,23 @@ async function dispatchKey(page, type, code) {
       eventKey: KEY_TEXT[code],
     },
   );
+}
+
+async function dragCamera(page) {
+  const stage = page.locator('.battle-stage');
+  const box = await stage.boundingBox();
+
+  if (box === null) {
+    throw new Error('找不到战斗场地，无法拖动镜头');
+  }
+
+  const startX = box.x + box.width / 2;
+  const startY = box.y + box.height / 2;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down({ button: 'left' });
+  await page.mouse.move(startX + CAMERA_DRAG_DELTA_X, startY, { steps: 12 });
+  await page.mouse.up({ button: 'left' });
+  await page.waitForTimeout(100);
 }
 
 function countChangedActors(startSnapshot, latestSnapshot) {
@@ -459,6 +500,31 @@ function countChangedActors(startSnapshot, latestSnapshot) {
   };
 }
 
+function countMovedBetween(fromSnapshot, toSnapshot) {
+  return countChangedActors(fromSnapshot, toSnapshot);
+}
+
+function findActorBySlot(snapshot, slot) {
+  return snapshot?.actors.find((actor) => actor.slot === slot) ?? null;
+}
+
+function expectedTraditionalForwardDirection(facing, cameraDragDeltaX) {
+  const cameraYaw = facing + Math.PI / 2 + cameraDragDeltaX * DRAG_ROTATION_SENSITIVITY;
+
+  return {
+    x: Number(Math.sin(cameraYaw).toFixed(3)),
+    y: Number((-Math.cos(cameraYaw)).toFixed(3)),
+  };
+}
+
+function directionDistance(left, right) {
+  if (left === null || right === null) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return Math.hypot(left.x - right.x, left.y - right.y);
+}
+
 async function captureArtifacts(clients, artifactsDir) {
   await mkdir(artifactsDir, { recursive: true });
   await Promise.all(
@@ -473,6 +539,17 @@ async function captureArtifacts(clients, artifactsDir) {
 
 function createSummary(options, roomName, observerStats, allStats) {
   const changed = countChangedActors(observerStats.startSnapshot, observerStats.latestSnapshot);
+  const preStartChanged = countMovedBetween(
+    observerStats.countdownResetSnapshot,
+    observerStats.startSnapshot,
+  );
+  const ownerSlot = PARTY_SLOT_ORDER[0];
+  const ownerCountdownActor = findActorBySlot(observerStats.countdownResetSnapshot, ownerSlot);
+  const expectedOwnerPostStartDirection =
+    ownerCountdownActor === null
+      ? null
+      : expectedTraditionalForwardDirection(ownerCountdownActor.facing, CAMERA_DRAG_DELTA_X);
+  const ownerStats = allStats[0];
 
   return {
     baseUrl: options.baseUrl,
@@ -488,6 +565,10 @@ function createSummary(options, roomName, observerStats, allStats) {
       lastMovingPosition: stats.lastMovingPosition,
       lastInputPosition: stats.lastInputPosition,
       lastInputDirection: stats.lastInputDirection,
+      preStartLastInputDirection: stats.preStartLastInputDirection,
+      postStartLastInputDirection: stats.postStartLastInputDirection,
+      preStartLastMovingInputDirection: stats.preStartLastMovingInputDirection,
+      postStartLastMovingInputDirection: stats.postStartLastMovingInputDirection,
       sentInputActorIds: [...stats.sentInputActorIds],
       sentMoveDirections: [...stats.sentMoveDirections],
       receivedMovedActorCount: stats.receivedMovedActorIds.size,
@@ -496,11 +577,20 @@ function createSummary(options, roomName, observerStats, allStats) {
     })),
     observer: {
       startActorCount: observerStats.startSnapshot?.actors.length ?? 0,
+      countdownResetActorCount: observerStats.countdownResetSnapshot?.actors.length ?? 0,
       latestSnapshotTick: observerStats.latestSnapshot?.tick ?? null,
+      preStartChangedActorCount: preStartChanged.count,
+      preStartChangedSlots: preStartChanged.slots,
       movedEventActorCount: observerStats.receivedMovedActorIds.size,
       movedEventSlots: [...observerStats.receivedMovedSlots].sort(),
       changedSnapshotActorCount: changed.count,
       changedSnapshotSlots: changed.slots,
+      expectedOwnerPostStartDirection,
+      ownerPostStartDirection: ownerStats.postStartLastMovingInputDirection,
+      ownerPostStartDirectionDistance: directionDistance(
+        ownerStats.postStartLastMovingInputDirection,
+        expectedOwnerPostStartDirection,
+      ),
     },
   };
 }
@@ -527,8 +617,28 @@ async function main() {
       await joinRoomFromUi(clients[index].page, roomName);
     }
 
-    await Promise.all(clients.slice(1).map(({ page }) => clickReady(page)));
+    const beforeStartSyncIds = allStats.map((stats) => stats.latestSnapshotSyncId);
     await clickStart(clients[0].page);
+
+    await waitUntil(
+      '等待全部客户端收到倒计时重置快照',
+      () =>
+        allStats.every(
+          (stats, index) =>
+            stats.countdownResetSnapshot?.phase === 'waiting' &&
+            stats.latestSnapshotSyncId > beforeStartSyncIds[index],
+        ),
+      options,
+    );
+
+    await Promise.all(
+      clients.map(({ page }, index) => dispatchKey(page, 'keydown', MOVE_KEYS[index])),
+    );
+    await sleep(options.holdMs);
+    await Promise.all(
+      clients.map(({ page }, index) => dispatchKey(page, 'keyup', MOVE_KEYS[index])),
+    );
+    await dragCamera(clients[0].page);
 
     await waitUntil(
       '等待全部客户端 sim:start',
@@ -554,8 +664,10 @@ async function main() {
     const summary = createSummary(options, roomName, allStats[0], allStats);
     const ok =
       summary.clients.every((client) => client.sentInputFrames > 0) &&
+      summary.observer.preStartChangedActorCount === PARTY_SLOT_ORDER.length &&
       summary.observer.movedEventActorCount === PARTY_SLOT_ORDER.length &&
-      summary.observer.changedSnapshotActorCount === PARTY_SLOT_ORDER.length;
+      summary.observer.changedSnapshotActorCount === PARTY_SLOT_ORDER.length &&
+      summary.observer.ownerPostStartDirectionDistance <= 0.15;
 
     console.log(JSON.stringify(summary, null, 2));
 

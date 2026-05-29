@@ -13,13 +13,13 @@
 
 - `room:join`
 - `room:leave`
-- `room:ready`
 - `room:select-battle`
 - `room:switch-slot`
 - `room:spectate`
 - `room:start`
 - `sim:input-frame`
 - `sim:use-knockback-immune`
+- `sim:use-sprint`
 - `sim:request-resync`
 
 ## 服务端到客户端
@@ -28,6 +28,7 @@
 
 - `room:state`
 - `room:slots`
+- `room:countdown`
 - `sim:start`
 - `sim:snapshot`
 - `sim:events`
@@ -37,6 +38,9 @@
 ## 协议规则
 
 - 所有房间内消息都带 `roomId`
+- `room:start` 可携带 `countdownMs`，服务端校验后进入开始倒计时
+- `room:state` 携带当前 `startCountdown`，客户端据此显示全员倒计时
+- `room:countdown` 由服务端每秒广播当前应显示的整数秒数，客户端不自行推算倒计时数字
 - 所有模拟输入都带当前 `syncId`
 - 连续覆盖型输入统一通过 `sim:input-frame` 发送，载荷为绝对位姿样本
 - `sim:input-frame` 在 `waiting` 与 `running` 中永远共用同一套移动链路

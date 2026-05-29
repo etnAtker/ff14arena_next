@@ -68,6 +68,8 @@ export const useAppStore = defineStore('app', () => {
   const logs = ref<string[]>([]);
   const currentSyncId = ref(0);
   const facingPreview = ref<FacingPreviewState | null>(null);
+  const serverCountdownSeconds = ref<number | null>(null);
+  const battleStartNoticeUntilMs = ref(0);
   const lastResyncRequestedAt = ref(0);
   const transportProbeLatencyMs = ref(0);
   const localControlledPose = ref<LocalControlledPose | null>(null);
@@ -177,6 +179,8 @@ export const useAppStore = defineStore('app', () => {
 
   function resetBattleState(options?: { clearLogs?: boolean }): void {
     resetSyncState();
+    serverCountdownSeconds.value = null;
+    battleStartNoticeUntilMs.value = 0;
 
     if (options?.clearLogs ?? true) {
       logs.value = [];
@@ -286,6 +290,7 @@ export const useAppStore = defineStore('app', () => {
 
     if (syncId > currentSyncId.value) {
       currentSyncId.value = syncId;
+      authoritativeSnapshot.value = null;
       clearLocalControlledPose();
       clearFacingPreview();
     }
@@ -479,6 +484,14 @@ export const useAppStore = defineStore('app', () => {
         loadLobbyData().catch(() => undefined);
       });
 
+      nextSocket.on('room:countdown', (payload) => {
+        if (room.value?.roomId !== payload.roomId) {
+          return;
+        }
+
+        serverCountdownSeconds.value = payload.remainingSeconds;
+      });
+
       nextSocket.on('sim:start', (payload) => {
         if (room.value?.roomId !== payload.roomId) {
           return;
@@ -492,6 +505,8 @@ export const useAppStore = defineStore('app', () => {
         clearLocalControlledPose();
         clearFacingPreview();
         logs.value = [];
+        serverCountdownSeconds.value = null;
+        battleStartNoticeUntilMs.value = performance.now() + 1_000;
         appendLog(`开始模拟：${payload.snapshot.battleName}`);
       });
 
@@ -632,18 +647,6 @@ export const useAppStore = defineStore('app', () => {
     loadLobbyData().catch(() => undefined);
   }
 
-  async function setReady(ready: boolean): Promise<void> {
-    if (room.value === null) {
-      return;
-    }
-
-    const currentSocket = socket.value ?? (await ensureSocket());
-    currentSocket.emit('room:ready', {
-      roomId: room.value.roomId,
-      ready,
-    });
-  }
-
   async function selectBattle(battleId: string): Promise<void> {
     if (room.value === null) {
       return;
@@ -682,7 +685,7 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
-  async function startBattle(): Promise<void> {
+  async function startBattle(countdownMs?: number): Promise<void> {
     if (room.value === null) {
       return;
     }
@@ -690,6 +693,7 @@ export const useAppStore = defineStore('app', () => {
     const currentSocket = socket.value ?? (await ensureSocket());
     currentSocket.emit('room:start', {
       roomId: room.value.roomId,
+      ...(countdownMs === undefined ? {} : { countdownMs }),
     });
   }
 
@@ -1114,6 +1118,8 @@ export const useAppStore = defineStore('app', () => {
     connected,
     latencyDisplay,
     logs,
+    serverCountdownSeconds,
+    battleStartNoticeUntilMs,
     currentPlayerSlot,
     currentSpectator,
     isSpectating,
@@ -1123,7 +1129,6 @@ export const useAppStore = defineStore('app', () => {
     createRoom,
     joinRoom,
     leaveRoom,
-    setReady,
     selectBattle,
     switchSlot,
     spectate,

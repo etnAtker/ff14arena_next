@@ -76,8 +76,9 @@ const {
   latencyDisplay,
   serverError,
   currentPlayerSlot,
-  currentSpectator,
   isSpectating,
+  serverCountdownSeconds,
+  battleStartNoticeUntilMs,
   page,
 } = storeToRefs(store);
 
@@ -87,6 +88,7 @@ const editUserName = ref(profile.value.userName);
 const operationMode = ref<OperationMode>(loadOperationMode());
 const cameraYaw = ref(0);
 const cameraZoom = ref(1);
+const startCountdownSeconds = ref(5);
 const isMetricsRoute = window.location.pathname === '/metrics';
 const lastTraditionalFacing = ref<number | null>(null);
 const pendingPointerFacing = ref<number | null>(null);
@@ -108,30 +110,12 @@ const currentActor = computed(() => {
 
   return snapshot.value?.actors.find((actor) => actor.slot === currentPlayerSlot.value) ?? null;
 });
-const currentReady = computed(() => {
-  if (room.value === null) {
-    return false;
-  }
-
-  if (currentPlayerSlot.value !== null) {
-    return room.value.slots.find((slot) => slot.slot === currentPlayerSlot.value)?.ready ?? false;
-  }
-
-  return currentSpectator.value?.ready ?? false;
-});
 const canStart = computed(() => {
   if (!isOwner.value || room.value === null || snapshot.value?.phase !== 'waiting') {
     return false;
   }
 
-  if (room.value.battleId === null) {
-    return false;
-  }
-
-  return room.value.slots.every(
-    (slot) =>
-      slot.occupantType !== 'player' || slot.ownerUserId === room.value?.ownerUserId || slot.ready,
-  );
+  return room.value.battleId !== null && room.value.startCountdown === null;
 });
 const latestResult = computed(
   () => snapshot.value?.latestResult ?? room.value?.latestResult ?? null,
@@ -289,8 +273,9 @@ watch(
   () => [snapshot.value?.tick, snapshot.value?.phase] as const,
   ([tick, phase], [, previousPhase]) => {
     const isBattleEndSnapshot = previousPhase === 'running' && phase === 'waiting';
+    const isBattleStartSnapshot = previousPhase === 'waiting' && phase === 'running';
 
-    if (snapshot.value !== null && tick === 0 && !isBattleEndSnapshot) {
+    if (snapshot.value !== null && tick === 0 && !isBattleEndSnapshot && !isBattleStartSnapshot) {
       cameraYaw.value =
         currentActor.value === null ? 0 : getCameraYawForFacing(currentActor.value.facing);
       cameraZoom.value = 1;
@@ -302,15 +287,17 @@ watch(
 watch(
   () => [currentPlayerSlot.value, snapshot.value?.battleId, snapshot.value?.phase],
   ([slot, battleId, phase], [previousSlot, previousBattleId, previousPhase]) => {
+    const isSameControlledContext = slot === previousSlot && battleId === previousBattleId;
+
     if (
       currentActor.value === null ||
       slot === null ||
-      (slot === previousSlot && battleId === previousBattleId && phase === previousPhase)
+      (isSameControlledContext && phase === previousPhase)
     ) {
       return;
     }
 
-    if (previousPhase === 'running' && phase === 'waiting') {
+    if (isSameControlledContext) {
       resetFacingInputState();
       return;
     }
@@ -445,8 +432,10 @@ onBeforeUnmount(() => {
             :operation-mode="operationMode"
             :is-owner="isOwner"
             :is-spectating="isSpectating"
-            :current-ready="currentReady"
             :can-start="canStart"
+            :start-countdown-seconds="startCountdownSeconds"
+            :server-countdown-seconds="serverCountdownSeconds"
+            :battle-start-notice-until-ms="battleStartNoticeUntilMs"
             :logs="logs"
             :latest-result="latestResult"
             :operation-mode-options="[
@@ -457,8 +446,8 @@ onBeforeUnmount(() => {
             @use-knockback-immune="store.useKnockbackImmune($event)"
             @use-sprint="store.useSprint($event)"
             @spectate="store.spectate"
-            @start-battle="store.startBattle"
-            @set-ready="store.setReady(true)"
+            @start-battle="store.startBattle($event)"
+            @start-countdown-seconds-change="startCountdownSeconds = $event"
             @switch-slot="store.switchSlot($event)"
             @reset-zoom="resetCameraZoom"
             @camera-yaw-change="updateCameraYaw"

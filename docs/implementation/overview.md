@@ -51,7 +51,7 @@
   [packages/content/src/index.ts](/home/etnatker/workspace/code/ff14arena_next/packages/content/src/index.ts)
 
 - `apps/server`
-  房间与权威模拟托管，负责房间生命周期、加入离开、准备、开始、重开、断线重连和同步广播
+  房间与权威模拟托管，负责房间生命周期、加入离开、开始倒计时、重开、断线重连和同步广播
   入口：
   [app.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/app.ts),
   [room-manager.ts](/home/etnatker/workspace/code/ff14arena_next/apps/server/src/room-manager.ts),

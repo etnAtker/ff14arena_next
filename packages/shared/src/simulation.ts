@@ -62,7 +62,6 @@ export interface BaseActorSnapshot {
   deathReason: string | null;
   lastDamageSource: string | null;
   online?: boolean;
-  ready?: boolean;
 }
 
 export interface BossSnapshot extends BaseActorSnapshot {

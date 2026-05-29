@@ -9,7 +9,6 @@ export interface PlayerSlotOccupant {
   name: string;
   socketId: string | null;
   online: boolean;
-  ready: boolean;
   departed: boolean;
 }
 
@@ -17,7 +16,6 @@ export interface BotSlotOccupant {
   type: 'bot';
   actorId: string;
   name: string;
-  ready: true;
 }
 
 export type SlotOccupant = PlayerSlotOccupant | BotSlotOccupant;
@@ -27,7 +25,12 @@ export interface RoomSpectator {
   name: string;
   socketId: string | null;
   online: boolean;
-  ready: boolean;
+}
+
+export interface RoomStartCountdownRecord {
+  durationMs: number;
+  startedAt: number;
+  endsAt: number;
 }
 
 export interface RoomRecord {
@@ -46,6 +49,9 @@ export interface RoomRecord {
   latestResult: EncounterResult | null;
   pendingControlByActorId: Map<string, ActorControlFrame>;
   syncId: number;
+  startCountdown: RoomStartCountdownRecord | null;
+  startCountdownHandle: NodeJS.Timeout | null;
+  startCountdownTickHandle: NodeJS.Timeout | null;
 }
 
 export function createBotOccupant(roomId: string, slot: PartySlot): BotSlotOccupant {
@@ -53,7 +59,6 @@ export function createBotOccupant(roomId: string, slot: PartySlot): BotSlotOccup
     type: 'bot',
     actorId: `${roomId}:bot:${slot}`,
     name: `Bot ${slot}`,
-    ready: true,
   };
 }
 

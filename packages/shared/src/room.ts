@@ -8,7 +8,6 @@ export interface RoomSlotState {
   ownerUserId: string | null;
   name: string | null;
   online: boolean;
-  ready: boolean;
   currentHp: number | null;
   alive: boolean | null;
   knockbackImmune: boolean;
@@ -18,7 +17,12 @@ export interface RoomSpectatorState {
   userId: string;
   name: string;
   online: boolean;
-  ready: boolean;
+}
+
+export interface RoomStartCountdownState {
+  durationMs: number;
+  startedAt: number;
+  endsAt: number;
 }
 
 export interface RoomStateDto {
@@ -31,6 +35,7 @@ export interface RoomStateDto {
   phase: RoomPhase;
   slots: RoomSlotState[];
   spectators: RoomSpectatorState[];
+  startCountdown: RoomStartCountdownState | null;
   latestResult: EncounterResult | null;
 }
 

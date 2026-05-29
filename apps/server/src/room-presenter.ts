@@ -62,6 +62,7 @@ export function createRoomState(room: RoomRecord): RoomStateDto {
     phase: room.phase,
     slots: createRoomSlots(room),
     spectators: createRoomSpectators(room),
+    startCountdown: room.startCountdown,
     latestResult: room.latestResult,
   };
 }
@@ -71,7 +72,6 @@ export function createRoomSpectators(room: RoomRecord): RoomSpectatorState[] {
     userId: spectator.userId,
     name: spectator.name,
     online: spectator.online,
-    ready: spectator.ready,
   }));
 }
 
@@ -91,7 +91,6 @@ export function createRoomSlots(room: RoomRecord): RoomSlotState[] {
         ownerUserId: null,
         name: occupant.name,
         online: true,
-        ready: true,
         currentHp: actor?.currentHp ?? DEFAULT_PLAYER_MAX_HP,
         alive: actor?.alive ?? true,
         knockbackImmune: actor?.knockbackImmune ?? false,
@@ -105,7 +104,6 @@ export function createRoomSlots(room: RoomRecord): RoomSlotState[] {
       ownerUserId: occupant.userId,
       name: occupant.name,
       online: occupant.online,
-      ready: occupant.ready,
       currentHp: actor?.currentHp ?? DEFAULT_PLAYER_MAX_HP,
       alive: actor?.alive ?? true,
       knockbackImmune: actor?.knockbackImmune ?? false,
@@ -124,7 +122,6 @@ export function buildPartyBlueprint(room: RoomRecord): PartyMemberBlueprint[] {
         kind: 'bot',
         actorId: occupant.actorId,
         online: true,
-        ready: true,
       };
     }
 
@@ -135,7 +132,6 @@ export function buildPartyBlueprint(room: RoomRecord): PartyMemberBlueprint[] {
       actorId: occupant.actorId,
       ownerUserId: occupant.userId,
       online: occupant.online,
-      ready: occupant.ready,
     };
   });
 }

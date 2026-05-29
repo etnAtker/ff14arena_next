@@ -198,11 +198,6 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       roomManager.leaveRoom(socket, payload.roomId);
     });
 
-    socket.on('room:ready', (payload) => {
-      metrics.recordSocketInbound('room:ready');
-      roomManager.setReady(socket, payload.roomId, payload.ready);
-    });
-
     socket.on('room:select-battle', (payload) => {
       metrics.recordSocketInbound('room:select-battle');
       roomManager.selectBattle(socket, payload.roomId, payload.battleId);
@@ -220,7 +215,7 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
 
     socket.on('room:start', (payload) => {
       metrics.recordSocketInbound('room:start');
-      roomManager.startRoom(socket, payload.roomId);
+      roomManager.startRoom(socket, payload);
     });
 
     socket.on('sim:input-frame', (payload) => {

@@ -21,11 +21,6 @@ export interface RoomLeavePayload {
   roomId: string;
 }
 
-export interface RoomReadyPayload {
-  roomId: string;
-  ready: boolean;
-}
-
 export interface RoomSelectBattlePayload {
   roomId: string;
   battleId: string;
@@ -42,6 +37,7 @@ export interface RoomSpectatePayload {
 
 export interface RoomStartPayload {
   roomId: string;
+  countdownMs?: number;
 }
 
 export interface RoomStatePayload {
@@ -51,6 +47,11 @@ export interface RoomStatePayload {
 export interface RoomSlotsPayload {
   roomId: string;
   slots: RoomSlotState[];
+}
+
+export interface RoomCountdownPayload {
+  roomId: string;
+  remainingSeconds: number;
 }
 
 export interface SimStartPayload {
@@ -95,6 +96,7 @@ export interface ServerErrorPayload {
 export interface ServerToClientEvents {
   'room:state': (payload: RoomStatePayload) => void;
   'room:slots': (payload: RoomSlotsPayload) => void;
+  'room:countdown': (payload: RoomCountdownPayload) => void;
   'sim:start': (payload: SimStartPayload) => void;
   'sim:snapshot': (payload: SimSnapshotPayload) => void;
   'sim:events': (payload: SimEventsPayload) => void;
@@ -106,7 +108,6 @@ export interface ServerToClientEvents {
 export interface ClientToServerEvents {
   'room:join': (payload: RoomJoinPayload) => void;
   'room:leave': (payload: RoomLeavePayload) => void;
-  'room:ready': (payload: RoomReadyPayload) => void;
   'room:select-battle': (payload: RoomSelectBattlePayload) => void;
   'room:switch-slot': (payload: RoomSwitchSlotPayload) => void;
   'room:spectate': (payload: RoomSpectatePayload) => void;

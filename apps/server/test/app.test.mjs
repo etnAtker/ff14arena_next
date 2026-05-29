@@ -187,24 +187,25 @@ test('房间全流程：创建、立即加入、等待态快照、开始战斗',
     const waitingSnapshotAfterJoin = await guestWaitingSnapshotPromise;
     assert.equal(waitingSnapshotAfterJoin.snapshot.phase, 'waiting');
 
-    const allReadyPromise = waitForPayload(
+    const countdownPromise = waitForRoomState(
       owner,
-      'room:slots',
-      (payload) =>
-        payload.roomId === roomId &&
-        payload.slots.find((slot) => slot.slot === 'ST')?.ready === true,
+      (room) => room.roomId === roomId && room.startCountdown !== null,
     );
-    guest.emit('room:ready', {
-      roomId,
-      ready: true,
-    });
-    await allReadyPromise;
-
+    const countdownTickPromise = waitForPayload(
+      guest,
+      'room:countdown',
+      (payload) => payload.roomId === roomId && payload.remainingSeconds === 1,
+    );
     const startPromise = waitForEvent(owner, 'sim:start');
 
     owner.emit('room:start', {
       roomId,
+      countdownMs: 1000,
     });
+    const countdownRoom = await countdownPromise;
+    assert.equal(countdownRoom.startCountdown.durationMs, 1000);
+    const countdownTick = await countdownTickPromise;
+    assert.equal(countdownTick.remainingSeconds, 1);
 
     const startPayload = await startPromise;
     assert.equal(startPayload.roomId, roomId);
@@ -359,23 +360,17 @@ test('运行中断线后允许按原槽位重连，并向重连玩家下发权�
     );
     await guestWaitingSnapshotPromise;
 
-    const readyPromise = waitForPayload(
-      owner,
-      'room:slots',
-      (payload) =>
-        payload.roomId === roomId &&
-        payload.slots.find((slot) => slot.slot === 'ST')?.ready === true,
-    );
-    guest.emit('room:ready', {
-      roomId,
-      ready: true,
-    });
-    await readyPromise;
-
     const startPromise = waitForEvent(owner, 'sim:start');
+    const countdownTickPromise = waitForPayload(
+      owner,
+      'room:countdown',
+      (payload) => payload.roomId === roomId && payload.remainingSeconds === 1,
+    );
     owner.emit('room:start', {
       roomId,
+      countdownMs: 1000,
     });
+    await countdownTickPromise;
     const startPayload = await startPromise;
 
     const offlinePromise = waitForPayload(
@@ -580,10 +575,7 @@ test('槽位满员时仍允许从大厅直接加入观战', async () => {
       (room) =>
         room.roomId === roomId &&
         room.slots.every((slot) => slot.occupantType === 'player') &&
-        room.spectators.some(
-          (roomSpectator) =>
-            roomSpectator.userId === 'spectator-user' && roomSpectator.ready === false,
-        ),
+        room.spectators.some((roomSpectator) => roomSpectator.userId === 'spectator-user'),
     );
     spectator.emit('room:join', {
       roomId,
@@ -602,7 +594,7 @@ test('槽位满员时仍允许从大厅直接加入观战', async () => {
   }
 });
 
-test('房主观战后可以在未准备观战者存在时以 8 个 Bot 开始战斗', async () => {
+test('房主观战后可以以 8 个 Bot 开始战斗倒计时', async () => {
   const server = await startServer({
     host: '127.0.0.1',
     port: 0,
@@ -620,7 +612,7 @@ test('房主观战后可以在未准备观战者存在时以 8 个 Bot 开始战
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        name: '未准备观战开始测试',
+        name: '观战开始倒计时测试',
         ownerUserId: 'owner-user',
         ownerName: '房主',
         battleId,
@@ -655,9 +647,7 @@ test('房主观战后可以在未准备观战者存在时以 8 个 Bot 开始战
       owner,
       (room) =>
         room.roomId === roomId &&
-        room.spectators.some(
-          (spectator) => spectator.userId === 'guest-user' && spectator.ready === false,
-        ) &&
+        room.spectators.some((spectator) => spectator.userId === 'guest-user') &&
         room.slots.find((slot) => slot.slot === 'ST')?.occupantType === 'bot',
     );
     guest.emit('room:spectate', {
@@ -681,6 +671,7 @@ test('房主观战后可以在未准备观战者存在时以 8 个 Bot 开始战
     const startPromise = waitForEvent(owner, 'sim:start');
     owner.emit('room:start', {
       roomId,
+      countdownMs: 1000,
     });
     const startPayload = await startPromise;
     assert.equal(startPayload.snapshot.phase, 'running');
@@ -689,6 +680,175 @@ test('房主观战后可以在未准备观战者存在时以 8 个 Bot 开始战
       startPayload.snapshot.actors.every((actor) => actor.kind === 'bot'),
       true,
     );
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
+test('倒计时期间移动会保留到正式开战快照', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '倒计时移动保留测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const initialWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    const initialWaitingSnapshot = await initialWaitingSnapshotPromise;
+    const initialOwnerActor = initialWaitingSnapshot.snapshot.actors.find(
+      (actor) => actor.slot === 'MT',
+    );
+    assert.ok(initialOwnerActor, '等待态应找到房主角色');
+
+    await waitForConnect(guest);
+    const guestJoinSnapshotPromise = waitForEvent(guest, 'sim:snapshot');
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      slot: 'ST',
+    });
+    await waitForRoomState(guest, (room) => room.roomId === roomId && room.phase === 'waiting');
+    const guestJoinSnapshot = await guestJoinSnapshotPromise;
+    const initialGuestViewOwnerActor = findActor(guestJoinSnapshot.snapshot, initialOwnerActor.id);
+    assert.ok(initialGuestViewOwnerActor, '队员等待态应看到房主角色');
+
+    const ownerMovedBeforeCountdown = {
+      x: initialOwnerActor.position.x + 1,
+      y: initialOwnerActor.position.y,
+    };
+    const guestPreCountdownMovePromise = waitForPayload(
+      guest,
+      'sim:events',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.events.some(
+          (event) => event.type === 'actorMoved' && event.payload.actorId === initialOwnerActor.id,
+        ),
+      4000,
+    );
+    emitPoseFrame(owner, {
+      roomId,
+      syncId: guestJoinSnapshot.syncId,
+      actorId: initialOwnerActor.id,
+      position: ownerMovedBeforeCountdown,
+      facing: initialOwnerActor.facing,
+      moveDirection: { x: 0, y: 0 },
+    });
+    await guestPreCountdownMovePromise;
+
+    const countdownSnapshotPromise = waitForPayload(
+      owner,
+      'sim:snapshot',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.reason === 'waiting-state' &&
+        payload.syncId !== initialWaitingSnapshot.syncId,
+      4000,
+    );
+    const guestCountdownSnapshotPromise = waitForPayload(
+      guest,
+      'sim:snapshot',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.reason === 'waiting-state' &&
+        payload.syncId !== guestJoinSnapshot.syncId,
+      4000,
+    );
+    const startPromise = waitForEvent(owner, 'sim:start');
+    const guestStartPromise = waitForEvent(guest, 'sim:start');
+    owner.emit('room:start', {
+      roomId,
+      countdownMs: 1000,
+    });
+    const countdownSnapshot = await countdownSnapshotPromise;
+    const guestCountdownSnapshot = await guestCountdownSnapshotPromise;
+    const countdownOwnerActor = findActor(countdownSnapshot.snapshot, initialOwnerActor.id);
+    assert.ok(countdownOwnerActor, '倒计时等待态应找到房主角色');
+    assert.deepEqual(countdownOwnerActor.position, initialOwnerActor.position);
+    const guestCountdownOwnerActor = findActor(
+      guestCountdownSnapshot.snapshot,
+      initialOwnerActor.id,
+    );
+    assert.ok(guestCountdownOwnerActor, '队员倒计时等待态应看到房主归位');
+    assert.deepEqual(guestCountdownOwnerActor.position, initialOwnerActor.position);
+
+    const movedPosition = {
+      x: countdownOwnerActor.position.x + 1.4,
+      y: countdownOwnerActor.position.y + 0.7,
+    };
+    const movedFacing = countdownOwnerActor.facing + 0.35;
+    const ownerMovedEventPromise = waitForPayload(
+      owner,
+      'sim:events',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.events.some(
+          (event) => event.type === 'actorMoved' && event.payload.actorId === initialOwnerActor.id,
+        ),
+      4000,
+    );
+    const guestMovedEventPromise = waitForPayload(
+      guest,
+      'sim:events',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.syncId === countdownSnapshot.syncId &&
+        payload.events.some(
+          (event) => event.type === 'actorMoved' && event.payload.actorId === initialOwnerActor.id,
+        ),
+      4000,
+    );
+    emitPoseFrame(owner, {
+      roomId,
+      syncId: countdownSnapshot.syncId,
+      actorId: initialOwnerActor.id,
+      position: movedPosition,
+      facing: movedFacing,
+      moveDirection: { x: 0, y: 0 },
+    });
+    await ownerMovedEventPromise;
+    await guestMovedEventPromise;
+
+    const startPayload = await startPromise;
+    const guestStartPayload = await guestStartPromise;
+    const startedOwnerActor = findActor(startPayload.snapshot, initialOwnerActor.id);
+    assert.ok(startedOwnerActor, '正式开战快照应找到房主角色');
+    assert.ok(displacementBetween(movedPosition, startedOwnerActor.position) <= 0.001);
+    assert.equal(startedOwnerActor.facing, movedFacing);
+    assert.equal(startPayload.snapshot.timeMs, 0);
+    const guestStartedOwnerActor = findActor(guestStartPayload.snapshot, initialOwnerActor.id);
+    assert.ok(guestStartedOwnerActor, '队员正式开战快照应看到房主角色');
+    assert.ok(displacementBetween(movedPosition, guestStartedOwnerActor.position) <= 0.001);
   } finally {
     owner.close();
     guest.close();
@@ -800,6 +960,7 @@ test('运行态位姿样本会同步到服务端当前权威位置', async () =>
     const startPromise = waitForEvent(owner, 'sim:start');
     owner.emit('room:start', {
       roomId,
+      countdownMs: 1000,
     });
     const startPayload = await startPromise;
     const ownerActor = startPayload.snapshot.actors.find((actor) => actor.slot === 'MT');
@@ -958,6 +1119,7 @@ test('疾跑会为玩家附加状态并记录冷却', async () => {
     const startPromise = waitForEvent(owner, 'sim:start');
     owner.emit('room:start', {
       roomId,
+      countdownMs: 1000,
     });
     const startPayload = await startPromise;
     const ownerActor = startPayload.snapshot.actors.find((actor) => actor.slot === 'MT');
@@ -1026,7 +1188,7 @@ test('疾跑会为玩家附加状态并记录冷却', async () => {
   }
 });
 
-test('准备态与战斗态位姿样本使用同一套移动链路', async () => {
+test('等待态与战斗态位姿样本使用同一套移动链路', async () => {
   const server = await startServer({
     host: '127.0.0.1',
     port: 0,
@@ -1142,6 +1304,7 @@ test('准备态与战斗态位姿样本使用同一套移动链路', async () =>
     const startPromise = waitForEvent(owner, 'sim:start');
     owner.emit('room:start', {
       roomId,
+      countdownMs: 1000,
     });
     const startPayload = await startPromise;
     const runningStartActor = findActor(startPayload.snapshot, ownerSlot.id);
@@ -1222,7 +1385,7 @@ test('准备态与战斗态位姿样本使用同一套移动链路', async () =>
 
     assert.ok(
       Math.abs(waitingDistance - runningDistance) <= 0.05,
-      `准备态位移 ${waitingDistance.toFixed(3)}m 与战斗态位移 ${runningDistance.toFixed(
+      `等待态位移 ${waitingDistance.toFixed(3)}m 与战斗态位移 ${runningDistance.toFixed(
         3,
       )}m 应基本一致`,
     );
@@ -1274,6 +1437,7 @@ test('旧同步轮高序号位姿样本不会阻塞当前战斗态移动', async
     const startPromise = waitForEvent(owner, 'sim:start');
     owner.emit('room:start', {
       roomId,
+      countdownMs: 1000,
     });
     const startPayload = await startPromise;
     const ownerActor = startPayload.snapshot.actors.find((actor) => actor.slot === 'MT');

@@ -7,6 +7,7 @@ import type {
   ContinuousSimulationInputFrame,
   PartySlot,
   RoomJoinPayload,
+  RoomStartPayload,
   RoomStateDto,
   RoomSummaryDto,
   ServerToClientEvents,
@@ -34,6 +35,9 @@ import {
 
 type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 type TypedIo = SocketServer<ClientToServerEvents, ServerToClientEvents>;
+const DEFAULT_START_COUNTDOWN_MS = 5_000;
+const MIN_START_COUNTDOWN_MS = 1_000;
+const MAX_START_COUNTDOWN_MS = 30_000;
 
 export class RoomManager {
   private readonly rooms = new Map<string, RoomRecord>();
@@ -79,6 +83,9 @@ export class RoomManager {
       latestResult: null,
       pendingControlByActorId: new Map(),
       syncId: 1,
+      startCountdown: null,
+      startCountdownHandle: null,
+      startCountdownTickHandle: null,
     };
 
     this.rooms.set(roomId, room);
@@ -316,13 +323,17 @@ export class RoomManager {
       return;
     }
 
+    if (room.startCountdown !== null && payload.mode !== 'spectator') {
+      this.emitError(socket, 'start_countdown_active', '倒计时期间不允许加入战斗槽位');
+      return;
+    }
+
     if (payload.mode === 'spectator') {
       room.spectators.set(payload.userId, {
         userId: payload.userId,
         name: userName,
         socketId: socket.id,
         online: true,
-        ready: payload.userId === room.ownerUserId,
       });
       this.userRooms.set(payload.userId, room.roomId);
       socket.join(room.roomId);
@@ -349,7 +360,6 @@ export class RoomManager {
       name: userName,
       socketId: socket.id,
       online: true,
-      ready: payload.userId === room.ownerUserId,
       departed: false,
     };
 
@@ -406,47 +416,6 @@ export class RoomManager {
     }
   }
 
-  setReady(socket: TypedSocket, roomId: string, ready: boolean): void {
-    const room = this.rooms.get(roomId);
-
-    if (room === undefined) {
-      this.emitError(socket, 'room_not_found', '房间不存在');
-      return;
-    }
-
-    if (room.phase !== 'waiting') {
-      this.emitError(socket, 'room_not_waiting', '当前房间不允许准备');
-      return;
-    }
-
-    const slot = this.findPlayerSlotBySocket(room, socket.id);
-
-    if (slot === undefined) {
-      const spectator = this.getSpectatorBySocket(room, socket.id);
-
-      if (spectator === undefined) {
-        this.emitError(socket, 'not_in_room', '当前连接不在该房间');
-        return;
-      }
-
-      spectator.ready = spectator.userId === room.ownerUserId ? true : ready;
-    } else {
-      const occupant = room.slots[slot] as PlayerSlotOccupant;
-
-      if (occupant.userId === room.ownerUserId) {
-        occupant.ready = true;
-      } else {
-        occupant.ready = ready;
-      }
-    }
-
-    this.rebuildWaitingSimulation(room, {
-      sourceSnapshot: room.simulation?.getSnapshot() ?? null,
-      keepTimeMs: true,
-    });
-    this.broadcastWaitingState(room, 'waiting-state');
-  }
-
   selectBattle(socket: TypedSocket, roomId: string, battleId: string): void {
     const room = this.rooms.get(roomId);
 
@@ -467,6 +436,11 @@ export class RoomManager {
       return;
     }
 
+    if (room.startCountdown !== null) {
+      this.emitError(socket, 'start_countdown_active', '倒计时期间不允许切换战斗');
+      return;
+    }
+
     const battle = getBattleDefinition(battleId);
 
     if (battle === undefined) {
@@ -479,7 +453,6 @@ export class RoomManager {
     room.latestResult = null;
     room.syncId += 1;
     this.resetPoseSyncState(room);
-    this.resetReadyStates(room);
     this.rebuildWaitingSimulation(room, {
       resetAllActors: true,
       keepTimeMs: false,
@@ -498,6 +471,11 @@ export class RoomManager {
 
     if (room.phase !== 'waiting') {
       this.emitError(socket, 'room_not_waiting', '当前房间状态不允许切换槽位');
+      return;
+    }
+
+    if (room.startCountdown !== null) {
+      this.emitError(socket, 'start_countdown_active', '倒计时期间不允许切换槽位');
       return;
     }
 
@@ -526,11 +504,9 @@ export class RoomManager {
         name: spectator.name,
         socketId: spectator.socketId,
         online: spectator.online,
-        ready: spectator.userId === room.ownerUserId ? true : spectator.ready,
         departed: false,
       };
       room.slots[payload.targetSlot] = nextOccupant;
-      this.resetReadyStates(room);
       this.rebuildWaitingSimulation(room, {
         sourceSnapshot: room.simulation?.getSnapshot() ?? null,
         keepTimeMs: true,
@@ -549,7 +525,6 @@ export class RoomManager {
 
     room.slots[currentSlot] = targetOccupant;
     room.slots[payload.targetSlot] = currentOccupant;
-    this.resetReadyStates(room);
     this.rebuildWaitingSimulation(room, {
       sourceSnapshot: room.simulation?.getSnapshot() ?? null,
       keepTimeMs: true,
@@ -571,6 +546,11 @@ export class RoomManager {
       return;
     }
 
+    if (room.startCountdown !== null) {
+      this.emitError(socket, 'start_countdown_active', '倒计时期间不允许切换观战');
+      return;
+    }
+
     const currentSlot = this.findPlayerSlotBySocket(room, socket.id);
 
     if (currentSlot === undefined) {
@@ -588,7 +568,6 @@ export class RoomManager {
       name: occupant.name,
       socketId: occupant.socketId,
       online: occupant.online,
-      ready: occupant.userId === room.ownerUserId ? true : occupant.ready,
     });
     room.slots[currentSlot] = createBotOccupant(room.roomId, currentSlot);
     this.rebuildWaitingSimulation(room, {
@@ -599,8 +578,8 @@ export class RoomManager {
     this.broadcastWaitingState(room, 'waiting-state');
   }
 
-  startRoom(socket: TypedSocket, roomId: string): void {
-    const room = this.rooms.get(roomId);
+  startRoom(socket: TypedSocket, payload: RoomStartPayload): void {
+    const room = this.rooms.get(payload.roomId);
 
     if (room === undefined) {
       this.emitError(socket, 'room_not_found', '房间不存在');
@@ -624,19 +603,19 @@ export class RoomManager {
       return;
     }
 
-    const unreadyPlayers = Object.values(room.slots).filter(
-      (slotOccupant) =>
-        slotOccupant.type === 'player' &&
-        slotOccupant.userId !== room.ownerUserId &&
-        !slotOccupant.ready,
-    );
-
-    if (unreadyPlayers.length > 0) {
-      this.emitError(socket, 'players_not_ready', '仍有玩家未准备');
+    if (room.startCountdown !== null) {
+      this.emitError(socket, 'start_countdown_active', '开始倒计时已在进行中');
       return;
     }
 
-    this.startSimulation(room);
+    const countdownMs = this.normalizeStartCountdownMs(payload.countdownMs);
+
+    if (countdownMs === null) {
+      this.emitError(socket, 'invalid_start_countdown', '倒计时时长必须在 1 到 30 秒之间');
+      return;
+    }
+
+    this.startCountdown(room, countdownMs);
   }
 
   enqueueInput(
@@ -791,7 +770,6 @@ export class RoomManager {
       } else {
         occupant.online = false;
         occupant.socketId = null;
-        occupant.ready = occupant.userId === room.ownerUserId;
         occupant.departed = false;
       }
 
@@ -809,7 +787,6 @@ export class RoomManager {
 
     occupant.online = false;
     occupant.socketId = null;
-    occupant.ready = false;
     occupant.departed = shouldLeaveRoom;
 
     this.emitRoomSlots(room);
@@ -832,13 +809,53 @@ export class RoomManager {
     } else {
       spectator.online = false;
       spectator.socketId = null;
-      spectator.ready = false;
     }
 
     this.emitRoomState(room);
   }
 
+  private startCountdown(room: RoomRecord, durationMs: number): void {
+    const startedAt = Date.now();
+    room.latestResult = null;
+    room.snapshotBroadcastCounter = 0;
+    room.syncId += 1;
+    this.resetPoseSyncState(room);
+    this.rebuildWaitingSimulation(room, {
+      resetAllActors: true,
+      keepTimeMs: false,
+      sourceSnapshot: null,
+    });
+
+    room.startCountdown = {
+      durationMs,
+      startedAt,
+      endsAt: startedAt + durationMs,
+    };
+
+    this.emitCountdown(room);
+    room.startCountdownTickHandle = setInterval(() => {
+      this.emitCountdown(room);
+    }, 1_000);
+
+    room.startCountdownHandle = setTimeout(() => {
+      if (
+        room.phase !== 'waiting' ||
+        room.battle === null ||
+        room.battleId === null ||
+        room.startCountdown?.startedAt !== startedAt
+      ) {
+        return;
+      }
+
+      this.startSimulation(room);
+    }, durationMs);
+
+    this.broadcastWaitingState(room, 'waiting-state');
+  }
+
   private startSimulation(room: RoomRecord): void {
+    const sourceSnapshot = room.simulation?.getSnapshot() ?? null;
+    this.clearStartCountdown(room);
     room.latestResult = null;
     room.snapshotBroadcastCounter = 0;
     room.syncId += 1;
@@ -857,7 +874,8 @@ export class RoomManager {
       battle: room.battle!,
       roomId: room.roomId,
       party: buildPartyBlueprint(room),
-      resetAllActors: true,
+      sourceSnapshot,
+      resetAllActors: false,
       keepTimeMs: false,
       latestResult: null,
     });
@@ -895,7 +913,6 @@ export class RoomManager {
       }
     }
 
-    this.resetReadyStates(room);
     this.rebuildWaitingSimulation(room, {
       sourceSnapshot: endSnapshot,
       keepTimeMs: true,
@@ -985,23 +1002,6 @@ export class RoomManager {
     this.metrics?.recordSnapshot(room.roomId);
   }
 
-  private resetReadyStates(room: RoomRecord): void {
-    for (const slot of PARTY_SLOT_ORDER) {
-      const occupant = room.slots[slot];
-
-      if (occupant.type === 'bot') {
-        occupant.ready = true;
-        continue;
-      }
-
-      occupant.ready = occupant.userId === room.ownerUserId;
-    }
-
-    for (const spectator of room.spectators.values()) {
-      spectator.ready = spectator.userId === room.ownerUserId;
-    }
-  }
-
   private findPlayerSlot(room: RoomRecord, userId: string): PartySlot | undefined {
     return PARTY_SLOT_ORDER.find((slot) => {
       const occupant = room.slots[slot];
@@ -1052,6 +1052,8 @@ export class RoomManager {
       clearInterval(room.loopHandle);
     }
 
+    this.clearStartCountdown(room);
+
     this.io.to(room.roomId).emit('room:closed', {
       roomId: room.roomId,
       reason,
@@ -1080,5 +1082,48 @@ export class RoomManager {
       message,
     });
     this.metrics?.recordServerError(code);
+  }
+
+  private normalizeStartCountdownMs(value: number | undefined): number | null {
+    const durationMs = value ?? DEFAULT_START_COUNTDOWN_MS;
+
+    if (!Number.isFinite(durationMs)) {
+      return null;
+    }
+
+    const roundedMs = Math.round(durationMs / 1_000) * 1_000;
+
+    if (roundedMs < MIN_START_COUNTDOWN_MS || roundedMs > MAX_START_COUNTDOWN_MS) {
+      return null;
+    }
+
+    return roundedMs;
+  }
+
+  private clearStartCountdown(room: RoomRecord): void {
+    if (room.startCountdownHandle !== null) {
+      clearTimeout(room.startCountdownHandle);
+      room.startCountdownHandle = null;
+    }
+
+    if (room.startCountdownTickHandle !== null) {
+      clearInterval(room.startCountdownTickHandle);
+      room.startCountdownTickHandle = null;
+    }
+
+    room.startCountdown = null;
+  }
+
+  private emitCountdown(room: RoomRecord): void {
+    const countdown = room.startCountdown;
+
+    if (countdown === null) {
+      return;
+    }
+
+    this.io.to(room.roomId).emit('room:countdown', {
+      roomId: room.roomId,
+      remainingSeconds: Math.max(Math.ceil((countdown.endsAt - Date.now()) / 1_000), 0),
+    });
   }
 }

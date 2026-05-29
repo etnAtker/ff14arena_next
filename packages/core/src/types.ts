@@ -24,7 +24,6 @@ export interface PartyMemberBlueprint {
   actorId: string;
   ownerUserId?: string;
   online?: boolean;
-  ready?: boolean;
 }
 
 export interface BattleFailureTextApi {
