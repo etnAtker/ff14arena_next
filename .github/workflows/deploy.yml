@@ -1,0 +1,30 @@
+name: Deploy ff14arena
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        server:
+          - host: 217.116.171.199
+            port: 42020
+          - host: 122.51.56.162
+            port: 42020
+
+    steps:
+      - name: Deploy to ${{ matrix.server.host }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ matrix.server.host }}
+          port: ${{ matrix.server.port }}
+          username: etnatker
+          key: ${{ secrets.DEPLOY_PRIV_KEY }}
+          script: |
+            cd ~/docker/ff14arena
+            docker compose pull
+            docker compose down
+            docker compose up -d
