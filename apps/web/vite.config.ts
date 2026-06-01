@@ -13,6 +13,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/health': 'http://127.0.0.1:3000',
+      '/auth-config': 'http://127.0.0.1:3000',
       '/battles': 'http://127.0.0.1:3000',
       '/rooms': 'http://127.0.0.1:3000',
       '/admin': 'http://127.0.0.1:3000',

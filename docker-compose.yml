@@ -3,5 +3,7 @@ services:
     image: ghcr.io/etnatker/ff14arena:latest
     container_name: ff14arena
     restart: unless-stopped
+    environment:
+      ROOM_PASSWORD: your_password
     ports:
       - '3000:3000'

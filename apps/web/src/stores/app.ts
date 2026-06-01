@@ -38,6 +38,17 @@ interface FacingPreviewState {
 const RESYNC_THROTTLE_MS = 500;
 const CONTINUOUS_INPUT_INTERVAL_MS = 50;
 const TRANSPORT_PROBE_INTERVAL_MS = 1_500;
+const ROOM_PASSWORD_STORAGE_KEY = 'ff14arena.roomPassword';
+
+class HttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+}
 
 interface LocalControlledPose {
   actorId: string;
@@ -49,11 +60,36 @@ interface LocalControlledPose {
   };
 }
 
+type RoomEntryAction =
+  | {
+      type: 'create';
+      name: string;
+      battleId?: string;
+    }
+  | {
+      type: 'join';
+      roomId: string;
+      slot?: PartySlot;
+      mode?: 'player' | 'spectator';
+    };
+
 function cloneVector(vector: Vector2): Vector2 {
   return {
     x: vector.x,
     y: vector.y,
   };
+}
+
+function readCachedRoomPassword(): string {
+  return window.localStorage.getItem(ROOM_PASSWORD_STORAGE_KEY) ?? '';
+}
+
+function saveCachedRoomPassword(password: string): void {
+  window.localStorage.setItem(ROOM_PASSWORD_STORAGE_KEY, password);
+}
+
+function clearCachedRoomPassword(): void {
+  window.localStorage.removeItem(ROOM_PASSWORD_STORAGE_KEY);
 }
 
 export const useAppStore = defineStore('app', () => {
@@ -68,6 +104,9 @@ export const useAppStore = defineStore('app', () => {
   const serverError = ref<string | null>(null);
   const statusIconPreloadError = ref<string | null>(null);
   const failedStatusIconUrls = ref<string[]>([]);
+  const roomPasswordRequired = ref(false);
+  const roomPasswordPromptVisible = ref(false);
+  const roomPasswordPromptMessage = ref('请输入房间密码');
   const connected = ref(false);
   const logs = ref<string[]>([]);
   const currentSyncId = ref(0);
@@ -81,6 +120,7 @@ export const useAppStore = defineStore('app', () => {
   const battleStaticDataPromises = new Map<string, Promise<BattleStaticData>>();
   const preloadedStatusIconUrls = new Set<string>();
   const failedStatusIconUrlSet = new Set<string>();
+  let pendingRoomEntryAction: RoomEntryAction | null = null;
   let transportProbeTimer: number | null = null;
 
   const snapshot = computed<SimulationSnapshot | null>(() => {
@@ -150,18 +190,34 @@ export const useAppStore = defineStore('app', () => {
     const response = await fetch(url, init);
 
     if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
+      let message = `${response.status} ${response.statusText}`;
+      let code: string | undefined;
+
+      try {
+        const payload = (await response.json()) as {
+          code?: string;
+          message?: string;
+        };
+        message = payload.message ?? message;
+        code = payload.code;
+      } catch {
+        // 非 JSON 错误响应保留 HTTP 状态文本。
+      }
+
+      throw new HttpError(message, response.status, code);
     }
 
     return (await response.json()) as T;
   }
 
   async function loadLobbyData(): Promise<void> {
-    const [battleResponse, roomResponse] = await Promise.all([
+    const [authConfigResponse, battleResponse, roomResponse] = await Promise.all([
+      fetchJson<{ roomPasswordRequired: boolean }>('/auth-config'),
       fetchJson<{ battles: BattleSummary[] }>('/battles'),
       fetchJson<{ rooms: RoomSummaryDto[] }>('/rooms'),
     ]);
 
+    roomPasswordRequired.value = authConfigResponse.roomPasswordRequired;
     battles.value = battleResponse.battles;
     rooms.value = roomResponse.rooms;
   }
@@ -467,16 +523,100 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
+  function getRoomPasswordPayload(): { password?: string } {
+    const password = readCachedRoomPassword();
+
+    return password.length === 0 ? {} : { password };
+  }
+
+  function requestRoomPassword(action: RoomEntryAction, message = '请输入房间密码'): void {
+    pendingRoomEntryAction = action;
+    roomPasswordPromptMessage.value = message;
+    roomPasswordPromptVisible.value = true;
+  }
+
+  function prepareRoomEntryAction(action: RoomEntryAction): boolean {
+    pendingRoomEntryAction = action;
+
+    if (!roomPasswordRequired.value || readCachedRoomPassword().length > 0) {
+      return true;
+    }
+
+    requestRoomPassword(action);
+    return false;
+  }
+
+  function handleInvalidRoomPassword(message: string): void {
+    clearCachedRoomPassword();
+    serverError.value = message;
+    appendLog(`错误：${message}`);
+
+    if (pendingRoomEntryAction !== null) {
+      requestRoomPassword(pendingRoomEntryAction, '房间密码错误，请重新输入');
+    }
+  }
+
+  async function replayRoomEntryAction(action: RoomEntryAction): Promise<void> {
+    if (action.type === 'create') {
+      await createRoom(action.name, action.battleId);
+      return;
+    }
+
+    await joinRoom(action.roomId, action.slot, action.mode);
+  }
+
+  function submitRoomPassword(password: string): void {
+    const normalizedPassword = password.trim();
+
+    if (normalizedPassword.length === 0) {
+      serverError.value = '请输入房间密码';
+      return;
+    }
+
+    saveCachedRoomPassword(normalizedPassword);
+    roomPasswordPromptVisible.value = false;
+
+    const action = pendingRoomEntryAction;
+
+    if (action !== null) {
+      void replayRoomEntryAction(action);
+    }
+  }
+
+  function cancelRoomPasswordPrompt(): void {
+    roomPasswordPromptVisible.value = false;
+    pendingRoomEntryAction = null;
+  }
+
+  function emitRoomJoin(
+    currentSocket: AppSocket,
+    action: Extract<RoomEntryAction, { type: 'join' }>,
+  ): void {
+    currentSocket.emit('room:join', {
+      roomId: action.roomId,
+      userId: profile.value.userId,
+      userName: profile.value.userName,
+      ...getRoomPasswordPayload(),
+      ...(action.mode !== undefined ? { mode: action.mode } : {}),
+      ...(action.slot !== undefined ? { slot: action.slot } : {}),
+    });
+  }
+
   function rejoinCurrentRoom(): void {
     if (room.value === null || socket.value === null) {
       return;
     }
 
-    socket.value.emit('room:join', {
+    const action: RoomEntryAction = {
+      type: 'join',
       roomId: room.value.roomId,
-      userId: profile.value.userId,
-      userName: profile.value.userName,
-    });
+    };
+
+    if (!prepareRoomEntryAction(action)) {
+      return;
+    }
+
+    emitRoomJoin(socket.value, action);
   }
 
   async function waitForRoomState(roomId: string, timeoutMs = 3000): Promise<RoomStateDto> {
@@ -534,6 +674,12 @@ export const useAppStore = defineStore('app', () => {
       });
 
       nextSocket.on('server:error', (payload) => {
+        if (payload.code === 'invalid_room_password') {
+          spectatePending.value = false;
+          handleInvalidRoomPassword(payload.message);
+          return;
+        }
+
         serverError.value = payload.message;
         spectatePending.value = false;
         appendLog(`错误：${payload.message}`);
@@ -548,6 +694,7 @@ export const useAppStore = defineStore('app', () => {
         }
 
         room.value = payload.room;
+        pendingRoomEntryAction = null;
         loadBattleStaticData(payload.room.battleId);
 
         if (payload.room.phase === 'running' && authoritativeSnapshot.value?.phase !== 'running') {
@@ -691,7 +838,17 @@ export const useAppStore = defineStore('app', () => {
   }
 
   async function createRoom(name: string, battleId?: string): Promise<void> {
+    const action: RoomEntryAction = {
+      type: 'create',
+      name,
+      ...(battleId === undefined ? {} : { battleId }),
+    };
+
     serverError.value = null;
+
+    if (!prepareRoomEntryAction(action)) {
+      return;
+    }
 
     try {
       await ensureSocket();
@@ -707,6 +864,7 @@ export const useAppStore = defineStore('app', () => {
           name,
           ownerUserId: profile.value.userId,
           ownerName: profile.value.userName,
+          ...getRoomPasswordPayload(),
           battleId,
         }),
       });
@@ -717,6 +875,12 @@ export const useAppStore = defineStore('app', () => {
       loadLobbyData().catch(() => undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : '创建房间失败';
+
+      if (error instanceof HttpError && error.code === 'invalid_room_password') {
+        handleInvalidRoomPassword(message);
+        return;
+      }
+
       serverError.value = message;
       appendLog(`错误：${message}`);
       throw error;
@@ -728,16 +892,21 @@ export const useAppStore = defineStore('app', () => {
     slot?: PartySlot,
     mode?: 'player' | 'spectator',
   ): Promise<void> {
+    const action: RoomEntryAction = {
+      type: 'join',
+      roomId,
+      ...(slot !== undefined ? { slot } : {}),
+      ...(mode !== undefined ? { mode } : {}),
+    };
+
+    if (!prepareRoomEntryAction(action)) {
+      return;
+    }
+
     const currentSocket = socket.value ?? (await ensureSocket());
     resetBattleState();
     room.value = null;
-    currentSocket.emit('room:join', {
-      roomId,
-      userId: profile.value.userId,
-      userName: profile.value.userName,
-      ...(mode !== undefined ? { mode } : {}),
-      ...(slot !== undefined ? { slot } : {}),
-    });
+    emitRoomJoin(currentSocket, action);
   }
 
   function leaveRoom(): void {
@@ -1245,6 +1414,9 @@ export const useAppStore = defineStore('app', () => {
     serverError,
     statusIconPreloadError,
     failedStatusIconUrls,
+    roomPasswordRequired,
+    roomPasswordPromptVisible,
+    roomPasswordPromptMessage,
     connected,
     latencyDisplay,
     logs,
@@ -1269,5 +1441,7 @@ export const useAppStore = defineStore('app', () => {
     useKnockbackImmune,
     useSprint,
     recordStatusIconLoadFailure,
+    submitRoomPassword,
+    cancelRoomPasswordPrompt,
   };
 });

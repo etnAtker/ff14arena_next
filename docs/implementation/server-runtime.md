@@ -30,6 +30,7 @@
 当前服务端暴露以下 HTTP 接口：
 
 - `GET /health`
+- `GET /auth-config`
 - `GET /battles`
 - `GET /battles/:battleId/static`
 - `GET /rooms`
@@ -37,6 +38,11 @@
 - `GET /admin/metrics`
 
 这些接口用于存活探测、战斗列表查询、静态战斗信息获取、房间创建和短期性能观测。
+
+`GET /auth-config` 只返回当前是否启用房间密码，不返回密码内容。
+服务端启动时读取一次运行时环境变量 `ROOM_PASSWORD`。
+该变量未设置或为空字符串时，创建和加入房间不要求密码；该变量非空时，`POST /rooms` 和 Socket `room:join` 都必须携带匹配密码。
+密码校验覆盖创建房间、普通加入、加入观战和断线重连。
 
 `GET /battles/:battleId/static` 返回战斗静态数据，包括地图标点、初始站位和该战斗可展示的状态元数据。状态元数据包含 XIVAPI 名称、描述、图标路径、前端图标 URL、兜底文字和 `PartyListPriority`。
 

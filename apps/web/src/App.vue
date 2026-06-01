@@ -10,7 +10,18 @@ import {
 } from 'vue';
 import { storeToRefs } from 'pinia';
 import type { GlobalThemeOverrides, SelectOption } from 'naive-ui';
-import { darkTheme, dateZhCN, NAlert, NConfigProvider, NGlobalStyle, zhCN } from 'naive-ui';
+import {
+  darkTheme,
+  dateZhCN,
+  NAlert,
+  NButton,
+  NConfigProvider,
+  NGlobalStyle,
+  NInput,
+  NModal,
+  NSpace,
+  zhCN,
+} from 'naive-ui';
 import AppTopbar from './components/layout/AppTopbar.vue';
 import { getCameraYawForFacing } from './components/battle/camera';
 import { useAppStore } from './stores/app';
@@ -78,6 +89,8 @@ const {
   serverError,
   statusIconPreloadError,
   failedStatusIconUrls,
+  roomPasswordPromptVisible,
+  roomPasswordPromptMessage,
   currentPlayerSlot,
   isSpectating,
   serverCountdownSeconds,
@@ -92,6 +105,7 @@ const operationMode = ref<OperationMode>(loadOperationMode());
 const cameraYaw = ref(0);
 const cameraZoom = ref(1);
 const startCountdownSeconds = ref(5);
+const roomPasswordInput = ref('');
 const isMetricsRoute = window.location.pathname === '/metrics';
 const lastTraditionalFacing = ref<number | null>(null);
 const pendingPointerFacing = ref<number | null>(null);
@@ -225,6 +239,17 @@ function handleJoinRoom(roomId: string): void {
 function handleJoinSpectator(roomId: string): void {
   store.updateProfile(editUserName.value);
   void store.joinRoom(roomId, undefined, 'spectator');
+}
+
+function submitRoomPasswordPrompt(): void {
+  const password = roomPasswordInput.value;
+  roomPasswordInput.value = '';
+  store.submitRoomPassword(password);
+}
+
+function cancelRoomPasswordPrompt(): void {
+  roomPasswordInput.value = '';
+  store.cancelRoomPasswordPrompt();
 }
 
 function openMetricsPage(): void {
@@ -416,6 +441,30 @@ onBeforeUnmount(() => {
         >
           {{ statusIconPreloadError }}
         </n-alert>
+
+        <n-modal
+          :show="roomPasswordPromptVisible"
+          preset="dialog"
+          title="房间密码"
+          :mask-closable="false"
+          @close="cancelRoomPasswordPrompt"
+        >
+          <n-space vertical :size="12">
+            <span>{{ roomPasswordPromptMessage }}</span>
+            <n-input
+              v-model:value="roomPasswordInput"
+              type="password"
+              show-password-on="click"
+              autofocus
+              placeholder="输入房间密码"
+              @keyup.enter="submitRoomPasswordPrompt"
+            />
+            <n-space justify="end">
+              <n-button secondary @click="cancelRoomPasswordPrompt">取消</n-button>
+              <n-button type="primary" @click="submitRoomPasswordPrompt">确认</n-button>
+            </n-space>
+          </n-space>
+        </n-modal>
 
         <HomePage
           v-if="page === 'home'"

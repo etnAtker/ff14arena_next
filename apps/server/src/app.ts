@@ -12,12 +12,20 @@ import { ServerMetricsCollector } from './metrics';
 import { RoomManager } from './room-manager';
 
 const DEFAULT_WEB_DIST_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../../web/dist');
-const BACKEND_ROUTE_PREFIXES = ['/health', '/battles', '/rooms', '/admin', '/socket.io'];
+const BACKEND_ROUTE_PREFIXES = [
+  '/health',
+  '/auth-config',
+  '/battles',
+  '/rooms',
+  '/admin',
+  '/socket.io',
+];
 const requestStartedAt = new WeakMap<FastifyRequest, number>();
 
 export interface ServerContextOptions {
   logger?: boolean;
   staticRoot?: string;
+  roomPassword?: string;
 }
 
 export interface ServerContext {
@@ -40,6 +48,10 @@ function resolveStaticRoot(staticRoot?: string): string | null {
   }
 
   return existsSync(candidate) ? candidate : null;
+}
+
+function resolveRoomPassword(roomPassword?: string): string {
+  return (roomPassword ?? process.env.ROOM_PASSWORD ?? '').trim();
 }
 
 function isBackendRoute(pathname: string): boolean {
@@ -81,7 +93,9 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
     },
   });
   const metrics = new ServerMetricsCollector();
-  const roomManager = new RoomManager(io, metrics);
+  const roomManager = new RoomManager(io, metrics, {
+    roomPassword: resolveRoomPassword(options?.roomPassword),
+  });
 
   app.addHook('onRequest', async (request) => {
     requestStartedAt.set(request, performance.now());
@@ -110,6 +124,10 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
     status: 'ok',
     battleCount: battleCatalog.length,
     roomCount: roomManager.listRooms().length,
+  }));
+
+  app.get('/auth-config', async () => ({
+    roomPasswordRequired: roomManager.isRoomPasswordRequired(),
   }));
 
   app.get('/battles', async () => ({
@@ -146,12 +164,21 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       ownerUserId?: string;
       ownerName?: string;
       battleId?: string;
+      password?: string;
     };
 
     if (!body.name || !body.ownerUserId || !body.ownerName) {
       reply.code(400);
       return {
         message: 'name、ownerUserId、ownerName 为必填项',
+      };
+    }
+
+    if (!roomManager.validateRoomPassword(body.password)) {
+      reply.code(403);
+      return {
+        code: 'invalid_room_password',
+        message: '房间密码错误',
       };
     }
 
@@ -266,6 +293,10 @@ export async function startServer(options?: StartServerOptions) {
 
   if (options?.staticRoot !== undefined) {
     contextOptions.staticRoot = options.staticRoot;
+  }
+
+  if (options?.roomPassword !== undefined) {
+    contextOptions.roomPassword = options.roomPassword;
   }
 
   const context = createServerContext(

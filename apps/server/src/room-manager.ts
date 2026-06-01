@@ -40,15 +40,31 @@ const MIN_START_COUNTDOWN_MS = 1_000;
 const MAX_START_COUNTDOWN_MS = 30_000;
 const QUICK_FAIL_REASON = '房主手动结束本轮模拟';
 
+export interface RoomManagerOptions {
+  roomPassword?: string;
+}
+
 export class RoomManager {
   private readonly rooms = new Map<string, RoomRecord>();
   private readonly userRooms = new Map<string, string>();
+  private readonly roomPassword: string;
   private roomCounter = 0;
 
   constructor(
     private readonly io: TypedIo,
     private readonly metrics?: ServerMetricsCollector,
-  ) {}
+    options?: RoomManagerOptions,
+  ) {
+    this.roomPassword = options?.roomPassword?.trim() ?? '';
+  }
+
+  isRoomPasswordRequired(): boolean {
+    return this.roomPassword.length > 0;
+  }
+
+  validateRoomPassword(password: string | undefined): boolean {
+    return !this.isRoomPasswordRequired() || password === this.roomPassword;
+  }
 
   listRooms(): RoomSummaryDto[] {
     return [...this.rooms.values()].map(createRoomSummary);
@@ -256,6 +272,11 @@ export class RoomManager {
 
     if (room === undefined) {
       this.emitError(socket, 'room_not_found', '房间不存在');
+      return;
+    }
+
+    if (!this.validateRoomPassword(payload.password)) {
+      this.emitError(socket, 'invalid_room_password', '房间密码错误');
       return;
     }
 

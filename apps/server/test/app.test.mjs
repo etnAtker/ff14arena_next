@@ -125,6 +125,106 @@ async function getAvailableBattleId(baseUrl) {
   return battleId;
 }
 
+test('房间密码：启用后创建和加入都需要匹配密码', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+    roomPassword: 'secret',
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const authConfigResponse = await globalThis.fetch(`${baseUrl}/auth-config`);
+    assert.equal(authConfigResponse.status, 200);
+    const authConfig = await authConfigResponse.json();
+    assert.equal(authConfig.roomPasswordRequired, true);
+
+    const battleId = await getAvailableBattleId(baseUrl);
+    const deniedCreateResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '密码房',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+        password: 'wrong',
+      }),
+    });
+    assert.equal(deniedCreateResponse.status, 403);
+    const deniedCreatePayload = await deniedCreateResponse.json();
+    assert.equal(deniedCreatePayload.code, 'invalid_room_password');
+
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '密码房',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+        password: 'secret',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.room.roomId;
+
+    await waitForConnect(owner);
+    const ownerStatePromise = waitForRoomState(
+      owner,
+      (room) => room.roomId === roomId && room.phase === 'waiting',
+    );
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+      password: 'secret',
+    });
+    await ownerStatePromise;
+
+    await waitForConnect(guest);
+    const guestErrorPromise = waitForPayload(
+      guest,
+      'server:error',
+      (payload) => payload.code === 'invalid_room_password',
+      4000,
+    );
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      password: 'wrong',
+    });
+    const guestError = await guestErrorPromise;
+    assert.equal(guestError.message, '房间密码错误');
+
+    const guestStatePromise = waitForRoomState(
+      guest,
+      (room) =>
+        room.roomId === roomId && room.slots.some((slot) => slot.ownerUserId === 'guest-user'),
+    );
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      password: 'secret',
+    });
+    await guestStatePromise;
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
 test('房间全流程：创建、立即加入、等待态快照、开始战斗', async () => {
   const server = await startServer({
     host: '127.0.0.1',

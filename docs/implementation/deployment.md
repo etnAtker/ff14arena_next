@@ -25,12 +25,12 @@
 
 - `apps/web` 由 Vite Dev Server 提供页面
 - `apps/server` 提供 API 和 Socket.IO
-- Vite 通过代理把 `/health`、`/battles`、`/rooms` 和 `/socket.io` 转发到服务端
+- Vite 通过代理把 `/health`、`/auth-config`、`/battles`、`/rooms` 和 `/socket.io` 转发到服务端
 
 当前生产环境改为单端口：
 
 - 服务端直接托管前端构建产物
-- `/health`、`/battles`、`/rooms` 继续作为后端接口
+- `/health`、`/auth-config`、`/battles`、`/rooms` 继续作为后端接口
 - `/admin/metrics` 提供短期内存态性能观测接口
 - `/socket.io` 继续作为实时通信入口
 - 其余页面请求统一回退到前端入口 `index.html`
@@ -79,6 +79,18 @@ docker compose up -d
 - `PORT=3000`
 - `WEB_DIST_DIR=/app/public`
 - `NODE_ENV=production`
+
+可选运行时环境变量：
+
+- `ROOM_PASSWORD`
+
+`ROOM_PASSWORD` 在服务端启动时读取一次。
+该变量未设置或为空字符串时，进入房间不需要密码；该变量非空时，创建房间、加入房间、加入观战和断线重连都必须携带匹配密码。
+例如：
+
+```bash
+docker run --rm -p 3000:3000 -e ROOM_PASSWORD='练习密码' ghcr.io/etnatker/ff14arena:latest
+```
 
 ## 5. GitHub Actions 发布
 
