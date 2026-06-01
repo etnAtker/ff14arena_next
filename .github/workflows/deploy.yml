@@ -2,6 +2,7 @@ name: Deploy ff14arena
 
 on:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   deploy:

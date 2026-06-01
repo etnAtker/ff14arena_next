@@ -98,7 +98,14 @@ docker run --rm -p 3000:3000 -e ROOM_PASSWORD='练习密码' ghcr.io/etnatker/ff
 
 - 文件：`.github/workflows/docker-publish.yml`
 - 触发方式：`workflow_dispatch`
+- 参数：`是否部署`
 - 推送目标：`ghcr.io/etnatker/ff14arena:latest`
+
+`是否部署` 默认为 `false`。
+
+当该参数为 `false` 时，workflow 只构建并发布镜像。
+
+当该参数为 `true` 时，workflow 会在镜像发布成功后自动执行部署流程。
 
 该 workflow 使用仓库自带的 `GITHUB_TOKEN` 登录 GHCR。  
 执行前需要确保当前仓库具备向 `ghcr.io/etnatker/ff14arena` 发布包的权限。

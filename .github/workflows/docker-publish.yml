@@ -2,6 +2,12 @@ name: 发布 Docker 镜像
 
 on:
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: 是否部署
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -32,3 +38,9 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: ghcr.io/etnatker/ff14arena:latest
+
+  deploy:
+    needs: publish
+    if: ${{ inputs.deploy }}
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
