@@ -983,6 +983,19 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
+        donutTelegraph(options) {
+          const currentState = assertState(state);
+          return spawnMechanic({
+            id: nextMechanicId(),
+            kind: 'donutTelegraph',
+            label: options.label,
+            sourceId: options.sourceId ?? currentState.boss.id,
+            center: cloneVector(options.center),
+            innerRadius: options.innerRadius,
+            outerRadius: options.outerRadius,
+            resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
+          });
+        },
         tether(options) {
           const currentState = assertState(state);
           return spawnMechanic({
@@ -1041,6 +1054,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             center: cloneVector(options.center),
             shape: options.shape,
             radius: options.radius,
+            ...(options.color === undefined ? {} : { color: options.color }),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },

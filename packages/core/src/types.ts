@@ -108,6 +108,14 @@ export interface BattleScriptContext {
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;
+    donutTelegraph(options: {
+      label: string;
+      center: Vector2;
+      innerRadius: number;
+      outerRadius: number;
+      resolveAfterMs?: number;
+      sourceId?: string;
+    }): MechanicSnapshot;
     tether(options: {
       label: string;
       target: BaseActorSnapshot;
@@ -141,6 +149,7 @@ export interface BattleScriptContext {
       center: Vector2;
       shape: FieldMarkerShape;
       radius: number;
+      color?: string;
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;

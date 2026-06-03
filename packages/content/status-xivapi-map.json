@@ -11,7 +11,13 @@
       "doom",
       "memory_loss"
     ],
-    "eden_p4_special": ["eden_p4_light_lock", "eden_p4_light_bondage", "eden_p4_dark_water"]
+    "eden_p4_special": ["eden_p4_light_lock", "eden_p4_light_bondage", "eden_p4_dark_water"],
+    "kefka_p3_first_trick": [
+      "kefka_p3_chaos_fire",
+      "kefka_p3_chaos_water",
+      "kefka_p3_chaos_wind",
+      "kefka_p3_chaos_reverse_wind"
+    ]
   },
   "statusXivapiIds": {
     "injury_up": 3366,
@@ -27,6 +33,10 @@
     "memory_loss": 1626,
     "eden_p4_light_lock": 2253,
     "eden_p4_light_bondage": 2255,
-    "eden_p4_dark_water": 2461
+    "eden_p4_dark_water": 2461,
+    "kefka_p3_chaos_fire": 1600,
+    "kefka_p3_chaos_water": 1601,
+    "kefka_p3_chaos_wind": 1602,
+    "kefka_p3_chaos_reverse_wind": 1603
   }
 }

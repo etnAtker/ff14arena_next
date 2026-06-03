@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { Application, Graphics, Text, TextStyle } from 'pixi.js';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import type { ActorMarkerShape, MapMarker, SimulationSnapshot, Vector2 } from '@ff14arena/shared';
+import type {
+  ActorMarkerShape,
+  FieldMarkerShape,
+  MapMarker,
+  SimulationSnapshot,
+  Vector2,
+} from '@ff14arena/shared';
 import { getFacingForCameraYaw } from './camera';
 import { getSlotColor, getSlotStageText, type OperationMode } from '../../utils/ui';
 
@@ -489,7 +495,9 @@ function drawActorMarker(
 function drawFieldMarker(
   graphics: Graphics,
   position: Vector2,
+  shape: FieldMarkerShape,
   radius: number,
+  colorValue: string | undefined,
   width: number,
   height: number,
   arenaRadius: number,
@@ -497,18 +505,37 @@ function drawFieldMarker(
 ): void {
   const point = toStagePoint(position, width, height, arenaRadius);
   const markerRadius = Math.max(radius * scale, 0.5 * scale);
-  const spikeRadius = markerRadius * 1.45;
+  const color = colorValue === undefined ? 0xa78bfa : parseHexColor(colorValue);
+  const strokeColor = shape === 'enemy' ? 0x312e81 : 0xffffff;
   const points: number[] = [];
 
-  for (let index = 0; index < 8; index += 1) {
-    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / 8;
-    const currentRadius = index % 2 === 0 ? spikeRadius : markerRadius;
-    points.push(point.x + Math.cos(angle) * currentRadius);
-    points.push(point.y + Math.sin(angle) * currentRadius);
+  if (shape === 'square') {
+    const halfSize = markerRadius;
+    points.push(
+      point.x - halfSize,
+      point.y - halfSize,
+      point.x + halfSize,
+      point.y - halfSize,
+      point.x + halfSize,
+      point.y + halfSize,
+      point.x - halfSize,
+      point.y + halfSize,
+    );
+  } else {
+    const pointCount = shape === 'triangle' ? 3 : shape === 'diamond' ? 4 : 8;
+    const startAngle = shape === 'diamond' || shape === 'enemy' ? -Math.PI / 2 : Math.PI / 2;
+    const spikeRadius = markerRadius * 1.45;
+
+    for (let index = 0; index < pointCount; index += 1) {
+      const angle = startAngle + (Math.PI * 2 * index) / pointCount;
+      const currentRadius = shape === 'enemy' && index % 2 === 0 ? spikeRadius : markerRadius;
+      points.push(point.x + Math.cos(angle) * currentRadius);
+      points.push(point.y + Math.sin(angle) * currentRadius);
+    }
   }
 
-  graphics.poly(points).fill({ color: 0xa78bfa, alpha: 0.9 });
-  graphics.poly(points).stroke({ width: 2, color: 0x312e81, alpha: 0.95 });
+  graphics.poly(points).fill({ color, alpha: 0.9 });
+  graphics.poly(points).stroke({ width: 2, color: strokeColor, alpha: 0.95 });
 }
 
 function drawFanTelegraph(
@@ -661,7 +688,9 @@ function draw(now: number): void {
       drawFieldMarker(
         graphics,
         mechanic.center,
+        mechanic.shape,
         mechanic.radius,
+        mechanic.color,
         width,
         height,
         arenaRadius,
@@ -700,6 +729,22 @@ function draw(now: number): void {
         .circle(point.x, point.y, mechanic.radius * scale)
         .fill({ color: 0xf47262, alpha: 0.14 });
       graphics.circle(point.x, point.y, mechanic.radius * scale).stroke({
+        width: 2,
+        color: 0xffd1ca,
+        alpha: 0.9,
+      });
+      continue;
+    }
+
+    if (mechanic.kind === 'donutTelegraph') {
+      graphics.circle(point.x, point.y, mechanic.outerRadius * scale).fill({
+        color: 0xc45779,
+        alpha: 0.12,
+      });
+      graphics
+        .circle(point.x, point.y, mechanic.innerRadius * scale)
+        .fill({ color: 0x162225, alpha: 1 });
+      graphics.circle(point.x, point.y, mechanic.outerRadius * scale).stroke({
         width: 2,
         color: 0xffd1ca,
         alpha: 0.9,
