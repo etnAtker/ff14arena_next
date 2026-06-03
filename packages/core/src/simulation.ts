@@ -430,6 +430,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       case 'tether':
       case 'actorMarker':
       case 'fanTelegraph':
+      case 'fieldMarker':
         break;
     }
 
@@ -1012,6 +1013,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             label: options.label,
             sourceId: options.sourceId ?? currentState.boss.id,
             targetId: options.target.id,
+            markerShape: options.markerShape ?? 'stackArrows',
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
@@ -1025,6 +1027,19 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             center: cloneVector(options.center),
             direction: options.direction,
             angle: options.angle,
+            radius: options.radius,
+            resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
+          });
+        },
+        fieldMarker(options) {
+          const currentState = assertState(state);
+          return spawnMechanic({
+            id: nextMechanicId(),
+            kind: 'fieldMarker',
+            label: options.label,
+            sourceId: options.sourceId ?? currentState.boss.id,
+            center: cloneVector(options.center),
+            shape: options.shape,
             radius: options.radius,
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });

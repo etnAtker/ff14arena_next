@@ -10,6 +10,10 @@ import {
   TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER,
 } from './battles/top-p1-program-loop';
 import { EDEN_P4_SPECIAL_BATTLE, EDEN_P4_SPECIAL_BOT_CONTROLLER } from './battles/eden-p4-special';
+import {
+  KEFKA_P2_FIRST_FORSAKEN_BATTLE,
+  KEFKA_P2_FIRST_FORSAKEN_BOT_CONTROLLER,
+} from './battles/kefka-p2-first-forsaken';
 import type { BattleBotController } from './runtime/bot';
 import { getBattleStatusMetadata } from './status-metadata';
 
@@ -22,11 +26,13 @@ export type {
 export const battleDefinitions: BattleDefinition[] = [
   TOP_P1_PROGRAM_LOOP_BATTLE,
   EDEN_P4_SPECIAL_BATTLE,
+  KEFKA_P2_FIRST_FORSAKEN_BATTLE,
 ];
 
 export const battleBotControllers = new Map<string, BattleBotController>([
   [TOP_P1_PROGRAM_LOOP_BATTLE.id, TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER],
   [EDEN_P4_SPECIAL_BATTLE.id, EDEN_P4_SPECIAL_BOT_CONTROLLER],
+  [KEFKA_P2_FIRST_FORSAKEN_BATTLE.id, KEFKA_P2_FIRST_FORSAKEN_BOT_CONTROLLER],
 ]);
 
 export const battleCatalog: BattleSummary[] = battleDefinitions.map((battle) => ({

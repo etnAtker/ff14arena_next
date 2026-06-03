@@ -62,3 +62,29 @@ export function createPose(
     },
   };
 }
+
+export function createPoseTowards(
+  actor: BaseActorSnapshot,
+  target: Vector2,
+  facing: number,
+): ActorControlPose {
+  const delta = {
+    x: target.x - actor.position.x,
+    y: target.y - actor.position.y,
+  };
+  const distanceToTarget = Math.hypot(delta.x, delta.y);
+  const stepDistance = getActorMoveSpeed(actor) * (FIXED_TICK_MS / 1_000);
+
+  if (distanceToTarget <= stepDistance) {
+    return {
+      position: target,
+      facing,
+      moveState: {
+        direction: { x: 0, y: 0 },
+        moving: false,
+      },
+    };
+  }
+
+  return createPose(actor, delta, facing);
+}

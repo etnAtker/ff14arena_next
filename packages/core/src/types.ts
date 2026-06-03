@@ -1,9 +1,11 @@
 import type {
   ActorControlFrame,
+  ActorMarkerShape,
   BaseActorSnapshot,
   BossSnapshot,
   DamageType,
   EncounterResult,
+  FieldMarkerShape,
   MechanicSnapshot,
   MapMarker,
   PartySlot,
@@ -121,6 +123,7 @@ export interface BattleScriptContext {
     actorMarker(options: {
       label: string;
       target: BaseActorSnapshot;
+      markerShape?: ActorMarkerShape;
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;
@@ -129,6 +132,14 @@ export interface BattleScriptContext {
       center: Vector2;
       direction: number;
       angle: number;
+      radius: number;
+      resolveAfterMs?: number;
+      sourceId?: string;
+    }): MechanicSnapshot;
+    fieldMarker(options: {
+      label: string;
+      center: Vector2;
+      shape: FieldMarkerShape;
       radius: number;
       resolveAfterMs?: number;
       sourceId?: string;

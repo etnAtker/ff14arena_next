@@ -3,7 +3,7 @@ import { FIXED_TICK_MS, createFacingTowards, createPointOnRadius, distance } fro
 import type { BaseActorSnapshot, MapMarker, PartySlot, StatusId, Vector2 } from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type { BattleBotController } from '../runtime/bot';
-import { createMoveDirection, createPose } from '../runtime/bot';
+import { createPoseTowards } from '../runtime/bot';
 import { getStatusDisplayName } from '../status-metadata';
 
 const ARENA_RADIUS = 20;
@@ -859,6 +859,6 @@ export const EDEN_P4_SPECIAL_BOT_CONTROLLER: BattleBotController = ({ snapshot, 
   const faceAngle = createFacingTowards(actor.position, snapshot.boss.position);
 
   return {
-    pose: createPose(actor, createMoveDirection(actor.position, target), faceAngle),
+    pose: createPoseTowards(actor, target, faceAngle),
   };
 };

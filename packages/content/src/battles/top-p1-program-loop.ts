@@ -10,7 +10,7 @@ import type {
 } from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type { BattleBotController } from '../runtime/bot';
-import { createMoveDirection, createPose } from '../runtime/bot';
+import { createPoseTowards } from '../runtime/bot';
 import { getStatusDisplayName } from '../status-metadata';
 
 type ProgramNumber = 1 | 2 | 3 | 4;
@@ -89,7 +89,6 @@ const BOT_TETHER_PICKUP_DISTANCE = 6;
 const BOT_TETHER_PICKUP_MIN_RATIO = 0.25;
 const BOT_TETHER_PICKUP_MAX_RATIO = 0.65;
 const BOT_TETHER_CROSSING_OVERSHOOT = 1.5;
-const BOT_TETHER_PICKUP_STOP_DISTANCE = 0;
 const BOT_TETHER_STAGING_RADIUS = 5;
 const BOT_TETHER_FINAL_APPROACH_MS = 2_500;
 // 冲击波固定拉到正点，避免 Bot 把线带到倾斜方向。
@@ -1043,7 +1042,6 @@ export const TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER: BattleBotController = ({
   const botTetherLanes = getBotTetherLanesFromScriptState(snapshot.scriptState);
   const heldLane = getHeldTetherLane(actor.id, tethers);
   let target = getWaitingPoint(slot, round, assignments);
-  let stopDistance: number | undefined;
 
   if (round !== null && assignments !== null) {
     const tetherLane = getTetherLane(slot, round, assignments);
@@ -1065,7 +1063,6 @@ export const TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER: BattleBotController = ({
           : getTetherStagingTarget(tetherTarget);
       } else if (nextBotTetherSlot === slot) {
         target = createTetherCrossingTarget(actor.position, pickupTarget);
-        stopDistance = BOT_TETHER_PICKUP_STOP_DISTANCE;
       } else {
         target = getTowerTarget(slot, round, assignments) ?? target;
       }
@@ -1078,6 +1075,6 @@ export const TOP_P1_PROGRAM_LOOP_BOT_CONTROLLER: BattleBotController = ({
   }
 
   return {
-    pose: createPose(actor, createMoveDirection(actor.position, target, stopDistance), faceAngle),
+    pose: createPoseTowards(actor, target, faceAngle),
   };
 };

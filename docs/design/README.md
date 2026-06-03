@@ -35,6 +35,7 @@
 14. [MVP 范围](./08-mvp/mvp-scope.md)
 15. [欧米茄绝境战 P1：循环程序](./09-content/top-p1-program-loop.md)
 16. [伊甸P4特殊：光与暗的龙诗](./09-content/eden-p4-special.md)
+17. [凯夫卡P2：一运](./09-content/kefka-p2-first-forsaken.md)
 
 文档术语：
 

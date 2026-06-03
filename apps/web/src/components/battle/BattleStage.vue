@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Application, Graphics, Text, TextStyle } from 'pixi.js';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
-import type { MapMarker, SimulationSnapshot, Vector2 } from '@ff14arena/shared';
+import type { ActorMarkerShape, MapMarker, SimulationSnapshot, Vector2 } from '@ff14arena/shared';
 import { getFacingForCameraYaw } from './camera';
 import { getSlotColor, getSlotStageText, type OperationMode } from '../../utils/ui';
 
@@ -399,6 +399,7 @@ function drawMapMarker(
 function drawActorMarker(
   graphics: Graphics,
   position: Vector2,
+  markerShape: ActorMarkerShape,
   width: number,
   height: number,
   arenaRadius: number,
@@ -409,24 +410,105 @@ function drawActorMarker(
     x: actorPoint.x,
     y: actorPoint.y - 2.4 * scale,
   };
-  const arrowWidth = 1.2 * scale;
-  const arrowHeight = 0.45 * scale;
-  const gap = 0.08 * scale;
 
-  for (let index = 0; index < 3; index += 1) {
-    const y = markerCenter.y + (index - 1) * (arrowHeight + gap);
+  if (markerShape === 'circleDot') {
+    graphics.circle(markerCenter.x, markerCenter.y, 0.75 * scale).stroke({
+      width: 2,
+      color: 0x7dd3fc,
+      alpha: 0.95,
+    });
+    graphics.circle(markerCenter.x, markerCenter.y, 0.16 * scale).fill({
+      color: 0xe0f2fe,
+      alpha: 0.95,
+    });
+    return;
+  }
+
+  if (markerShape === 'fanSector') {
+    const radius = 0.86 * scale;
+    const apex = {
+      x: markerCenter.x,
+      y: markerCenter.y + radius,
+    };
+    const points = [apex.x, apex.y];
+
+    graphics.circle(markerCenter.x, markerCenter.y, radius).stroke({
+      width: 1.5,
+      color: 0xfbcfe8,
+      alpha: 0.95,
+    });
+
+    for (let index = 0; index <= 8; index += 1) {
+      const fanAngle = -Math.PI * 0.72 + (Math.PI * 0.44 * index) / 8;
+      points.push(markerCenter.x + Math.cos(fanAngle) * radius);
+      points.push(markerCenter.y + Math.sin(fanAngle) * radius);
+    }
+
+    graphics.poly(points).fill({ color: 0xf472b6, alpha: 0.68 });
+    graphics.poly(points).stroke({ width: 1.5, color: 0x831843, alpha: 0.9 });
+    return;
+  }
+
+  const arrowLength = 0.72 * scale;
+  const arrowHalfWidth = 0.24 * scale;
+  const arrowOuterRadius = 0.95 * scale;
+  const arrowInnerRadius = arrowOuterRadius - arrowLength;
+
+  for (let index = 0; index < 4; index += 1) {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / 4;
+    const outward = {
+      x: Math.cos(angle),
+      y: Math.sin(angle),
+    };
+    const tangent = {
+      x: -outward.y,
+      y: outward.x,
+    };
+    const tip = {
+      x: markerCenter.x + outward.x * arrowInnerRadius,
+      y: markerCenter.y + outward.y * arrowInnerRadius,
+    };
+    const base = {
+      x: markerCenter.x + outward.x * arrowOuterRadius,
+      y: markerCenter.y + outward.y * arrowOuterRadius,
+    };
     const points = [
-      markerCenter.x - arrowWidth / 2,
-      y - arrowHeight / 2,
-      markerCenter.x + arrowWidth / 2,
-      y - arrowHeight / 2,
-      markerCenter.x,
-      y + arrowHeight / 2,
+      tip.x,
+      tip.y,
+      base.x + tangent.x * arrowHalfWidth,
+      base.y + tangent.y * arrowHalfWidth,
+      base.x - tangent.x * arrowHalfWidth,
+      base.y - tangent.y * arrowHalfWidth,
     ];
 
     graphics.poly(points).fill({ color: 0xf4d35e, alpha: 0.95 });
     graphics.poly(points).stroke({ width: 1.5, color: 0x4c2f12, alpha: 0.8 });
   }
+}
+
+function drawFieldMarker(
+  graphics: Graphics,
+  position: Vector2,
+  radius: number,
+  width: number,
+  height: number,
+  arenaRadius: number,
+  scale: number,
+): void {
+  const point = toStagePoint(position, width, height, arenaRadius);
+  const markerRadius = Math.max(radius * scale, 0.5 * scale);
+  const spikeRadius = markerRadius * 1.45;
+  const points: number[] = [];
+
+  for (let index = 0; index < 8; index += 1) {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / 8;
+    const currentRadius = index % 2 === 0 ? spikeRadius : markerRadius;
+    points.push(point.x + Math.cos(angle) * currentRadius);
+    points.push(point.y + Math.sin(angle) * currentRadius);
+  }
+
+  graphics.poly(points).fill({ color: 0xa78bfa, alpha: 0.9 });
+  graphics.poly(points).stroke({ width: 2, color: 0x312e81, alpha: 0.95 });
 }
 
 function drawFanTelegraph(
@@ -545,7 +627,15 @@ function draw(now: number): void {
         target === undefined ? null : (getRenderActorState(target.id)?.position ?? target.position);
 
       if (targetPosition !== null) {
-        drawActorMarker(graphics, targetPosition, width, height, arenaRadius, scale);
+        drawActorMarker(
+          graphics,
+          targetPosition,
+          mechanic.markerShape,
+          width,
+          height,
+          arenaRadius,
+          scale,
+        );
       }
 
       continue;
@@ -566,6 +656,19 @@ function draw(now: number): void {
     }
 
     const point = toStagePoint(mechanic.center, width, height, arenaRadius);
+
+    if (mechanic.kind === 'fieldMarker') {
+      drawFieldMarker(
+        graphics,
+        mechanic.center,
+        mechanic.radius,
+        width,
+        height,
+        arenaRadius,
+        scale,
+      );
+      continue;
+    }
 
     if (mechanic.kind === 'tower') {
       graphics.circle(point.x, point.y, mechanic.radius * scale).fill({

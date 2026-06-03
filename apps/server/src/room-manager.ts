@@ -936,7 +936,7 @@ export class RoomManager {
       roomId: room.roomId,
       party: buildPartyBlueprint(room),
       sourceSnapshot,
-      resetAllActors: false,
+      resetAllActors: true,
       keepTimeMs: false,
       latestResult: null,
     });

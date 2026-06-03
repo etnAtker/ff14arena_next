@@ -5,6 +5,8 @@ export type DamageType = 'raidwide' | 'avoidable' | 'punishment';
 export type EncounterOutcome = 'success' | 'failure';
 export type SimulationInputType = 'move' | 'face' | 'use-knockback-immune' | 'use-sprint';
 export type StatusId = string;
+export type ActorMarkerShape = 'stackArrows' | 'circleDot' | 'fanSector';
+export type FieldMarkerShape = 'enemy';
 export type MechanicKind =
   | 'circle'
   | 'donut'
@@ -14,7 +16,8 @@ export type MechanicKind =
   | 'tether'
   | 'actorMarker'
   | 'fanTelegraph'
-  | 'circleTelegraph';
+  | 'circleTelegraph'
+  | 'fieldMarker';
 
 export interface MoveState {
   direction: Vector2;
@@ -162,6 +165,7 @@ export interface ActorMarkerMechanicSnapshot {
   label: string;
   sourceId: string;
   targetId: string;
+  markerShape: ActorMarkerShape;
   resolveAt: number;
 }
 
@@ -177,6 +181,17 @@ export interface FanTelegraphMechanicSnapshot {
   resolveAt: number;
 }
 
+export interface FieldMarkerMechanicSnapshot {
+  id: string;
+  kind: 'fieldMarker';
+  label: string;
+  sourceId: string;
+  center: Vector2;
+  shape: FieldMarkerShape;
+  radius: number;
+  resolveAt: number;
+}
+
 export type MechanicSnapshot =
   | CircleMechanicSnapshot
   | DonutMechanicSnapshot
@@ -186,7 +201,8 @@ export type MechanicSnapshot =
   | CircleTelegraphMechanicSnapshot
   | TetherMechanicSnapshot
   | ActorMarkerMechanicSnapshot
-  | FanTelegraphMechanicSnapshot;
+  | FanTelegraphMechanicSnapshot
+  | FieldMarkerMechanicSnapshot;
 
 export interface EncounterResult {
   outcome: EncounterOutcome;
