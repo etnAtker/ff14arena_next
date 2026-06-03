@@ -1207,6 +1207,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       sourceSnapshot = null,
       keepTimeMs = false,
       resetAllActors = false,
+      preserveActorPose = false,
       resetStateActorIds,
       resetPositionActorIds,
       latestResult = null,
@@ -1225,6 +1226,11 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         const placement = battle.initialPartyPositions[member.slot];
         const previousActor = previousActors.get(member.actorId);
         const shouldResetState = resetAllActors || nextResetStateActorIds.has(member.actorId);
+        const shouldPreserveActorPose =
+          preserveActorPose &&
+          shouldResetState &&
+          previousActor !== undefined &&
+          !nextResetPositionActorIds.has(member.actorId);
         const actorBase: BaseActorSnapshot =
           previousActor === undefined || shouldResetState
             ? {
@@ -1265,7 +1271,14 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           online: member.online ?? member.kind === 'bot',
         };
 
-        if (
+        if (shouldPreserveActorPose) {
+          actor.position = cloneVector(previousActor.position);
+          actor.facing = previousActor.facing;
+          actor.moveState = {
+            direction: cloneVector(previousActor.moveState.direction),
+            moving: previousActor.moveState.moving,
+          };
+        } else if (
           previousActor === undefined ||
           shouldResetState ||
           nextResetPositionActorIds.has(member.actorId)
@@ -1348,7 +1361,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         schedulerOrder: 0,
         scriptCursorTimeMs: 0,
         scriptState:
-          sourceSnapshot === null
+          sourceSnapshot === null || resetAllActors
             ? new Map()
             : new Map(
                 Object.entries(sourceSnapshot.scriptState).map(([key, value]) => [

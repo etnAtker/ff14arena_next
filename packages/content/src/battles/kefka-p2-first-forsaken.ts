@@ -92,7 +92,6 @@ const ADD_TARGET_RING_RADIUS = 4;
 const BOT_EVEN_OTHER_BAIT_TANGENTIAL_OFFSET = 4.45;
 const BOT_EVEN_OTHER_BAIT_INWARD_OFFSET = -0.35;
 const BOT_EVEN_OTHER_NEAR_BAIT_RADIUS = BOSS_TARGET_RING_RADIUS - 1;
-const BOT_FINAL_FOOT_DODGE_RADIUS = ARENA_RADIUS - 1;
 const INITIAL_MARKER_POOL: MarkerPool = {
   share: 8,
   largeCircle: 12,
@@ -1013,17 +1012,6 @@ function getTerminatorModesFromSnapshot(
   return (scriptState['kefka:terminatorModes'] as Record<string, TerminatorMode> | undefined) ?? {};
 }
 
-function getFootSourcesFromSnapshot(
-  scriptState: Record<string, unknown>,
-  evenRoundIndex: number,
-): KefkaFootSource[] {
-  return (
-    (scriptState['kefka:footSources'] as Record<string, KefkaFootSource[]> | undefined)?.[
-      String(evenRoundIndex)
-    ] ?? []
-  );
-}
-
 function getCurrentOrNextRound(timeMs: number, rounds: KefkaTowerRound[]): KefkaTowerRound | null {
   return rounds.find((round) => timeMs < round.resolveAt) ?? null;
 }
@@ -1243,37 +1231,17 @@ function getFootBaitTarget(baitRound: KefkaTowerRound, mode: TerminatorMode): Ve
   return createPointOnRadius(baitAngle, BOSS_TARGET_RING_RADIUS + 2);
 }
 
-function isPointInsideSector(
-  point: Vector2,
-  center: Vector2,
-  direction: number,
-  angle: number,
-  radius: number,
-): boolean {
-  if (distance(point, center) > radius) {
-    return false;
+function getFinalFootDodgeTarget(finalRound: KefkaTowerRound, mode: TerminatorMode): Vector2 {
+  const baitTarget = getFootBaitTarget(finalRound, mode);
+
+  if (mode === 'future') {
+    return {
+      x: -baitTarget.x,
+      y: -baitTarget.y,
+    };
   }
 
-  if (distance(point, center) === 0) {
-    return true;
-  }
-
-  return getAngleDiff(Math.atan2(point.y - center.y, point.x - center.x), direction) <= angle / 2;
-}
-
-function getFinalFootDodgeTarget(footSources: readonly KefkaFootSource[]): Vector2 {
-  const candidates = Array.from({ length: 64 }, (_, index) =>
-    createPointOnRadius((Math.PI * 2 * index) / 64, BOT_FINAL_FOOT_DODGE_RADIUS),
-  );
-
-  return (
-    candidates.find((candidate) =>
-      footSources.every(
-        (source) =>
-          !isPointInsideSector(candidate, source.center, source.direction, FOOT_ANGLE, FOOT_RADIUS),
-      ),
-    ) ?? createPointOnRadius(0, BOT_FINAL_FOOT_DODGE_RADIUS)
-  );
+  return baitTarget;
 }
 
 function getKefkaBotTarget(
@@ -1306,7 +1274,7 @@ function getKefkaBotTarget(
     }
 
     if (footRound.index === ROUND_COUNT) {
-      return getFinalFootDodgeTarget(getFootSourcesFromSnapshot(scriptState, footRound.index));
+      return getFinalFootDodgeTarget(footRound, mode);
     }
   }
 
@@ -1365,5 +1333,6 @@ export const KEFKA_P2_FIRST_FORSAKEN_TESTING = {
   getLocalTowerPoint,
   getOuterTowerPoint,
   getNoSharePatternTarget,
+  getFootBaitTarget,
   getFinalFootDodgeTarget,
 };

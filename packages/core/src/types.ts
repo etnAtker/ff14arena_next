@@ -208,6 +208,7 @@ export interface SimulationInstance {
     sourceSnapshot?: SimulationSnapshot | null;
     keepTimeMs?: boolean;
     resetAllActors?: boolean;
+    preserveActorPose?: boolean;
     resetStateActorIds?: Set<string>;
     resetPositionActorIds?: Set<string>;
     latestResult?: EncounterResult | null;

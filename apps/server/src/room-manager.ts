@@ -937,6 +937,7 @@ export class RoomManager {
       party: buildPartyBlueprint(room),
       sourceSnapshot,
       resetAllActors: true,
+      preserveActorPose: true,
       keepTimeMs: false,
       latestResult: null,
     });
