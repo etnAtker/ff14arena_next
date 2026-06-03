@@ -3,7 +3,6 @@ import {
   FIXED_TICK_MS,
   INJURY_UP_MULTIPLIER,
   createFacingTowards,
-  createPointOnRadius,
   distance,
 } from '@ff14arena/core';
 import type { BaseActorSnapshot, MapMarker, PartySlot, StatusId, Vector2 } from '@ff14arena/shared';
@@ -28,8 +27,6 @@ interface PendingElementResolution {
 const ARENA_RADIUS = 20;
 const BOSS_TARGET_RING_RADIUS = 6;
 const CENTER = { x: 0, y: 0 } as const satisfies Vector2;
-const NORTH_ANGLE = -Math.PI / 2;
-const RING_STEP = Math.PI / 4;
 const DEEP_AGONY_CAST_START_AT = 3_000;
 const DEEP_AGONY_CAST_MS = 4_700;
 const MECHANIC_START_AT = DEEP_AGONY_CAST_START_AT + DEEP_AGONY_CAST_MS;
@@ -78,6 +75,8 @@ const ELEMENT_CORNERS = [
   { x: -ELEMENT_CORNER_DISTANCE, y: -ELEMENT_CORNER_DISTANCE },
 ] as const satisfies readonly Vector2[];
 
+const MARKER_CORNER_DISTANCE = 12;
+
 const MARKER_COLORS = {
   red: '#ef4444',
   yellow: '#f4d35e',
@@ -85,22 +84,64 @@ const MARKER_COLORS = {
   purple: '#a78bfa',
 } as const;
 
-const KEFKA_MAP_MARKER_BASES: Array<Omit<MapMarker, 'position' | 'radius' | 'size'>> = [
-  { label: 'A', shape: 'circle', color: MARKER_COLORS.red },
-  { label: '2', shape: 'square', color: MARKER_COLORS.yellow },
-  { label: 'B', shape: 'circle', color: MARKER_COLORS.yellow },
-  { label: '3', shape: 'square', color: MARKER_COLORS.cyan },
-  { label: 'C', shape: 'circle', color: MARKER_COLORS.cyan },
-  { label: '4', shape: 'square', color: MARKER_COLORS.purple },
-  { label: 'D', shape: 'circle', color: MARKER_COLORS.purple },
-  { label: '1', shape: 'square', color: MARKER_COLORS.red },
+const KEFKA_MAP_MARKERS: MapMarker[] = [
+  {
+    label: 'A',
+    shape: 'circle',
+    color: MARKER_COLORS.red,
+    position: { x: 0, y: -MARKER_CORNER_DISTANCE },
+    radius: 1.25,
+  },
+  {
+    label: '2',
+    shape: 'square',
+    color: MARKER_COLORS.yellow,
+    position: { x: MARKER_CORNER_DISTANCE, y: -MARKER_CORNER_DISTANCE },
+    size: 2.2,
+  },
+  {
+    label: 'B',
+    shape: 'circle',
+    color: MARKER_COLORS.yellow,
+    position: { x: MARKER_CORNER_DISTANCE, y: 0 },
+    radius: 1.25,
+  },
+  {
+    label: '3',
+    shape: 'square',
+    color: MARKER_COLORS.cyan,
+    position: { x: MARKER_CORNER_DISTANCE, y: MARKER_CORNER_DISTANCE },
+    size: 2.2,
+  },
+  {
+    label: 'C',
+    shape: 'circle',
+    color: MARKER_COLORS.cyan,
+    position: { x: 0, y: MARKER_CORNER_DISTANCE },
+    radius: 1.25,
+  },
+  {
+    label: '4',
+    shape: 'square',
+    color: MARKER_COLORS.purple,
+    position: { x: -MARKER_CORNER_DISTANCE, y: MARKER_CORNER_DISTANCE },
+    size: 2.2,
+  },
+  {
+    label: 'D',
+    shape: 'circle',
+    color: MARKER_COLORS.purple,
+    position: { x: -MARKER_CORNER_DISTANCE, y: 0 },
+    radius: 1.25,
+  },
+  {
+    label: '1',
+    shape: 'square',
+    color: MARKER_COLORS.red,
+    position: { x: -MARKER_CORNER_DISTANCE, y: -MARKER_CORNER_DISTANCE },
+    size: 2.2,
+  },
 ];
-
-const KEFKA_MAP_MARKERS: MapMarker[] = KEFKA_MAP_MARKER_BASES.map((marker, index) => ({
-  ...marker,
-  position: createPointOnRadius(NORTH_ANGLE + RING_STEP * index, 13),
-  ...(marker.shape === 'circle' ? { radius: 1.25 } : { size: 2.2 }),
-}));
 
 function shuffle<T>(values: readonly T[]): T[] {
   const shuffled = [...values];
