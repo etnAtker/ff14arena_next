@@ -968,6 +968,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             sourceId: options.sourceId ?? currentState.boss.id,
             center: cloneVector(options.center),
             radius: options.radius,
+            ...(options.color === undefined ? {} : { color: options.color }),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
@@ -980,6 +981,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             sourceId: options.sourceId ?? currentState.boss.id,
             center: cloneVector(options.center),
             radius: options.radius,
+            ...(options.color === undefined ? {} : { color: options.color }),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
@@ -993,6 +995,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             center: cloneVector(options.center),
             innerRadius: options.innerRadius,
             outerRadius: options.outerRadius,
+            ...(options.color === undefined ? {} : { color: options.color }),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },

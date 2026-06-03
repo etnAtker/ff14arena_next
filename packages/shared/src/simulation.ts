@@ -141,6 +141,7 @@ export interface CircleTelegraphMechanicSnapshot {
   sourceId: string;
   center: Vector2;
   radius: number;
+  color?: string;
   resolveAt: number;
 }
 
@@ -152,6 +153,7 @@ export interface DonutTelegraphMechanicSnapshot {
   center: Vector2;
   innerRadius: number;
   outerRadius: number;
+  color?: string;
   resolveAt: number;
 }
 

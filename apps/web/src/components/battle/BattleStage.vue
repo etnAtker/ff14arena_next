@@ -725,20 +725,22 @@ function draw(now: number): void {
     }
 
     if (mechanic.kind === 'circleTelegraph') {
-      graphics
-        .circle(point.x, point.y, mechanic.radius * scale)
-        .fill({ color: 0xf47262, alpha: 0.14 });
+      const color = mechanic.color === undefined ? 0xf47262 : parseHexColor(mechanic.color);
+      const strokeColor = mechanic.color === undefined ? 0xffd1ca : color;
+      graphics.circle(point.x, point.y, mechanic.radius * scale).fill({ color, alpha: 0.14 });
       graphics.circle(point.x, point.y, mechanic.radius * scale).stroke({
         width: 2,
-        color: 0xffd1ca,
+        color: strokeColor,
         alpha: 0.9,
       });
       continue;
     }
 
     if (mechanic.kind === 'donutTelegraph') {
+      const color = mechanic.color === undefined ? 0xc45779 : parseHexColor(mechanic.color);
+      const strokeColor = mechanic.color === undefined ? 0xffd1ca : color;
       graphics.circle(point.x, point.y, mechanic.outerRadius * scale).fill({
-        color: 0xc45779,
+        color,
         alpha: 0.12,
       });
       graphics
@@ -746,7 +748,7 @@ function draw(now: number): void {
         .fill({ color: 0x162225, alpha: 1 });
       graphics.circle(point.x, point.y, mechanic.outerRadius * scale).stroke({
         width: 2,
-        color: 0xffd1ca,
+        color: strokeColor,
         alpha: 0.9,
       });
       continue;

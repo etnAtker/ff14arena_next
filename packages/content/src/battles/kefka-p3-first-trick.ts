@@ -1,10 +1,5 @@
 import type { BattleDefinition, BattleScriptContext } from '@ff14arena/core';
-import {
-  FIXED_TICK_MS,
-  INJURY_UP_MULTIPLIER,
-  createFacingTowards,
-  distance,
-} from '@ff14arena/core';
+import { INJURY_UP_MULTIPLIER, createFacingTowards, distance } from '@ff14arena/core';
 import type { BaseActorSnapshot, MapMarker, PartySlot, StatusId, Vector2 } from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import { getStatusDisplayName } from '../status-metadata';
@@ -28,7 +23,7 @@ const ARENA_RADIUS = 20;
 const BOSS_TARGET_RING_RADIUS = 6;
 const CENTER = { x: 0, y: 0 } as const satisfies Vector2;
 const DEEP_AGONY_CAST_START_AT = 3_000;
-const DEEP_AGONY_CAST_MS = 4_700;
+const DEEP_AGONY_CAST_MS = 1_000;
 const MECHANIC_START_AT = DEEP_AGONY_CAST_START_AT + DEEP_AGONY_CAST_MS;
 const SHORT_ELEMENT_BUFF_MS = 19_000;
 const LONG_ELEMENT_BUFF_MS = 46_000;
@@ -47,15 +42,18 @@ const WATER_ELEMENT_RADIUS = 5;
 const WIND_SHARE_RADIUS = 6;
 const WIND_SHARE_REQUIRED_PLAYERS = 2;
 const BASE_ELEMENT_KNOCKBACK_DISTANCE = 20;
-const DELAYED_RESOLUTION_MS = FIXED_TICK_MS * 5;
+const DELAYED_RESOLUTION_MS = 1_500;
 const TELEGRAPH_MS = 500;
-const COMPLETE_AT = MECHANIC_START_AT + LONG_ELEMENT_BUFF_MS + DELAYED_RESOLUTION_MS * 2 + 5_000;
+const RESOLUTION_VISUAL_MS = 500;
+const COMPLETE_AT = 55_500;
 
 const CHAOS_FIRE_STATUS_ID = 'kefka_p3_chaos_fire';
 const CHAOS_WATER_STATUS_ID = 'kefka_p3_chaos_water';
 const CHAOS_WIND_STATUS_ID = 'kefka_p3_chaos_wind';
 const CHAOS_REVERSE_WIND_STATUS_ID = 'kefka_p3_chaos_reverse_wind';
 const WIND_STATUS_IDS = [CHAOS_WIND_STATUS_ID, CHAOS_REVERSE_WIND_STATUS_ID] as const;
+const WATER_TELEGRAPH_COLOR = '#38bdf8';
+const WIND_TELEGRAPH_COLOR = '#22c55e';
 const TANK_HEALER_SLOTS = ['MT', 'ST', 'H1', 'H2'] as const satisfies readonly PartySlot[];
 const DPS_SLOTS = ['D1', 'D2', 'D3', 'D4'] as const satisfies readonly PartySlot[];
 const INITIAL_POSITIONS: Record<PartySlot, Vector2> = {
@@ -412,6 +410,7 @@ function resolveWaterBuff(ctx: BattleScriptContext, actorId: string): void {
     center: actor.position,
     innerRadius: WATER_SELF_INNER_RADIUS,
     outerRadius: WATER_SELF_OUTER_RADIUS,
+    color: WATER_TELEGRAPH_COLOR,
     resolveAfterMs: TELEGRAPH_MS,
   });
 
@@ -496,8 +495,13 @@ function applyElementKnockback(
   ctx: BattleScriptContext,
   hits: BaseActorSnapshot[],
   source: Vector2,
+  ignoredActorId?: string,
 ): void {
   for (const hit of hits) {
+    if (hit.id === ignoredActorId) {
+      continue;
+    }
+
     const freshActor = getFreshActor(ctx, hit.id);
 
     if (freshActor === null || !freshActor.alive) {
@@ -516,31 +520,27 @@ function resolveFireElement(ctx: BattleScriptContext, count: number): void {
 
   for (const target of targets) {
     ctx.spawn.donutTelegraph({
-      label: '火元素追击预兆',
+      label: '火元素追击范围',
       center: target.position,
       innerRadius: FIRE_ELEMENT_INNER_RADIUS,
       outerRadius: FIRE_ELEMENT_OUTER_RADIUS,
-      resolveAfterMs: TELEGRAPH_MS,
+      resolveAfterMs: RESOLUTION_VISUAL_MS,
     });
-  }
 
-  ctx.timeline.at(ctx.state.getBattleTime() + TELEGRAPH_MS, () => {
-    for (const target of targets) {
-      const actors = ctx.select.allPlayers();
-      const hits = getActorsInsideDonut(
-        actors,
-        target.position,
-        FIRE_ELEMENT_INNER_RADIUS,
-        FIRE_ELEMENT_OUTER_RADIUS,
-      );
+    const actors = ctx.select.allPlayers();
+    const hits = getActorsInsideDonut(
+      actors,
+      target.position,
+      FIRE_ELEMENT_INNER_RADIUS,
+      FIRE_ELEMENT_OUTER_RADIUS,
+    );
 
-      for (const hit of hits) {
-        applyKefkaP3Damage(ctx, hit, '火元素块');
-      }
-
-      applyElementKnockback(ctx, hits, fireElement.position);
+    for (const hit of hits) {
+      applyKefkaP3Damage(ctx, hit, '火元素块');
     }
-  });
+
+    applyElementKnockback(ctx, hits, fireElement.position, target.id);
+  }
 }
 
 function resolveWaterElement(ctx: BattleScriptContext, count: number): void {
@@ -553,25 +553,22 @@ function resolveWaterElement(ctx: BattleScriptContext, count: number): void {
 
   for (const target of targets) {
     ctx.spawn.circleTelegraph({
-      label: '水元素追击预兆',
+      label: '水元素追击范围',
       center: target.position,
       radius: WATER_ELEMENT_RADIUS,
-      resolveAfterMs: TELEGRAPH_MS,
+      color: WATER_TELEGRAPH_COLOR,
+      resolveAfterMs: RESOLUTION_VISUAL_MS,
     });
-  }
 
-  ctx.timeline.at(ctx.state.getBattleTime() + TELEGRAPH_MS, () => {
-    for (const target of targets) {
-      const actors = ctx.select.allPlayers();
-      const hits = getActorsInsideCircle(actors, target.position, WATER_ELEMENT_RADIUS);
+    const actors = ctx.select.allPlayers();
+    const hits = getActorsInsideCircle(actors, target.position, WATER_ELEMENT_RADIUS);
 
-      for (const hit of hits) {
-        applyKefkaP3Damage(ctx, hit, '水元素块');
-      }
-
-      applyElementKnockback(ctx, hits, waterElement.position);
+    for (const hit of hits) {
+      applyKefkaP3Damage(ctx, hit, '水元素块');
     }
-  });
+
+    applyElementKnockback(ctx, hits, waterElement.position, target.id);
+  }
 }
 
 function resolveWindShare(ctx: BattleScriptContext, count: number): void {
@@ -584,32 +581,25 @@ function resolveWindShare(ctx: BattleScriptContext, count: number): void {
 
   for (const target of targets) {
     ctx.spawn.circleTelegraph({
-      label: '混沌之风分摊预兆',
+      label: '混沌之风分摊范围',
       center: target.position,
       radius: WIND_SHARE_RADIUS,
-      resolveAfterMs: TELEGRAPH_MS,
+      color: WIND_TELEGRAPH_COLOR,
+      resolveAfterMs: RESOLUTION_VISUAL_MS,
     });
-  }
 
-  ctx.timeline.at(ctx.state.getBattleTime() + TELEGRAPH_MS, () => {
-    for (const target of targets) {
-      const hits = getActorsInsideCircle(
-        ctx.select.allPlayers(),
-        target.position,
-        WIND_SHARE_RADIUS,
-      );
+    const hits = getActorsInsideCircle(ctx.select.allPlayers(), target.position, WIND_SHARE_RADIUS);
 
-      if (hits.length < WIND_SHARE_REQUIRED_PLAYERS) {
-        ctx.state.fail('混沌之风分摊人数不足');
-        ctx.damage.kill([target.id], '混沌之风分摊人数不足');
-        continue;
-      }
-
-      for (const hit of hits) {
-        applyKefkaP3Damage(ctx, hit, '混沌之风分摊');
-      }
+    if (hits.length < WIND_SHARE_REQUIRED_PLAYERS) {
+      ctx.state.fail('混沌之风分摊人数不足');
+      ctx.damage.kill([target.id], '混沌之风分摊人数不足');
+      continue;
     }
-  });
+
+    for (const hit of hits) {
+      applyKefkaP3Damage(ctx, hit, '混沌之风分摊');
+    }
+  }
 }
 
 function resolvePendingElementResolutions(ctx: BattleScriptContext, resolveAt: number): void {
@@ -689,6 +679,8 @@ export const KEFKA_P3_FIRST_TRICK_BATTLE: BattleDefinition = {
 };
 
 export const KEFKA_P3_FIRST_TRICK_TESTING = {
+  DEEP_AGONY_CAST_START_AT,
+  DEEP_AGONY_CAST_MS,
   MECHANIC_START_AT,
   SHORT_ELEMENT_BUFF_MS,
   LONG_ELEMENT_BUFF_MS,
@@ -701,6 +693,8 @@ export const KEFKA_P3_FIRST_TRICK_TESTING = {
   WATER_ELEMENT_RADIUS,
   WIND_SHARE_RADIUS,
   DELAYED_RESOLUTION_MS,
+  TELEGRAPH_MS,
+  COMPLETE_AT,
   ELEMENT_CORNERS,
   createElementBlocks,
   getKnockbackDistance,

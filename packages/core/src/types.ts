@@ -100,6 +100,7 @@ export interface BattleScriptContext {
       radius: number;
       resolveAfterMs?: number;
       sourceId?: string;
+      color?: string;
     }): MechanicSnapshot;
     circleTelegraph(options: {
       label: string;
@@ -107,6 +108,7 @@ export interface BattleScriptContext {
       radius: number;
       resolveAfterMs?: number;
       sourceId?: string;
+      color?: string;
     }): MechanicSnapshot;
     donutTelegraph(options: {
       label: string;
@@ -115,6 +117,7 @@ export interface BattleScriptContext {
       outerRadius: number;
       resolveAfterMs?: number;
       sourceId?: string;
+      color?: string;
     }): MechanicSnapshot;
     tether(options: {
       label: string;
