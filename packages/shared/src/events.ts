@@ -89,6 +89,7 @@ export type ActorDiedEvent = BaseSimulationEvent<
     actorId: string;
     actorName: string;
     deathReason: string;
+    mechanicActive: boolean;
   }
 >;
 

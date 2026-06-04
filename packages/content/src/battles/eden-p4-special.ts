@@ -158,7 +158,7 @@ function hasStatus(actor: BaseActorSnapshot, statusId: StatusId): boolean {
 function triggerPartyWipe(ctx: BattleScriptContext, sourceLabel: string): void {
   ctx.state.fail(sourceLabel);
   ctx.damage.kill(
-    ctx.select.alivePlayers().map((actor) => actor.id),
+    ctx.select.activePlayers().map((actor) => actor.id),
     sourceLabel,
   );
   ctx.state.complete('failure');
@@ -169,7 +169,9 @@ function getActorsInside(
   center: Vector2,
   radius: number,
 ): BaseActorSnapshot[] {
-  return actors.filter((actor) => actor.alive && distance(actor.position, center) <= radius);
+  return actors.filter(
+    (actor) => actor.mechanicActive && distance(actor.position, center) <= radius,
+  );
 }
 
 function createAssignments(actors: BaseActorSnapshot[]): EdenP4Assignments {
@@ -228,7 +230,7 @@ function getClockwiseAngleFromNorth(position: Vector2): number {
 }
 
 function isInsideFan(actor: BaseActorSnapshot, direction: number): boolean {
-  if (!actor.alive || distance(actor.position, CENTER) > ARENA_RADIUS) {
+  if (!actor.mechanicActive || distance(actor.position, CENTER) > ARENA_RADIUS) {
     return false;
   }
 
@@ -282,7 +284,7 @@ function validateLightBondage(ctx: BattleScriptContext, lightActorIds: string[])
   for (const actorId of lightActorIds) {
     const actor = getActorById(actors, actorId);
 
-    if (actor === null || !actor.alive) {
+    if (actor === null || !actor.mechanicActive) {
       triggerPartyWipe(ctx, '光之束缚玩家死亡');
       return;
     }
@@ -331,7 +333,7 @@ function validateDarkWater(
 ): void {
   const darkWaterActors = darkWaterSlots.map((slot) => getActorBySlot(actors, slot));
 
-  if (darkWaterActors.some((actor) => !actor.alive)) {
+  if (darkWaterActors.some((actor) => !actor.mechanicActive)) {
     triggerPartyWipe(ctx, '黑暗狂水玩家死亡');
     return;
   }
@@ -345,7 +347,7 @@ function validateDarkWater(
 
 function validateFanAttacks(ctx: BattleScriptContext, actors: BaseActorSnapshot[]): void {
   const fanTargets = [...actors]
-    .filter((actor) => actor.alive)
+    .filter((actor) => actor.mechanicActive)
     .sort((left, right) => distance(left.position, CENTER) - distance(right.position, CENTER))
     .slice(0, 4);
 
@@ -374,7 +376,7 @@ function validateFanAttacks(ctx: BattleScriptContext, actors: BaseActorSnapshot[
 function spawnFanTelegraphs(ctx: BattleScriptContext): void {
   const fanTargets = ctx.select
     .allPlayers()
-    .filter((actor) => actor.alive)
+    .filter((actor) => actor.mechanicActive)
     .sort((left, right) => distance(left.position, CENTER) - distance(right.position, CENTER))
     .slice(0, 4);
 

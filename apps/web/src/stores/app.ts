@@ -356,7 +356,7 @@ export const useAppStore = defineStore('app', () => {
 
     const actor = snapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
 
-    if (actor === null || !actor.alive) {
+    if (actor === null || !actor.mechanicActive) {
       return null;
     }
 
@@ -373,7 +373,7 @@ export const useAppStore = defineStore('app', () => {
     const actor =
       authoritativeSnapshot.value?.actors.find((candidate) => candidate.slot === slot) ?? null;
 
-    if (actor === null || !actor.alive) {
+    if (actor === null || !actor.mechanicActive) {
       return null;
     }
 
@@ -467,7 +467,7 @@ export const useAppStore = defineStore('app', () => {
 
     const actor = snapshotValue.actors.find((candidate) => candidate.id === controlledPose.actorId);
 
-    if (actor === undefined || !actor.alive) {
+    if (actor === undefined || !actor.mechanicActive) {
       clearLocalControlledPose();
       return;
     }
@@ -983,6 +983,18 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
+  async function updateRoomOptions(options: Partial<RoomStateDto['options']>): Promise<void> {
+    if (room.value === null) {
+      return;
+    }
+
+    const currentSocket = socket.value ?? (await ensureSocket());
+    currentSocket.emit('room:update-options', {
+      roomId: room.value.roomId,
+      options,
+    });
+  }
+
   function applyOptimisticContinuousInput(frame: {
     moveDirection: Vector2;
     facing?: number;
@@ -1046,7 +1058,7 @@ export const useAppStore = defineStore('app', () => {
       (candidate) => candidate.id === options.actorId,
     );
 
-    if (actor === undefined || !actor.alive) {
+    if (actor === undefined || !actor.mechanicActive) {
       return;
     }
 
@@ -1355,12 +1367,7 @@ export const useAppStore = defineStore('app', () => {
 
         if (actor !== undefined) {
           actor.currentHp = event.payload.remainingHp;
-          actor.alive = event.payload.remainingHp > 0;
           actor.lastDamageSource = event.payload.sourceLabel;
-
-          if (!actor.alive && actor.id === localControlledPose.value?.actorId) {
-            clearLocalControlledPose();
-          }
         }
         break;
       }
@@ -1383,10 +1390,11 @@ export const useAppStore = defineStore('app', () => {
 
         if (actor !== undefined) {
           actor.alive = false;
+          actor.mechanicActive = event.payload.mechanicActive;
           actor.currentHp = 0;
           actor.deathReason = event.payload.deathReason;
 
-          if (actor.id === localControlledPose.value?.actorId) {
+          if (!actor.mechanicActive && actor.id === localControlledPose.value?.actorId) {
             clearLocalControlledPose();
           }
         }
@@ -1436,6 +1444,7 @@ export const useAppStore = defineStore('app', () => {
     spectate,
     startBattle,
     quickFail,
+    updateRoomOptions,
     sendContinuousInputFrame,
     previewFaceAngle,
     useKnockbackImmune,

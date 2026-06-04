@@ -17,6 +17,7 @@ import type {
 
 export interface SimulationConfig {
   tickRate?: number;
+  deadActorsInteract?: boolean;
 }
 
 export interface PartyMemberBlueprint {
@@ -49,6 +50,7 @@ export interface BattleScriptContext {
   };
   readonly select: {
     allPlayers(): BaseActorSnapshot[];
+    activePlayers(): BaseActorSnapshot[];
     alivePlayers(): BaseActorSnapshot[];
     bySlot(slot: PartySlot): BaseActorSnapshot | undefined;
     randomPlayers(

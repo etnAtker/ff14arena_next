@@ -484,7 +484,9 @@ function getWaitingPoint(
 }
 
 function getActorsInside(actors: BaseActorSnapshot[], center: Vector2, radius: number) {
-  return actors.filter((actor) => actor.alive && distance(actor.position, center) <= radius);
+  return actors.filter(
+    (actor) => actor.mechanicActive && distance(actor.position, center) <= radius,
+  );
 }
 
 function hasStatus(actor: BaseActorSnapshot, statusId: StatusId): boolean {
@@ -533,7 +535,7 @@ function expireProgramStatus(
 
   const actor = ctx.select.allPlayers().find((candidate) => candidate.id === actorId);
 
-  if (actor === undefined || !actor.alive) {
+  if (actor === undefined || !actor.mechanicActive) {
     return;
   }
 
@@ -573,7 +575,7 @@ function applyTopDamage(
 function triggerTowerExplosion(ctx: BattleScriptContext, roundIndex: ProgramNumber): void {
   ctx.state.fail(`第 ${roundIndex} 轮塔爆炸`);
   ctx.damage.kill(
-    ctx.select.alivePlayers().map((actor) => actor.id),
+    ctx.select.activePlayers().map((actor) => actor.id),
     '塔爆炸',
   );
   ctx.state.complete('failure');
@@ -859,7 +861,7 @@ export const TOP_P1_PROGRAM_LOOP_BATTLE: BattleDefinition = {
       ctx.state.setValue('top:botTetherLanes', createBotTetherLanes(assignments));
       ctx.state.setValue('top:rounds', rounds);
 
-      for (const actor of ctx.select.alivePlayers()) {
+      for (const actor of ctx.select.activePlayers()) {
         if (actor.slot === null) {
           continue;
         }

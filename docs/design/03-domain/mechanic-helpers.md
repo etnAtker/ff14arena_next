@@ -29,11 +29,15 @@ Helper 固定分为五类：
 选择类 helper 包含：
 
 - `allPlayers()`
+- `activePlayers()`
 - `alivePlayers()`
 - `bySlot(slot)`
 - `randomPlayers(count, filter?)`
 - `nearestTo(actor, count?)`
 - `farthestFrom(actor, count?)`
+
+`activePlayers()` 表示当前仍参与机制判定的玩家。  
+战斗机制不得只依赖 `alive` 判断玩家是否参与机制；`alivePlayers()` 只用于确实需要“尚未倒地”语义的场景。
 
 ## 空间类
 

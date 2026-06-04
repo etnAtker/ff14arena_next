@@ -11,8 +11,6 @@ const {
   MECHANIC_START_AT,
   SHORT_ELEMENT_BUFF_MS,
   LONG_ELEMENT_BUFF_MS,
-  DEATH_STATUS_ID,
-  DEATH_STATUS_MS,
   CHAOS_FIRE_STATUS_ID,
   CHAOS_WATER_STATUS_ID,
   CHAOS_WIND_STATUS_ID,
@@ -151,20 +149,17 @@ function hasStatus(actor, statusId) {
   return getStatus(actor, statusId) !== null;
 }
 
-function assertHasDeathBuff(actor, appliedAtMs) {
-  const deathStatus = getStatus(actor, DEATH_STATUS_ID);
-
-  assert.equal(actor.alive, true);
-  assert.equal(actor.deathReason, null);
-  assert.ok(deathStatus);
-  assert.equal(deathStatus.name, '死亡');
-  assert.equal(deathStatus.expiresAt, appliedAtMs + DEATH_STATUS_MS);
+function assertActorDied(actor) {
+  assert.equal(actor.alive, false);
+  assert.equal(actor.mechanicActive, true);
+  assert.equal(actor.currentHp, 0);
+  assert.notEqual(actor.deathReason, null);
 }
 
-function assertNoDeathBuff(actor) {
+function assertActorNotDead(actor) {
   assert.equal(actor.alive, true);
+  assert.equal(actor.mechanicActive, true);
   assert.equal(actor.deathReason, null);
-  assert.equal(getStatus(actor, DEATH_STATUS_ID), null);
 }
 
 function getElementBlocks(snapshot) {
@@ -769,9 +764,8 @@ test('凯夫卡P3一运：暴雷在MT到场中的射线上锁定位置并生成�
     assert.equal(burstTelegraph.radius, BURST_RADIUS);
     assert.equal(burstTelegraph.color, BURST_TELEGRAPH_COLOR);
     assert.equal(burstTelegraph.resolveAt, BURST_RESOLVE_AT + RESOLUTION_VISUAL_MS);
-    assertHasDeathBuff(resolvedHitActor, BURST_RESOLVE_AT);
-    assert.equal(resolvedSafeActor.alive, true);
-    assert.equal(getStatus(resolvedSafeActor, DEATH_STATUS_ID), null);
+    assertActorDied(resolvedHitActor, BURST_RESOLVE_AT);
+    assertActorNotDead(resolvedSafeActor);
   });
 
   withMockedRandom(createSeededRandomValues(23, 100), () => {
@@ -812,11 +806,7 @@ test('凯夫卡P3一运：第二组暴雷选择艾克斯德司最近目标并判
     const mt = getActorBySlot(castSnapshot, 'MT');
     const st = getActorBySlot(castSnapshot, 'ST');
     const nonTankHits = castSnapshot.actors.filter(
-      (actor) =>
-        actor.alive &&
-        actor.slot !== 'MT' &&
-        actor.slot !== 'ST' &&
-        !hasStatus(actor, DEATH_STATUS_ID),
+      (actor) => actor.alive && actor.slot !== 'MT' && actor.slot !== 'ST',
     );
     assert.ok(nonTankHits.length >= 2);
     const firstNonTankHit = nonTankHits[0];
@@ -866,20 +856,18 @@ test('凯夫卡P3一运：第二组暴雷选择艾克斯德司最近目标并判
     assertClosePoint(firstTelegraph.center, firstTargetPosition);
     assert.equal(firstTelegraph.color, BURST_TELEGRAPH_COLOR);
     assert.equal(firstTelegraph.resolveAt, FOLLOWUP_BURST_FIRST_RESOLVE_AT + RESOLUTION_VISUAL_MS);
-    assert.equal(resolvedMt.alive, true);
     assert.equal(resolvedMt.lastDamageSource, '暴雷');
-    assert.ok(hasStatus(resolvedMt, 'injury_up'));
-    assert.equal(resolvedSt.alive, true);
+    assert.ok(hasStatus(resolvedMt, 'injury_up') || !resolvedMt.alive);
     assert.equal(resolvedSt.lastDamageSource, '暴雷');
-    assert.ok(hasStatus(resolvedSt, 'injury_up'));
-    assertHasDeathBuff(resolvedFirstNonTankHit, FOLLOWUP_BURST_FIRST_RESOLVE_AT);
-    assertHasDeathBuff(resolvedSecondNonTankHit, FOLLOWUP_BURST_FIRST_RESOLVE_AT);
+    assert.ok(hasStatus(resolvedSt, 'injury_up') || !resolvedSt.alive);
+    assertActorDied(resolvedFirstNonTankHit, FOLLOWUP_BURST_FIRST_RESOLVE_AT);
+    assertActorDied(resolvedSecondNonTankHit, FOLLOWUP_BURST_FIRST_RESOLVE_AT);
 
     const secondTarget = firstResolvedSnapshot.actors.find(
       (actor) => actor.id === firstNonTankHit.id,
     );
     assert.ok(secondTarget);
-    const secondTargetPosition = add(burstCenter, { x: 0, y: 4 });
+    const secondTargetPosition = add(burstCenter, { x: 0, y: 1 });
     moveAliveActorsOutsideFollowupBurst(
       simulation,
       firstResolvedSnapshot,
@@ -907,7 +895,7 @@ test('凯夫卡P3一运：第二组暴雷选择艾克斯德司最近目标并判
       secondTelegraph.resolveAt,
       FOLLOWUP_BURST_SECOND_RESOLVE_AT + RESOLUTION_VISUAL_MS,
     );
-    assertHasDeathBuff(resolvedSecondTarget, FOLLOWUP_BURST_FIRST_RESOLVE_AT);
+    assertActorDied(resolvedSecondTarget, FOLLOWUP_BURST_FIRST_RESOLVE_AT);
   });
 });
 
@@ -1085,9 +1073,7 @@ function runChaosExplosionTest({
     assertChaosMarker(chaosMarker, chaosCenter, SUPER_JUMP_RESOLVE_AT);
 
     snapshot = simulation.getSnapshot();
-    const directionActors = snapshot.actors.filter(
-      (actor) => !hasStatus(actor, DEATH_STATUS_ID) && actor.slot !== 'ST',
-    );
+    const directionActors = snapshot.actors.filter((actor) => actor.alive && actor.slot !== 'ST');
     assert.ok(directionActors.length >= 3);
     const frontActor = directionActors[0];
     const leftActor = directionActors[1];
@@ -1135,11 +1121,11 @@ function runChaosExplosionTest({
     assert.ok(firstRightActor);
 
     if (expectedActionName === '经度聚爆') {
-      assertHasDeathBuff(firstFrontActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
+      assertActorDied(firstFrontActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
     } else {
-      assertHasDeathBuff(firstLeftActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
-      assertHasDeathBuff(firstRightActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
-      assert.equal(getStatus(firstFrontActor, DEATH_STATUS_ID), null);
+      assertActorDied(firstLeftActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
+      assertActorDied(firstRightActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
+      assertActorNotDead(firstFrontActor);
     }
     advanceTo(simulation, CHAOS_EXPLOSION_SECOND_RESOLVE_AT);
 
@@ -1160,13 +1146,13 @@ function runChaosExplosionTest({
     assert.ok(secondRightActor);
 
     if (expectedActionName === '经度聚爆') {
-      assert.ok(hasStatus(secondLeftActor, DEATH_STATUS_ID));
-      assert.ok(hasStatus(secondRightActor, DEATH_STATUS_ID));
-      assertHasDeathBuff(secondFrontActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
+      assert.ok(!secondLeftActor.alive);
+      assert.ok(!secondRightActor.alive);
+      assertActorDied(secondFrontActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
     } else {
-      assertHasDeathBuff(secondFrontActor, CHAOS_EXPLOSION_SECOND_RESOLVE_AT);
-      assertHasDeathBuff(secondLeftActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
-      assertHasDeathBuff(secondRightActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
+      assertActorDied(secondFrontActor, CHAOS_EXPLOSION_SECOND_RESOLVE_AT);
+      assertActorDied(secondLeftActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
+      assertActorDied(secondRightActor, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
     }
   });
 }
@@ -1196,9 +1182,7 @@ test('凯夫卡P3一运：超级跳锁定最远玩家位置并在67s结算11m范
     advanceToVacuumWaveSetup(simulation);
 
     const setupSnapshot = simulation.getSnapshot();
-    const availableActors = setupSnapshot.actors.filter(
-      (actor) => !hasStatus(actor, DEATH_STATUS_ID),
-    );
+    const availableActors = setupSnapshot.actors.filter((actor) => actor.alive);
     assert.ok(availableActors.length >= 2);
     const lockedActor = availableActors[0];
     const hitActor = availableActors[1];
@@ -1261,8 +1245,8 @@ test('凯夫卡P3一运：超级跳锁定最远玩家位置并在67s结算11m范
     assertChaosMarker(jumpedChaosMarker, lockedPosition, COMPLETE_AT);
     assert.ok(resolvedLockedActor);
     assert.ok(resolvedHitActor);
-    assert.equal(getStatus(resolvedLockedActor, DEATH_STATUS_ID), null);
-    assertHasDeathBuff(resolvedHitActor, SUPER_JUMP_RESOLVE_AT);
+    assertActorNotDead(resolvedLockedActor);
+    assertActorDied(resolvedHitActor, SUPER_JUMP_RESOLVE_AT);
   });
 });
 
@@ -1415,7 +1399,7 @@ test('凯夫卡P3一运：真空波按风处理击退并且防击退不消风', 
     assert.equal(beforeResolveSnapshot.boss.castBar?.actionName, '真空波');
     const expectedWindResolutionCount = beforeResolveSnapshot.actors.filter(
       (actor) =>
-        actor.alive &&
+        actor.mechanicActive &&
         !actor.knockbackImmune &&
         (hasStatus(actor, CHAOS_WIND_STATUS_ID) || hasStatus(actor, CHAOS_REVERSE_WIND_STATUS_ID)),
     ).length;
@@ -1583,9 +1567,7 @@ test('凯夫卡P3一运：火元素追击按火元素块距离点名最近2人',
 
     const preElementSnapshot = simulation.getSnapshot();
     const candidateActors = preElementSnapshot.actors
-      .filter(
-        (actor) => !hasStatus(actor, CHAOS_FIRE_STATUS_ID) && !hasStatus(actor, DEATH_STATUS_ID),
-      )
+      .filter((actor) => !hasStatus(actor, CHAOS_FIRE_STATUS_ID) && actor.alive)
       .slice(0, 3);
     assert.equal(candidateActors.length, 3);
 
@@ -1669,9 +1651,7 @@ test('凯夫卡P3一运：水buff两次消除后延迟1500ms点名最近2人', (
     candidateActors = preElementSnapshot.actors
       .filter(
         (actor) =>
-          !hasStatus(actor, CHAOS_WATER_STATUS_ID) &&
-          !hasStatus(actor, DEATH_STATUS_ID) &&
-          !hasStatus(actor, 'injury_up'),
+          !hasStatus(actor, CHAOS_WATER_STATUS_ID) && actor.alive && !hasStatus(actor, 'injury_up'),
       )
       .slice(0, 3);
     assert.equal(candidateActors.length, 3);
@@ -1768,9 +1748,7 @@ test('凯夫卡P3一运：元素追击同距离目标按队伍顺序稳定点名
     const candidateActors = preElementSnapshot.actors
       .filter(
         (actor) =>
-          !hasStatus(actor, CHAOS_WATER_STATUS_ID) &&
-          !hasStatus(actor, DEATH_STATUS_ID) &&
-          !hasStatus(actor, 'injury_up'),
+          !hasStatus(actor, CHAOS_WATER_STATUS_ID) && actor.alive && !hasStatus(actor, 'injury_up'),
       )
       .sort(
         (left, right) => PARTY_SLOT_ORDER.indexOf(left.slot) - PARTY_SLOT_ORDER.indexOf(right.slot),
@@ -1891,9 +1869,7 @@ test('凯夫卡P3一运：风分摊追击按风元素块距离点名累计次数
     const waterElementActors = preElementSnapshot.actors
       .filter(
         (actor) =>
-          !hasStatus(actor, CHAOS_WATER_STATUS_ID) &&
-          !hasStatus(actor, DEATH_STATUS_ID) &&
-          !hasStatus(actor, 'injury_up'),
+          !hasStatus(actor, CHAOS_WATER_STATUS_ID) && actor.alive && !hasStatus(actor, 'injury_up'),
       )
       .slice(0, 4);
     assert.equal(waterElementActors.length, 4);
@@ -1990,7 +1966,7 @@ test('凯夫卡P3一运：风分摊追击按风元素块距离点名累计次数
   });
 });
 
-test('凯夫卡P3一运：风消除后延迟1500ms判定2人分摊，少于2人获得死亡buff', () => {
+test('凯夫卡P3一运：风消除后延迟1500ms判定2人分摊，少于2人进入统一死亡状态', () => {
   withMockedRandom(createSeededRandomValues(24, 100), () => {
     const simulation = createKefkaP3Simulation();
 
@@ -2055,7 +2031,7 @@ test('凯夫卡P3一运：风消除后延迟1500ms判定2人分摊，少于2人�
 
     assert.ok(windTelegraphs.length >= 1);
     assert.ok(windTelegraphs.every((mechanic) => mechanic.color === WIND_TELEGRAPH_COLOR));
-    assertHasDeathBuff(
+    assertActorDied(
       resolvedWindActor,
       MECHANIC_START_AT + waterDuration + DELAYED_RESOLUTION_MS * 2,
     );
@@ -2063,7 +2039,7 @@ test('凯夫卡P3一运：风消除后延迟1500ms判定2人分摊，少于2人�
   });
 });
 
-test('凯夫卡P3一运：易伤期间再次受到机制伤害时获得死亡buff', () => {
+test('凯夫卡P3一运：易伤期间再次受到机制伤害时进入统一死亡状态', () => {
   withMockedRandom(createSeededRandomValues(25, 100), () => {
     const simulation = createKefkaP3Simulation();
 
@@ -2101,8 +2077,8 @@ test('凯夫卡P3一运：易伤期间再次受到机制伤害时获得死亡buf
     const firstFireActor = resolvedSnapshot.actors.find((actor) => actor.id === fireActors[0].id);
     const secondFireActor = resolvedSnapshot.actors.find((actor) => actor.id === fireActors[1].id);
 
-    assertHasDeathBuff(firstFireActor, MECHANIC_START_AT + fireDuration + TELEGRAPH_MS);
-    assertHasDeathBuff(secondFireActor, MECHANIC_START_AT + fireDuration + TELEGRAPH_MS);
+    assertActorDied(firstFireActor, MECHANIC_START_AT + fireDuration + TELEGRAPH_MS);
+    assertActorDied(secondFireActor, MECHANIC_START_AT + fireDuration + TELEGRAPH_MS);
   });
 });
 
@@ -2251,9 +2227,9 @@ test('凯夫卡P3一运：麻将矩形判定距离过近和其它玩家命中', 
         MAHJONG_RECTANGLE_WIDTH,
       ),
     );
-    assertHasDeathBuff(resolvedTarget, MAHJONG_FIRST_RESOLVE_AT);
-    assertHasDeathBuff(resolvedOtherHit, MAHJONG_FIRST_RESOLVE_AT);
-    assertNoDeathBuff(resolvedSafeActor);
+    assertActorDied(resolvedTarget, MAHJONG_FIRST_RESOLVE_AT);
+    assertActorDied(resolvedOtherHit, MAHJONG_FIRST_RESOLVE_AT);
+    assertActorNotDead(resolvedSafeActor);
     assert.ok(resolvedSnapshot.failureReasons.some((reason) => reason.includes('麻将距离过近')));
     assert.ok(
       resolvedSnapshot.failureReasons.some((reason) => reason.includes('麻将被其它人的矩形命中')),
@@ -2280,7 +2256,7 @@ test('凯夫卡P3一运：顺位本人距离足够时不会被自己的矩形命
 
     snapshot = simulation.getSnapshot();
     const resolvedTarget = snapshot.actors.find((actor) => actor.id === target.id);
-    assertNoDeathBuff(resolvedTarget);
+    assertActorNotDead(resolvedTarget);
 
     const lastTarget = snapshot.actors.find((actor) => actor.id === assignments[7]);
     assert.ok(lastTarget);

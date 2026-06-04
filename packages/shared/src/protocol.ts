@@ -1,5 +1,5 @@
 import type { PartySlot } from './base';
-import type { RoomSlotState, RoomStateDto } from './room';
+import type { RoomRuleOptions, RoomSlotState, RoomStateDto } from './room';
 import type {
   ContinuousSimulationInputFrame,
   EncounterResult,
@@ -43,6 +43,11 @@ export interface RoomStartPayload {
 
 export interface RoomQuickFailPayload {
   roomId: string;
+}
+
+export interface RoomUpdateOptionsPayload {
+  roomId: string;
+  options: Partial<RoomRuleOptions>;
 }
 
 export interface RoomStatePayload {
@@ -117,6 +122,7 @@ export interface ClientToServerEvents {
   'room:switch-slot': (payload: RoomSwitchSlotPayload) => void;
   'room:spectate': (payload: RoomSpectatePayload) => void;
   'room:start': (payload: RoomStartPayload) => void;
+  'room:update-options': (payload: RoomUpdateOptionsPayload) => void;
   'room:quick-fail': (payload: RoomQuickFailPayload) => void;
   'sim:input-frame': (payload: ContinuousSimulationInputFrame) => void;
   'sim:use-knockback-immune': (payload: UseKnockbackImmuneSimulationInput) => void;

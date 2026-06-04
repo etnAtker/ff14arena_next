@@ -63,6 +63,7 @@ export function createRoomState(room: RoomRecord): RoomStateDto {
     slots: createRoomSlots(room),
     spectators: createRoomSpectators(room),
     startCountdown: room.startCountdown,
+    options: room.options,
     latestResult: room.latestResult,
   };
 }

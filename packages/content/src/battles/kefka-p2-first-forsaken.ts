@@ -458,7 +458,9 @@ function getActorsInside(
   center: Vector2,
   radius: number,
 ): BaseActorSnapshot[] {
-  return actors.filter((actor) => actor.alive && distance(actor.position, center) <= radius);
+  return actors.filter(
+    (actor) => actor.mechanicActive && distance(actor.position, center) <= radius,
+  );
 }
 
 function getAngleDiff(left: number, right: number): number {
@@ -474,7 +476,7 @@ function isInsideSector(
   angle: number,
   radius: number,
 ): boolean {
-  if (!actor.alive || distance(actor.position, center) > radius) {
+  if (!actor.mechanicActive || distance(actor.position, center) > radius) {
     return false;
   }
 
@@ -499,7 +501,7 @@ function applyKefkaDamage(
 ): void {
   const freshActor = getFreshActor(ctx, actor.id);
 
-  if (freshActor === null || !freshActor.alive) {
+  if (freshActor === null || !freshActor.mechanicActive) {
     return;
   }
 
@@ -553,7 +555,7 @@ function resolveFanMarker(
   actors: BaseActorSnapshot[],
 ): LockedMarkerResolution | null {
   const target = [...actors]
-    .filter((actor) => actor.alive && actor.id !== source.id)
+    .filter((actor) => actor.mechanicActive && actor.id !== source.id)
     .sort(
       (left, right) =>
         distance(left.position, source.position) - distance(right.position, source.position),
@@ -587,7 +589,7 @@ function createLockedMarkerResolution(
 ): LockedMarkerResolution | null {
   const freshSource = getActorById(actors, source.id);
 
-  if (freshSource === null || !freshSource.alive) {
+  if (freshSource === null || !freshSource.mechanicActive) {
     return null;
   }
 
@@ -670,7 +672,7 @@ function assignNextMarkers(
     .filter((marker): marker is KefkaMarker => marker !== null);
   const aliveHandlers = handlers
     .map((actor) => getFreshActor(ctx, actor.id))
-    .filter((actor): actor is BaseActorSnapshot => actor !== null && actor.alive);
+    .filter((actor): actor is BaseActorSnapshot => actor !== null && actor.mechanicActive);
   const shuffledHandlers = shuffle(aliveHandlers);
   const shuffledMarkers = shuffle(consumedMarkers);
   const assignments = shuffledMarkers.flatMap((marker, index) => {
@@ -739,7 +741,7 @@ function createNearAoeResolutions(actors: BaseActorSnapshot[]): {
   addPositions: Vector2[];
 } {
   const targets = [...actors]
-    .filter((actor) => actor.alive)
+    .filter((actor) => actor.mechanicActive)
     .sort((left, right) => distance(left.position, CENTER) - distance(right.position, CENTER))
     .slice(0, 4);
   const outerTargets = [...targets]
@@ -864,7 +866,7 @@ function getNearestActorToPoint(
 ): BaseActorSnapshot | null {
   return (
     [...actors]
-      .filter((actor) => actor.alive)
+      .filter((actor) => actor.mechanicActive)
       .sort((left, right) => distance(left.position, point) - distance(right.position, point))[0] ??
     null
   );
@@ -876,7 +878,7 @@ function startDestroyingFootCast(
   addPositions: Vector2[],
 ): void {
   const mode = getTerminatorMode(ctx, evenRoundIndex);
-  const actors = ctx.select.alivePlayers();
+  const actors = ctx.select.activePlayers();
   const sourcePositions = [ctx.boss.snapshot().position, ...addPositions];
   const footSources = sourcePositions.flatMap((sourcePosition) => {
     const target = getNearestActorToPoint(actors, sourcePosition);

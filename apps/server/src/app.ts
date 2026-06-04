@@ -245,6 +245,11 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       roomManager.startRoom(socket, payload);
     });
 
+    socket.on('room:update-options', (payload) => {
+      metrics.recordSocketInbound('room:update-options');
+      roomManager.updateOptions(socket, payload);
+    });
+
     socket.on('room:quick-fail', (payload) => {
       metrics.recordSocketInbound('room:quick-fail');
       roomManager.quickFail(socket, payload.roomId);

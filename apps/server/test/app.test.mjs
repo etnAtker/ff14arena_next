@@ -268,6 +268,7 @@ test('房间全流程：创建、立即加入、等待态快照、开始战斗',
     const joinedRoom = await ownerLobbyPromise;
     const ownerWaitingSnapshot = await ownerWaitingSnapshotPromise;
     assert.equal(joinedRoom.slots.filter((slot) => slot.occupantType === 'player').length, 1);
+    assert.equal(joinedRoom.options.deadActorsInteract, true);
     assert.equal(ownerWaitingSnapshot.snapshot.phase, 'waiting');
 
     const guestLobbyPromise = waitForRoomState(
@@ -286,6 +287,32 @@ test('房间全流程：创建、立即加入、等待态快照、开始战斗',
 
     const waitingSnapshotAfterJoin = await guestWaitingSnapshotPromise;
     assert.equal(waitingSnapshotAfterJoin.snapshot.phase, 'waiting');
+
+    const disabledOptionsPromise = waitForRoomState(
+      owner,
+      (room) => room.roomId === roomId && room.options.deadActorsInteract === false,
+    );
+    owner.emit('room:update-options', {
+      roomId,
+      options: {
+        deadActorsInteract: false,
+      },
+    });
+    const disabledOptionsRoom = await disabledOptionsPromise;
+    assert.equal(disabledOptionsRoom.options.deadActorsInteract, false);
+
+    const enabledOptionsPromise = waitForRoomState(
+      owner,
+      (room) => room.roomId === roomId && room.options.deadActorsInteract === true,
+    );
+    owner.emit('room:update-options', {
+      roomId,
+      options: {
+        deadActorsInteract: true,
+      },
+    });
+    const enabledOptionsRoom = await enabledOptionsPromise;
+    assert.equal(enabledOptionsRoom.options.deadActorsInteract, true);
 
     const countdownPromise = waitForRoomState(
       owner,

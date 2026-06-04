@@ -1,5 +1,11 @@
 import type { BattleDefinition, SimulationInstance } from '@ff14arena/core';
-import type { ActorControlFrame, EncounterResult, PartySlot, RoomPhase } from '@ff14arena/shared';
+import type {
+  ActorControlFrame,
+  EncounterResult,
+  PartySlot,
+  RoomPhase,
+  RoomRuleOptions,
+} from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 
 export interface PlayerSlotOccupant {
@@ -38,6 +44,7 @@ export interface RoomRecord {
   name: string;
   ownerUserId: string;
   ownerName: string;
+  options: RoomRuleOptions;
   phase: RoomPhase;
   battleId: string | null;
   battle: BattleDefinition | null;

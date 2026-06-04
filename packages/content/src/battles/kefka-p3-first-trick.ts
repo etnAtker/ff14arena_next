@@ -47,9 +47,6 @@ const ELEMENT_BLOCK_LIFETIME_MS = 60_000;
 const ELEMENT_CORNER_DISTANCE = 10;
 const INJURY_DURATION_MS = 3_000;
 const MECHANIC_DAMAGE = 1;
-const DEATH_STATUS_ID = 'kefka_p3_death';
-const DEATH_STATUS_MS = 999_999;
-const DEATH_STATUS_NAME = '死亡';
 const FIRE_SELF_RADIUS = 5;
 const FIRE_ELEMENT_INNER_RADIUS = 5;
 const FIRE_ELEMENT_OUTER_RADIUS = 10;
@@ -258,7 +255,9 @@ function getActorsInsideCircle(
   center: Vector2,
   radius: number,
 ): BaseActorSnapshot[] {
-  return actors.filter((actor) => actor.alive && distance(actor.position, center) <= radius);
+  return actors.filter(
+    (actor) => actor.mechanicActive && distance(actor.position, center) <= radius,
+  );
 }
 
 function getActorsInsideDonut(
@@ -268,7 +267,7 @@ function getActorsInsideDonut(
   outerRadius: number,
 ): BaseActorSnapshot[] {
   return actors.filter((actor) => {
-    if (!actor.alive) {
+    if (!actor.mechanicActive) {
       return false;
     }
 
@@ -289,14 +288,11 @@ function applyKefkaP3Death(
 ): void {
   const freshActor = getFreshActor(ctx, actor.id);
 
-  if (freshActor === null || !freshActor.alive || hasStatus(freshActor, DEATH_STATUS_ID)) {
+  if (freshActor === null || !freshActor.mechanicActive) {
     return;
   }
 
-  ctx.status.apply([freshActor.id], DEATH_STATUS_ID, DEATH_STATUS_MS, {
-    name: DEATH_STATUS_NAME,
-  });
-  ctx.state.fail(`${freshActor.name} 因 ${sourceLabel} 死亡`);
+  ctx.damage.kill([freshActor.id], sourceLabel);
 }
 
 function applyKefkaP3Damage(
@@ -306,7 +302,7 @@ function applyKefkaP3Damage(
 ): void {
   const freshActor = getFreshActor(ctx, actor.id);
 
-  if (freshActor === null || !freshActor.alive) {
+  if (freshActor === null || !freshActor.mechanicActive) {
     return;
   }
 
@@ -472,7 +468,7 @@ function getNearestAlivePlayerToPoint(
 ): BaseActorSnapshot | null {
   return (
     actors
-      .filter((actor) => actor.alive)
+      .filter((actor) => actor.mechanicActive)
       .sort((left, right) => {
         const distanceDelta = distance(left.position, source) - distance(right.position, source);
 
@@ -491,7 +487,7 @@ function getFarthestAlivePlayerFromPoint(
 ): BaseActorSnapshot | null {
   return (
     actors
-      .filter((actor) => actor.alive)
+      .filter((actor) => actor.mechanicActive)
       .sort((left, right) => {
         const distanceDelta = distance(right.position, source) - distance(left.position, source);
 
@@ -572,7 +568,7 @@ function isActorInsideFan(
   angle: number,
   radius: number,
 ): boolean {
-  if (!actor.alive || distance(actor.position, center) > radius) {
+  if (!actor.mechanicActive || distance(actor.position, center) > radius) {
     return false;
   }
 
@@ -593,7 +589,7 @@ function isActorInsideRectangle(
   length: number,
   width: number,
 ): boolean {
-  if (!actor.alive) {
+  if (!actor.mechanicActive) {
     return false;
   }
 
@@ -698,7 +694,7 @@ function resolveFireBuff(ctx: BattleScriptContext, actorId: string): void {
   ctx.status.remove([actorId], CHAOS_FIRE_STATUS_ID);
   queueElementResolution(ctx, 'fire');
 
-  if (actor === null || !actor.alive) {
+  if (actor === null || !actor.mechanicActive) {
     return;
   }
 
@@ -726,7 +722,7 @@ function resolveWaterBuff(ctx: BattleScriptContext, actorId: string): void {
   ctx.status.remove([actorId], CHAOS_WATER_STATUS_ID);
   queueElementResolution(ctx, 'water');
 
-  if (actor === null || !actor.alive) {
+  if (actor === null || !actor.mechanicActive) {
     return;
   }
 
@@ -757,7 +753,7 @@ function selectNearestDistinctActors(
   count: number,
 ): BaseActorSnapshot[] {
   return [...actors]
-    .filter((actor) => actor.alive)
+    .filter((actor) => actor.mechanicActive)
     .sort((left, right) => {
       const distanceDiff = distance(left.position, point) - distance(right.position, point);
 
@@ -802,7 +798,7 @@ function consumeWindStatusAfterElementKnockback(
 ): void {
   const freshActor = getFreshActor(ctx, actor.id);
 
-  if (freshActor === null || !freshActor.alive) {
+  if (freshActor === null || !freshActor.mechanicActive) {
     return;
   }
 
@@ -829,7 +825,7 @@ function applyElementKnockback(
 
     const freshActor = getFreshActor(ctx, hit.id);
 
-    if (freshActor === null || !freshActor.alive) {
+    if (freshActor === null || !freshActor.mechanicActive) {
       continue;
     }
 
@@ -843,7 +839,7 @@ function applyVacuumWaveKnockback(ctx: BattleScriptContext, source: Vector2): vo
   for (const hit of ctx.select.allPlayers()) {
     const freshActor = getFreshActor(ctx, hit.id);
 
-    if (freshActor === null || !freshActor.alive || freshActor.knockbackImmune) {
+    if (freshActor === null || !freshActor.mechanicActive || freshActor.knockbackImmune) {
       continue;
     }
 
@@ -1250,7 +1246,9 @@ function spawnChargeOutsideMarker(ctx: BattleScriptContext, index: number): void
 }
 
 function assignMahjongOrders(ctx: BattleScriptContext): void {
-  const assignments = shuffle(ctx.select.allPlayers().filter((actor) => actor.alive)).slice(0, 8);
+  const assignments = shuffle(
+    ctx.select.allPlayers().filter((actor) => actor.mechanicActive),
+  ).slice(0, 8);
 
   ctx.state.setValue(
     'kefkaP3:mahjongAssignments',
@@ -1282,7 +1280,7 @@ function resolveMahjongRectangle(ctx: BattleScriptContext, index: number): void 
 
   const target = getFreshActor(ctx, targetActorId);
 
-  if (target === null || !target.alive) {
+  if (target === null || !target.mechanicActive) {
     return;
   }
 
@@ -1462,8 +1460,6 @@ export const KEFKA_P3_FIRST_TRICK_TESTING = {
   MECHANIC_START_AT,
   SHORT_ELEMENT_BUFF_MS,
   LONG_ELEMENT_BUFF_MS,
-  DEATH_STATUS_ID,
-  DEATH_STATUS_MS,
   CHAOS_FIRE_STATUS_ID,
   CHAOS_WATER_STATUS_ID,
   CHAOS_WIND_STATUS_ID,

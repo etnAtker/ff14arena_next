@@ -59,6 +59,7 @@ export interface BaseActorSnapshot {
   maxHp: number;
   currentHp: number;
   alive: boolean;
+  mechanicActive: boolean;
   statuses: StatusSnapshot[];
   knockbackImmune: boolean;
   knockbackImmuneCooldown: CooldownState;

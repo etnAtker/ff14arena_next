@@ -511,6 +511,7 @@ onBeforeUnmount(() => {
             @spectate="store.spectate"
             @start-battle="store.startBattle($event)"
             @quick-fail="store.quickFail"
+            @room-options-change="store.updateRoomOptions($event)"
             @start-countdown-seconds-change="startCountdownSeconds = $event"
             @switch-slot="store.switchSlot($event)"
             @reset-zoom="resetCameraZoom"

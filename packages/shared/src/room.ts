@@ -1,6 +1,10 @@
 import type { PartySlot, RoomPhase } from './base';
 import type { EncounterResult } from './simulation';
 
+export interface RoomRuleOptions {
+  deadActorsInteract: boolean;
+}
+
 export interface RoomSlotState {
   slot: PartySlot;
   occupantType: 'empty' | 'player' | 'bot';
@@ -36,6 +40,7 @@ export interface RoomStateDto {
   slots: RoomSlotState[];
   spectators: RoomSpectatorState[];
   startCountdown: RoomStartCountdownState | null;
+  options: RoomRuleOptions;
   latestResult: EncounterResult | null;
 }
 

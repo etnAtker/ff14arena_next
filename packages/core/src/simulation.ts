@@ -68,6 +68,7 @@ const BUILTIN_STATUS_NAMES: Record<string, string> = {
 interface RuntimeState {
   battle: BattleDefinition;
   roomId: string;
+  deadActorsInteract: boolean;
   phase: 'waiting' | 'running';
   tick: number;
   timeMs: number;
@@ -102,6 +103,7 @@ function assertState(state: RuntimeState | null): RuntimeState {
 export function createSimulation(config: SimulationConfig = {}): SimulationInstance {
   const normalizedConfig = {
     tickRate: config.tickRate ?? FIXED_TICK_RATE,
+    deadActorsInteract: config.deadActorsInteract ?? true,
   };
 
   const tickMs = 1000 / normalizedConfig.tickRate;
@@ -139,6 +141,10 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     }
 
     return runtime;
+  }
+
+  function getActivePartyActors(): BaseActorSnapshot[] {
+    return [...assertState(state).actors.values()].filter((actor) => actor.mechanicActive);
   }
 
   function getAlivePartyActors(): BaseActorSnapshot[] {
@@ -274,13 +280,17 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     }
 
     actor.alive = false;
-    actor.currentHp = Math.max(actor.currentHp, 0);
-    actor.moveState = {
-      direction: { x: 0, y: 0 },
-      moving: false,
-    };
+    actor.mechanicActive = currentState.deadActorsInteract;
+    actor.currentHp = 0;
     actor.deathReason = reason;
-    resetMovementRuntime(actor, currentState.timeMs);
+
+    if (!actor.mechanicActive) {
+      actor.moveState = {
+        direction: { x: 0, y: 0 },
+        moving: false,
+      };
+      resetMovementRuntime(actor, currentState.timeMs);
+    }
 
     emit({
       type: 'actorDied',
@@ -288,6 +298,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         actorId: actor.id,
         actorName: actor.name,
         deathReason: reason,
+        mechanicActive: actor.mechanicActive,
       },
     });
 
@@ -299,7 +310,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
   }
 
   function applyDamage(target: BaseActorSnapshot, amount: number, sourceLabel: string): void {
-    if (!target.alive) {
+    if (!target.mechanicActive) {
       return;
     }
 
@@ -319,7 +330,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       },
     });
 
-    if (target.currentHp <= 0) {
+    if (target.alive && target.currentHp <= 0) {
       markActorDeath(target, sourceLabel, false);
     }
   }
@@ -328,7 +339,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     const currentState = assertState(state);
 
     for (const actor of currentState.actors.values()) {
-      if (!actor.alive) {
+      if (!actor.mechanicActive) {
         continue;
       }
 
@@ -342,7 +353,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     const currentState = assertState(state);
 
     for (const actor of currentState.actors.values()) {
-      if (!actor.alive) {
+      if (!actor.mechanicActive) {
         continue;
       }
 
@@ -358,13 +369,14 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     const currentState = assertState(state);
     const target = currentState.actors.get(mechanic.targetId);
 
-    if (target === undefined || !target.alive) {
+    if (target === undefined || !target.mechanicActive) {
       return;
     }
 
     mechanic.center = cloneVector(target.position);
     const hits = [...currentState.actors.values()].filter(
-      (actor) => actor.alive && distance(actor.position, target.position) <= mechanic.radius,
+      (actor) =>
+        actor.mechanicActive && distance(actor.position, target.position) <= mechanic.radius,
     );
 
     if (hits.length === 0) {
@@ -377,7 +389,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       applyDamage(actor, damagePerHit, mechanic.label);
     }
 
-    for (const actor of hits.filter((actor) => actor.alive)) {
+    for (const actor of hits.filter((actor) => actor.mechanicActive)) {
       applyStatus(actor, 'injury_up', INJURY_UP_DURATION_MS, INJURY_UP_MULTIPLIER);
     }
   }
@@ -386,20 +398,21 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     const currentState = assertState(state);
     const target = currentState.actors.get(mechanic.targetId);
 
-    if (target === undefined || !target.alive) {
+    if (target === undefined || !target.mechanicActive) {
       return;
     }
 
     mechanic.center = cloneVector(target.position);
     const hits = [...currentState.actors.values()].filter(
-      (actor) => actor.alive && distance(actor.position, target.position) <= mechanic.radius,
+      (actor) =>
+        actor.mechanicActive && distance(actor.position, target.position) <= mechanic.radius,
     );
 
     for (const actor of hits) {
       applyDamage(actor, mechanic.damage, mechanic.label);
     }
 
-    for (const actor of hits.filter((actor) => actor.alive)) {
+    for (const actor of hits.filter((actor) => actor.mechanicActive)) {
       applyStatus(actor, 'injury_up', INJURY_UP_DURATION_MS, INJURY_UP_MULTIPLIER);
     }
   }
@@ -467,7 +480,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
   function checkOutOfBounds(actor: BaseActorSnapshot): void {
     const currentState = assertState(state);
 
-    if (!actor.alive) {
+    if (!actor.mechanicActive) {
       return;
     }
 
@@ -482,7 +495,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     for (const targetId of targetIds) {
       const target = getActor(targetId);
 
-      if (target === undefined || !target.alive) {
+      if (target === undefined || !target.mechanicActive) {
         continue;
       }
 
@@ -530,7 +543,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     const currentState = assertState(state);
     const actor = currentState.actors.get(sample.actorId);
 
-    if (actor === undefined || !actor.alive) {
+    if (actor === undefined || !actor.mechanicActive) {
       return;
     }
 
@@ -578,7 +591,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       });
     }
 
-    if (actor === undefined || !actor.alive || frame.commands === undefined) {
+    if (actor === undefined || !actor.mechanicActive || frame.commands === undefined) {
       return;
     }
 
@@ -696,11 +709,11 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           )
         : new Set<string>();
 
-      if (!target.alive && mechanic.allowDeadRetarget) {
+      if (!target.mechanicActive && mechanic.allowDeadRetarget) {
         const currentTargetId = target.id;
         const fallback = [...currentState.actors.values()].filter(
           (actor) =>
-            actor.alive &&
+            actor.mechanicActive &&
             !heldTargetIds.has(actor.id) &&
             canTransferToActor(mechanic, actor, currentTargetId),
         )[0];
@@ -724,14 +737,14 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         continue;
       }
 
-      if (!target.alive) {
+      if (!target.mechanicActive) {
         continue;
       }
 
       const nextTarget = [...currentState.actors.values()]
         .filter(
           (actor) =>
-            actor.alive &&
+            actor.mechanicActive &&
             actor.id !== target.id &&
             !heldTargetIds.has(actor.id) &&
             canTransferToActor(mechanic, actor, target.id),
@@ -849,6 +862,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         allPlayers() {
           return [...assertState(state).actors.values()].map((actor) => structuredClone(actor));
         },
+        activePlayers() {
+          return getActivePartyActors().map((actor) => structuredClone(actor));
+        },
         alivePlayers() {
           return getAlivePartyActors().map((actor) => structuredClone(actor));
         },
@@ -859,7 +875,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           return actor === undefined ? undefined : structuredClone(actor);
         },
         randomPlayers(count, filter) {
-          const actors = getAlivePartyActors().filter((actor) => filter?.(actor) ?? true);
+          const actors = getActivePartyActors().filter((actor) => filter?.(actor) ?? true);
           const shuffled = [...actors].sort(() => Math.random() - 0.5);
           return shuffled.slice(0, count).map((actor) => structuredClone(actor));
         },
@@ -870,7 +886,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             return [];
           }
 
-          return getAlivePartyActors()
+          return getActivePartyActors()
             .filter((candidate) => candidate.id !== actorId)
             .sort(
               (left, right) =>
@@ -886,7 +902,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             return [];
           }
 
-          return getAlivePartyActors()
+          return getActivePartyActors()
             .filter((candidate) => candidate.id !== actorId)
             .sort(
               (left, right) =>
@@ -1090,7 +1106,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           for (const targetId of targetIds) {
             const actor = getActor(targetId);
 
-            if (actor === undefined || !actor.alive) {
+            if (actor === undefined || !actor.mechanicActive) {
               continue;
             }
 
@@ -1112,7 +1128,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           for (const targetId of targetIds) {
             const actor = getActor(targetId);
 
-            if (actor === undefined || !actor.alive) {
+            if (actor === undefined || !actor.mechanicActive) {
               continue;
             }
 
@@ -1146,7 +1162,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           for (const targetId of targetIds) {
             const actor = getActor(targetId);
 
-            if (actor === undefined || !actor.alive) {
+            if (actor === undefined || !actor.mechanicActive) {
               continue;
             }
 
@@ -1157,7 +1173,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           for (const targetId of targetIds) {
             const actor = getActor(targetId);
 
-            if (actor === undefined || !actor.alive) {
+            if (actor === undefined || !actor.alive || !actor.mechanicActive) {
               continue;
             }
 
@@ -1287,6 +1303,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
                 maxHp: DEFAULT_PLAYER_MAX_HP,
                 currentHp: DEFAULT_PLAYER_MAX_HP,
                 alive: true,
+                mechanicActive: true,
                 statuses: [],
                 knockbackImmune: false,
                 knockbackImmuneCooldown: {
@@ -1305,6 +1322,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           kind: member.kind,
           slot: member.slot,
           name: member.name,
+          mechanicActive: actorBase.alive || normalizedConfig.deadActorsInteract,
           sprintCooldown: actorBase.sprintCooldown ?? {
             readyAt: 0,
           },
@@ -1335,6 +1353,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           actor.currentHp = DEFAULT_PLAYER_MAX_HP;
           actor.maxHp = DEFAULT_PLAYER_MAX_HP;
           actor.alive = true;
+          actor.mechanicActive = true;
           actor.statuses = [];
           actor.knockbackImmune = false;
           actor.knockbackImmuneCooldown = {
@@ -1360,6 +1379,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       state = {
         battle,
         roomId,
+        deadActorsInteract: normalizedConfig.deadActorsInteract,
         phase: 'waiting',
         tick: initialTick,
         timeMs: initialTimeMs,
@@ -1381,6 +1401,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           maxHp: 1,
           currentHp: 1,
           alive: true,
+          mechanicActive: true,
           statuses: [],
           knockbackImmune: true,
           knockbackImmuneCooldown: {

@@ -1,6 +1,16 @@
 <script setup lang="ts">
 import type { SelectOption } from 'naive-ui';
-import { NButton, NCard, NEmpty, NInputNumber, NModal, NSelect, NTag, NText } from 'naive-ui';
+import {
+  NButton,
+  NCard,
+  NEmpty,
+  NInputNumber,
+  NModal,
+  NSelect,
+  NSwitch,
+  NTag,
+  NText,
+} from 'naive-ui';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type {
@@ -53,6 +63,7 @@ const emit = defineEmits<{
   spectate: [];
   startBattle: [countdownMs: number];
   quickFail: [];
+  roomOptionsChange: [options: Partial<RoomStateDto['options']>];
   startCountdownSecondsChange: [seconds: number];
   switchSlot: [slot: PartySlot];
   resetZoom: [];
@@ -153,14 +164,14 @@ const canUseKnockback = computed(
   () =>
     props.snapshot?.phase === 'running' &&
     currentActor.value !== null &&
-    currentActor.value.alive &&
+    currentActor.value.mechanicActive &&
     isCooldownReady(currentActor.value.knockbackImmuneCooldown, renderSimulationTimeMs.value),
 );
 const canUseSprint = computed(
   () =>
     props.snapshot?.phase === 'running' &&
     currentActor.value !== null &&
-    currentActor.value.alive &&
+    currentActor.value.mechanicActive &&
     isCooldownReady(currentActor.value.sprintCooldown, renderSimulationTimeMs.value),
 );
 const canQuickFail = computed(() => props.isOwner && props.snapshot?.phase === 'running');
@@ -203,6 +214,7 @@ const countdownBannerText = computed(() => {
   return props.serverCountdownSeconds <= 0 ? '战斗开始！' : String(props.serverCountdownSeconds);
 });
 const isStartCountdownActive = computed(() => props.room?.startCountdown != null);
+const deadActorsInteractEnabled = computed(() => props.room?.options.deadActorsInteract ?? true);
 const isPartyListDefaultOrder = computed(() =>
   partyListOrder.value.every((slot, index) => slot === PARTY_SLOT_ORDER[index]),
 );
@@ -688,6 +700,22 @@ onBeforeUnmount(() => {
                   :disabled="isStartCountdownActive"
                   :value="props.startCountdownSeconds"
                   @update:value="handleStartCountdownSecondsInput"
+                />
+              </div>
+              <div
+                v-if="props.isOwner && props.snapshot?.phase === 'waiting'"
+                class="room-option-control"
+              >
+                <span class="room-option-label">死亡后参与机制</span>
+                <n-switch
+                  size="small"
+                  :value="deadActorsInteractEnabled"
+                  :disabled="isStartCountdownActive"
+                  @update:value="
+                    emit('roomOptionsChange', {
+                      deadActorsInteract: $event,
+                    })
+                  "
                 />
               </div>
               <n-button
@@ -1300,14 +1328,16 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
-.countdown-control {
+.countdown-control,
+.room-option-control {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
 }
 
-.countdown-label {
+.countdown-label,
+.room-option-label {
   color: rgba(246, 239, 228, 0.72);
   font-size: 12px;
   white-space: nowrap;

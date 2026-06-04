@@ -10,6 +10,7 @@ import type {
   RoomStartPayload,
   RoomStateDto,
   RoomSummaryDto,
+  RoomUpdateOptionsPayload,
   ServerToClientEvents,
   SimResyncRequestPayload,
   SimulationSnapshot,
@@ -39,6 +40,9 @@ const DEFAULT_START_COUNTDOWN_MS = 5_000;
 const MIN_START_COUNTDOWN_MS = 1_000;
 const MAX_START_COUNTDOWN_MS = 30_000;
 const QUICK_FAIL_REASON = '房主手动结束本轮模拟';
+const DEFAULT_ROOM_OPTIONS = {
+  deadActorsInteract: true,
+};
 
 export interface RoomManagerOptions {
   roomPassword?: string;
@@ -89,6 +93,7 @@ export class RoomManager {
       name: options.name,
       ownerUserId: options.ownerUserId,
       ownerName: options.ownerName,
+      options: { ...DEFAULT_ROOM_OPTIONS },
       phase: 'waiting',
       battleId: battle?.id ?? null,
       battle,
@@ -142,7 +147,10 @@ export class RoomManager {
       return;
     }
 
-    const simulation = room.simulation ?? createSimulation({ tickRate: 20 });
+    const simulation =
+      room.simulation?.config.deadActorsInteract === room.options.deadActorsInteract
+        ? room.simulation
+        : createSimulation({ tickRate: 20, deadActorsInteract: room.options.deadActorsInteract });
     const sourceSnapshot = options?.sourceSnapshot ?? room.simulation?.getSnapshot() ?? null;
 
     simulation.stop();
@@ -204,7 +212,7 @@ export class RoomManager {
 
         const actor = preTickSnapshot.actors.find((candidate) => candidate.id === occupant.actorId);
 
-        if (actor === undefined || !actor.alive) {
+        if (actor === undefined || !actor.mechanicActive) {
           continue;
         }
 
@@ -640,6 +648,50 @@ export class RoomManager {
     this.startCountdown(room, countdownMs);
   }
 
+  updateOptions(socket: TypedSocket, payload: RoomUpdateOptionsPayload): void {
+    const room = this.rooms.get(payload.roomId);
+
+    if (room === undefined) {
+      this.emitError(socket, 'room_not_found', '房间不存在');
+      return;
+    }
+
+    const occupant = this.getRoomMemberBySocket(room, socket.id);
+
+    if (occupant?.userId !== room.ownerUserId) {
+      this.emitError(socket, 'not_owner', '只有房主可以修改房间选项');
+      return;
+    }
+
+    if (room.phase !== 'waiting') {
+      this.emitError(socket, 'room_not_waiting', '当前房间状态不允许修改房间选项');
+      return;
+    }
+
+    if (room.startCountdown !== null) {
+      this.emitError(socket, 'start_countdown_active', '倒计时期间不允许修改房间选项');
+      return;
+    }
+
+    const nextOptions = {
+      ...room.options,
+      ...(payload.options.deadActorsInteract === undefined
+        ? {}
+        : { deadActorsInteract: payload.options.deadActorsInteract }),
+    };
+
+    if (nextOptions.deadActorsInteract === room.options.deadActorsInteract) {
+      return;
+    }
+
+    room.options = nextOptions;
+    this.rebuildWaitingSimulation(room, {
+      sourceSnapshot: room.simulation?.getSnapshot() ?? null,
+      keepTimeMs: true,
+    });
+    this.broadcastWaitingState(room, 'waiting-state');
+  }
+
   quickFail(socket: TypedSocket, roomId: string): void {
     const room = this.rooms.get(roomId);
 
@@ -928,7 +980,10 @@ export class RoomManager {
       });
     }
     this.resetPoseSyncState(room);
-    const simulation = room.simulation ?? createSimulation({ tickRate: 20 });
+    const simulation =
+      room.simulation?.config.deadActorsInteract === room.options.deadActorsInteract
+        ? room.simulation
+        : createSimulation({ tickRate: 20, deadActorsInteract: room.options.deadActorsInteract });
 
     simulation.stop();
     simulation.loadBattle({
