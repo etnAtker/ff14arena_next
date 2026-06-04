@@ -88,6 +88,27 @@ function waitForPayload(socket, eventName, predicate, timeoutMs = 4000) {
   });
 }
 
+function waitForNoPayload(socket, eventName, predicate, timeoutMs = 150) {
+  return new Promise((resolve) => {
+    const timer = globalThis.setTimeout(() => {
+      socket.off(eventName, handleEvent);
+      resolve(true);
+    }, timeoutMs);
+
+    const handleEvent = (payload) => {
+      if (!predicate(payload)) {
+        return;
+      }
+
+      globalThis.clearTimeout(timer);
+      socket.off(eventName, handleEvent);
+      resolve(false);
+    };
+
+    socket.on(eventName, handleEvent);
+  });
+}
+
 function sleep(ms) {
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, ms);
@@ -175,7 +196,7 @@ test('房间密码：启用后创建和加入都需要匹配密码', async () =>
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const ownerStatePromise = waitForRoomState(
@@ -225,6 +246,142 @@ test('房间密码：启用后创建和加入都需要匹配密码', async () =>
   }
 });
 
+test('建房申请：房主加入后才实例化为真实房间', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '待加入房',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    assert.equal(typeof createPayload.roomId, 'string');
+    assert.equal(typeof createPayload.expiresAt, 'number');
+
+    const pendingListResponse = await globalThis.fetch(`${baseUrl}/rooms`);
+    assert.equal(pendingListResponse.status, 200);
+    const pendingListPayload = await pendingListResponse.json();
+    assert.equal(
+      pendingListPayload.rooms.some((room) => room.roomId === createPayload.roomId),
+      false,
+    );
+
+    await waitForConnect(guest);
+    const guestErrorPromise = waitForPayload(
+      guest,
+      'server:error',
+      (payload) => payload.code === 'not_owner',
+    );
+    guest.emit('room:join', {
+      roomId: createPayload.roomId,
+      userId: 'guest-user',
+      userName: '队员',
+    });
+    await guestErrorPromise;
+
+    const stillPendingListResponse = await globalThis.fetch(`${baseUrl}/rooms`);
+    const stillPendingListPayload = await stillPendingListResponse.json();
+    assert.equal(
+      stillPendingListPayload.rooms.some((room) => room.roomId === createPayload.roomId),
+      false,
+    );
+
+    await waitForConnect(owner);
+    const ownerStatePromise = waitForRoomState(
+      owner,
+      (room) =>
+        room.roomId === createPayload.roomId &&
+        room.slots.some((slot) => slot.ownerUserId === 'owner-user'),
+    );
+    owner.emit('room:join', {
+      roomId: createPayload.roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    const room = await ownerStatePromise;
+    assert.equal(room.phase, 'waiting');
+
+    const activeListResponse = await globalThis.fetch(`${baseUrl}/rooms`);
+    const activeListPayload = await activeListResponse.json();
+    const summary = activeListPayload.rooms.find((candidate) => candidate.roomId === room.roomId);
+    assert.equal(summary?.occupantCount, 1);
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
+test('建房申请：超时后过期且不能再加入', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+    pendingRoomTtlMs: 50,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '过期房',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+
+    await sleep(80);
+    await waitForConnect(owner);
+    const ownerErrorPromise = waitForPayload(
+      owner,
+      'server:error',
+      (payload) => payload.code === 'room_not_found' || payload.code === 'room_expired',
+    );
+    owner.emit('room:join', {
+      roomId: createPayload.roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await ownerErrorPromise;
+
+    const roomsResponse = await globalThis.fetch(`${baseUrl}/rooms`);
+    const roomsPayload = await roomsResponse.json();
+    assert.equal(
+      roomsPayload.rooms.some((room) => room.roomId === createPayload.roomId),
+      false,
+    );
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
 test('房间全流程：创建、立即加入、等待态快照、开始战斗', async () => {
   const server = await startServer({
     host: '127.0.0.1',
@@ -251,7 +408,7 @@ test('房间全流程：创建、立即加入、等待态快照、开始战斗',
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     const ownerLobbyPromise = waitForRoomState(
       owner,
@@ -396,7 +553,7 @@ test('房主离开后立即销毁房间并通知其他玩家', async () => {
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
@@ -431,6 +588,79 @@ test('房主离开后立即销毁房间并通知其他玩家', async () => {
   }
 });
 
+test('非房主主动离开后不会收到离房广播回写', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '离房回写测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    await ownerWaitingSnapshotPromise;
+
+    await waitForConnect(guest);
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+    });
+    await waitForRoomState(
+      guest,
+      (room) =>
+        room.roomId === roomId && room.slots.some((slot) => slot.ownerUserId === 'guest-user'),
+    );
+
+    const ownerUpdatePromise = waitForRoomState(
+      owner,
+      (room) =>
+        room.roomId === roomId && !room.slots.some((slot) => slot.ownerUserId === 'guest-user'),
+    );
+    const noGuestStatePromise = waitForNoPayload(
+      guest,
+      'room:state',
+      (payload) => payload.room.roomId === roomId,
+    );
+    guest.emit('room:leave', {
+      roomId,
+    });
+
+    await ownerUpdatePromise;
+    assert.equal(await noGuestStatePromise, true);
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
 test('运行中断线后允许按原槽位重连，并向重连玩家下发权威快照', async () => {
   const server = await startServer({
     host: '127.0.0.1',
@@ -458,7 +688,7 @@ test('运行中断线后允许按原槽位重连，并向重连玩家下发权�
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
@@ -575,7 +805,7 @@ test('等待态玩家可以切换观战并点击槽位回到场内', async () =>
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
@@ -656,7 +886,7 @@ test('槽位满员时仍允许从大厅直接加入观战', async () => {
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     const owner = io(baseUrl, { transports: ['websocket'] });
     sockets.push(owner);
@@ -747,7 +977,7 @@ test('房主观战后可以以 8 个 Bot 开始战斗倒计时', async () => {
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
@@ -840,7 +1070,7 @@ test('房主可以在运行中快速失败并结束本轮模拟', async () => {
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
@@ -951,7 +1181,7 @@ test('倒计时期间移动会保留到正式开战快照', async () => {
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const initialWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
@@ -1119,7 +1349,7 @@ test('客户端请求重同步时，服务端会回送当前权威快照', async
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
@@ -1180,7 +1410,7 @@ test('运行态位姿样本会同步到服务端当前权威位置', async () =>
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
@@ -1268,7 +1498,7 @@ test('等待态位姿样本通过统一事件链返回位移事件', async () =>
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
@@ -1344,7 +1574,7 @@ test('冲刺会为玩家附加状态并记录冷却', async () => {
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     owner.emit('room:join', {
@@ -1451,7 +1681,7 @@ test('等待态与战斗态位姿样本使用同一套移动链路', async () =>
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
@@ -1660,7 +1890,7 @@ test('旧同步轮高序号位姿样本不会阻塞当前战斗态移动', async
     });
     assert.equal(createResponse.status, 200);
     const createPayload = await createResponse.json();
-    const roomId = createPayload.room.roomId;
+    const roomId = createPayload.roomId;
 
     await waitForConnect(owner);
     const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');

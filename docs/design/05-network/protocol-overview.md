@@ -38,6 +38,7 @@
 ## 协议规则
 
 - 所有房间内消息都带 `roomId`
+- `POST /rooms` 只创建建房申请并返回 `roomId` 与 `expiresAt`，真实房间由房主 `room:join` 成功后实例化
 - `room:start` 可携带 `countdownMs`，服务端校验后进入开始倒计时
 - `room:state` 携带当前 `startCountdown`，客户端据此显示全员倒计时
 - `room:countdown` 由服务端每秒广播当前应显示的整数秒数，客户端不自行推算倒计时数字

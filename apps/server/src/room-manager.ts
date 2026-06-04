@@ -39,19 +39,39 @@ type TypedIo = SocketServer<ClientToServerEvents, ServerToClientEvents>;
 const DEFAULT_START_COUNTDOWN_MS = 5_000;
 const MIN_START_COUNTDOWN_MS = 1_000;
 const MAX_START_COUNTDOWN_MS = 30_000;
+const PENDING_ROOM_TTL_MS = 30_000;
 const QUICK_FAIL_REASON = '房主手动结束本轮模拟';
 const DEFAULT_ROOM_OPTIONS = {
   deadActorsInteract: true,
 };
 
+export interface PendingRoomCreateResult {
+  roomId: string;
+  expiresAt: number;
+}
+
+interface PendingRoomRecord {
+  roomId: string;
+  name: string;
+  ownerUserId: string;
+  ownerName: string;
+  battleId: string | null;
+  battle: NonNullable<ReturnType<typeof getBattleDefinition>> | null;
+  expiresAt: number;
+  expireHandle: NodeJS.Timeout;
+}
+
 export interface RoomManagerOptions {
   roomPassword?: string;
+  pendingRoomTtlMs?: number;
 }
 
 export class RoomManager {
   private readonly rooms = new Map<string, RoomRecord>();
+  private readonly pendingRooms = new Map<string, PendingRoomRecord>();
   private readonly userRooms = new Map<string, string>();
   private readonly roomPassword: string;
+  private readonly pendingRoomTtlMs: number;
   private roomCounter = 0;
 
   constructor(
@@ -60,6 +80,7 @@ export class RoomManager {
     options?: RoomManagerOptions,
   ) {
     this.roomPassword = options?.roomPassword?.trim() ?? '';
+    this.pendingRoomTtlMs = options?.pendingRoomTtlMs ?? PENDING_ROOM_TTL_MS;
   }
 
   isRoomPasswordRequired(): boolean {
@@ -78,26 +99,68 @@ export class RoomManager {
     return [...this.rooms.values()].map(createRoomMetricDescriptor);
   }
 
-  createRoom(options: {
+  createPendingRoom(options: {
     name: string;
     ownerUserId: string;
     ownerName: string;
     battleId?: string;
-  }): RoomStateDto {
+  }): PendingRoomCreateResult {
     const roomId = `room_${String(++this.roomCounter).padStart(4, '0')}`;
     const battle =
       options.battleId === undefined ? null : (getBattleDefinition(options.battleId) ?? null);
+    const expiresAt = Date.now() + this.pendingRoomTtlMs;
+    const expireHandle = setTimeout(() => {
+      this.pendingRooms.delete(roomId);
+    }, this.pendingRoomTtlMs);
 
-    const room: RoomRecord = {
+    this.pendingRooms.set(roomId, {
       roomId,
       name: options.name,
       ownerUserId: options.ownerUserId,
       ownerName: options.ownerName,
-      options: { ...DEFAULT_ROOM_OPTIONS },
-      phase: 'waiting',
       battleId: battle?.id ?? null,
       battle,
-      slots: createFilledBotSlots(roomId),
+      expiresAt,
+      expireHandle,
+    });
+
+    return {
+      roomId,
+      expiresAt,
+    };
+  }
+
+  dispose(): void {
+    for (const pendingRoom of this.pendingRooms.values()) {
+      clearTimeout(pendingRoom.expireHandle);
+    }
+
+    this.pendingRooms.clear();
+
+    for (const room of this.rooms.values()) {
+      if (room.loopHandle !== null) {
+        clearInterval(room.loopHandle);
+        room.loopHandle = null;
+      }
+
+      this.clearStartCountdown(room);
+    }
+  }
+
+  private instantiatePendingRoom(pendingRoom: PendingRoomRecord): RoomRecord {
+    clearTimeout(pendingRoom.expireHandle);
+    this.pendingRooms.delete(pendingRoom.roomId);
+
+    const room: RoomRecord = {
+      roomId: pendingRoom.roomId,
+      name: pendingRoom.name,
+      ownerUserId: pendingRoom.ownerUserId,
+      ownerName: pendingRoom.ownerName,
+      options: { ...DEFAULT_ROOM_OPTIONS },
+      phase: 'waiting',
+      battleId: pendingRoom.battleId,
+      battle: pendingRoom.battle,
+      slots: createFilledBotSlots(pendingRoom.roomId),
       spectators: new Map(),
       simulation: null,
       loopHandle: null,
@@ -110,13 +173,8 @@ export class RoomManager {
       startCountdownTickHandle: null,
     };
 
-    this.rooms.set(roomId, room);
-    this.rebuildWaitingSimulation(room, {
-      resetAllActors: true,
-      keepTimeMs: false,
-      sourceSnapshot: null,
-    });
-    return createRoomState(room);
+    this.rooms.set(pendingRoom.roomId, room);
+    return room;
   }
 
   toRoomState(room: RoomRecord): RoomStateDto {
@@ -277,8 +335,9 @@ export class RoomManager {
 
   joinRoom(socket: TypedSocket, payload: RoomJoinPayload): void {
     const room = this.rooms.get(payload.roomId);
+    const pendingRoom = room === undefined ? this.pendingRooms.get(payload.roomId) : undefined;
 
-    if (room === undefined) {
+    if (room === undefined && pendingRoom === undefined) {
       this.emitError(socket, 'room_not_found', '房间不存在');
       return;
     }
@@ -291,8 +350,13 @@ export class RoomManager {
     const userName = payload.userName?.trim() || `玩家-${payload.userId.slice(-4)}`;
     const existingRoomId = this.userRooms.get(payload.userId);
 
-    if (existingRoomId !== undefined && existingRoomId !== room.roomId) {
+    if (existingRoomId !== undefined && existingRoomId !== payload.roomId) {
       this.emitError(socket, 'already_in_other_room', '当前用户已在其他房间');
+      return;
+    }
+
+    if (room === undefined) {
+      this.joinPendingRoom(socket, pendingRoom!, payload, userName);
       return;
     }
 
@@ -415,15 +479,15 @@ export class RoomManager {
       const spectator = this.getSpectatorBySocket(room, socket.id);
 
       if (spectator !== undefined) {
-        this.handleSpectatorDeparture(room, spectator, true);
         socket.leave(room.roomId);
+        this.handleSpectatorDeparture(room, spectator, true);
       }
 
       return;
     }
 
-    this.handlePlayerDeparture(room, slot, true);
     socket.leave(room.roomId);
+    this.handlePlayerDeparture(room, slot, true);
   }
 
   handleDisconnect(socketId: string): void {
@@ -444,6 +508,58 @@ export class RoomManager {
       this.handlePlayerDeparture(room, slot, false);
       return;
     }
+  }
+
+  private joinPendingRoom(
+    socket: TypedSocket,
+    pendingRoom: PendingRoomRecord,
+    payload: RoomJoinPayload,
+    userName: string,
+  ): void {
+    if (pendingRoom.expiresAt <= Date.now()) {
+      clearTimeout(pendingRoom.expireHandle);
+      this.pendingRooms.delete(pendingRoom.roomId);
+      this.emitError(socket, 'room_expired', '建房申请已过期');
+      return;
+    }
+
+    if (payload.userId !== pendingRoom.ownerUserId) {
+      this.emitError(socket, 'not_owner', '只有房主可以完成建房');
+      return;
+    }
+
+    if (payload.mode === 'spectator') {
+      this.emitError(socket, 'owner_must_join_as_player', '房主需要先加入战斗槽位');
+      return;
+    }
+
+    const room = this.instantiatePendingRoom(pendingRoom);
+    const targetSlot = payload.slot ?? this.findFirstAvailableSlot(room);
+
+    if (targetSlot === undefined || room.slots[targetSlot].type === 'player') {
+      this.rooms.delete(room.roomId);
+      this.emitError(socket, 'room_full', '房间已满');
+      return;
+    }
+
+    room.slots[targetSlot] = {
+      type: 'player',
+      actorId: `${room.roomId}:player:${payload.userId}`,
+      userId: payload.userId,
+      name: userName,
+      socketId: socket.id,
+      online: true,
+      departed: false,
+    };
+
+    this.userRooms.set(payload.userId, room.roomId);
+    socket.join(room.roomId);
+    this.rebuildWaitingSimulation(room, {
+      resetAllActors: true,
+      keepTimeMs: false,
+      sourceSnapshot: null,
+    });
+    this.broadcastWaitingState(room, 'join');
   }
 
   selectBattle(socket: TypedSocket, roomId: string, battleId: string): void {

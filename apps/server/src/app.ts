@@ -26,6 +26,7 @@ export interface ServerContextOptions {
   logger?: boolean;
   staticRoot?: string;
   roomPassword?: string;
+  pendingRoomTtlMs?: number;
 }
 
 export interface ServerContext {
@@ -95,6 +96,9 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
   const metrics = new ServerMetricsCollector();
   const roomManager = new RoomManager(io, metrics, {
     roomPassword: resolveRoomPassword(options?.roomPassword),
+    ...(options?.pendingRoomTtlMs === undefined
+      ? {}
+      : { pendingRoomTtlMs: options.pendingRoomTtlMs }),
   });
 
   app.addHook('onRequest', async (request) => {
@@ -118,6 +122,10 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       statusCode: reply.statusCode,
       durationMs: performance.now() - startedAt,
     });
+  });
+
+  app.addHook('onClose', async () => {
+    roomManager.dispose();
   });
 
   app.get('/health', async () => ({
@@ -189,9 +197,7 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       ...(body.battleId ? { battleId: body.battleId } : {}),
     };
 
-    return {
-      room: roomManager.createRoom(createPayload),
-    };
+    return roomManager.createPendingRoom(createPayload);
   });
 
   if (staticRoot !== null) {
@@ -302,6 +308,10 @@ export async function startServer(options?: StartServerOptions) {
 
   if (options?.roomPassword !== undefined) {
     contextOptions.roomPassword = options.roomPassword;
+  }
+
+  if (options?.pendingRoomTtlMs !== undefined) {
+    contextOptions.pendingRoomTtlMs = options.pendingRoomTtlMs;
   }
 
   const context = createServerContext(

@@ -855,7 +855,7 @@ export const useAppStore = defineStore('app', () => {
       resetBattleState();
       room.value = null;
 
-      const response = await fetchJson<{ room: RoomStateDto }>('/rooms', {
+      const response = await fetchJson<{ roomId: string; expiresAt: number }>('/rooms', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -869,8 +869,8 @@ export const useAppStore = defineStore('app', () => {
         }),
       });
 
-      const roomStatePromise = waitForRoomState(response.room.roomId);
-      await joinRoom(response.room.roomId);
+      const roomStatePromise = waitForRoomState(response.roomId);
+      await joinRoom(response.roomId);
       await roomStatePromise;
       loadLobbyData().catch(() => undefined);
     } catch (error) {
