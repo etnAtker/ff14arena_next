@@ -76,7 +76,7 @@ const emit = defineEmits<{
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.24);
 }
 
-.topbar-card :deep(.n-card__content) {
+.topbar-card :deep(.n-card-content) {
   padding: 12px 16px;
 }
 

@@ -1126,7 +1126,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
 }
 
-.stage-card :deep(.n-card__content) {
+.stage-card :deep(.n-card-content) {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -1207,7 +1207,7 @@ onBeforeUnmount(() => {
   min-width: 240px;
 }
 
-.result-card :deep(.n-card__content) {
+.result-card :deep(.n-card-content) {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
