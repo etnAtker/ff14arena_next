@@ -14,6 +14,9 @@ const {
   CHAOS_EARTH_STATUS_ID,
   VOID_EROSION_1_STATUS_ID,
   BLACK_HOLE_SHOT_DELAY_MS,
+  FIRST_TARGET_MARKER_COLOR,
+  SECOND_TARGET_MARKER_COLOR,
+  THIRD_TARGET_MARKER_COLOR,
   calculateSlapAoeCenter,
 } = KEFKA_P3_SECOND_TRICK_TESTING;
 
@@ -173,6 +176,26 @@ test('地震结束后分配三组目标和混沌之土', () => {
   });
 });
 
+test('三组目标会生成对应颜色和编号的头顶标点', () => {
+  withMockedRandom(createSeededRandomValues(12, 64), () => {
+    const simulation = createKefkaP3SecondSimulation();
+
+    advanceTo(simulation, ZERO_AT);
+
+    const markers = simulation
+      .getSnapshot()
+      .mechanics.filter((mechanic) => mechanic.kind === 'actorMarker');
+    const firstMarkers = markers.filter((marker) => marker.color === FIRST_TARGET_MARKER_COLOR);
+    const secondMarkers = markers.filter((marker) => marker.color === SECOND_TARGET_MARKER_COLOR);
+    const thirdMarkers = markers.filter((marker) => marker.color === THIRD_TARGET_MARKER_COLOR);
+
+    assert.deepEqual(firstMarkers.map((marker) => marker.label).sort(), ['1', '2', '3']);
+    assert.deepEqual(secondMarkers.map((marker) => marker.label).sort(), ['1', '2', '3']);
+    assert.deepEqual(thirdMarkers.map((marker) => marker.label).sort(), ['1', '2']);
+    assert.ok(markers.every((marker) => marker.markerShape === 'numberCircle'));
+  });
+});
+
 test('第一次黑洞生成固定源连线并提前显示射线预兆', () => {
   withMockedRandom(createSeededRandomValues(22, 128), () => {
     const simulation = createKefkaP3SecondSimulation();
@@ -192,6 +215,7 @@ test('第一次黑洞生成固定源连线并提前显示射线预兆', () => {
     assert.equal(blackHoles.length, 3);
     assert.equal(tethers.length, 1);
     assert.ok(tethers[0].sourcePosition);
+    assert.equal(tethers[0].preventTargetHoldingOtherTether, false);
 
     const tetherTargetId = tethers[0].targetId;
 

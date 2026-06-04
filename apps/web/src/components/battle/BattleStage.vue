@@ -523,12 +523,15 @@ function drawActorMarker(
   };
   const markerColor = colorValue === undefined ? null : parseHexColor(colorValue);
 
-  if (markerShape === 'circleDot') {
+  if (markerShape === 'circleDot' || markerShape === 'numberCircle') {
     graphics.circle(markerCenter.x, markerCenter.y, 0.75 * scale).stroke({
       width: 2,
       color: markerColor ?? 0x7dd3fc,
       alpha: 0.95,
     });
+    if (markerShape === 'numberCircle') {
+      return;
+    }
     graphics.circle(markerCenter.x, markerCenter.y, 0.16 * scale).fill({
       color: markerColor ?? 0xe0f2fe,
       alpha: 0.95,

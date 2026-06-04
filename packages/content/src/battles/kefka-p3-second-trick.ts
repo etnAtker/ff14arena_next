@@ -65,6 +65,9 @@ const BLACK_HOLE_BEAM_LENGTH = 40;
 const BLACK_HOLE_BEAM_WIDTH = 2;
 const BLACK_HOLE_COLOR = '#111827';
 const BLACK_HOLE_BEAM_COLOR = '#a855f7';
+const FIRST_TARGET_MARKER_COLOR = '#facc15';
+const SECOND_TARGET_MARKER_COLOR = '#a855f7';
+const THIRD_TARGET_MARKER_COLOR = '#ef4444';
 
 const THUNDER_CAST_MS = 4_700;
 const THUNDER_RADIUS = 5;
@@ -372,16 +375,38 @@ function applySecondTrickDamage(
 function assignInitialStatuses(ctx: BattleScriptContext): void {
   const actors = shuffle(ctx.select.allPlayers());
   const groups = [
-    { statusId: FIRST_TARGET_STATUS_ID, count: 3, durationMs: 72_000 },
-    { statusId: SECOND_TARGET_STATUS_ID, count: 3, durationMs: 106_000 },
-    { statusId: THIRD_TARGET_STATUS_ID, count: 2, durationMs: 139_000 },
+    {
+      statusId: FIRST_TARGET_STATUS_ID,
+      count: 3,
+      durationMs: 72_000,
+      markerColor: FIRST_TARGET_MARKER_COLOR,
+    },
+    {
+      statusId: SECOND_TARGET_STATUS_ID,
+      count: 3,
+      durationMs: 106_000,
+      markerColor: SECOND_TARGET_MARKER_COLOR,
+    },
+    {
+      statusId: THIRD_TARGET_STATUS_ID,
+      count: 2,
+      durationMs: 139_000,
+      markerColor: THIRD_TARGET_MARKER_COLOR,
+    },
   ] as const;
   let cursor = 0;
 
   for (const group of groups) {
-    for (const actor of actors.slice(cursor, cursor + group.count)) {
+    for (const [index, actor] of actors.slice(cursor, cursor + group.count).entries()) {
       applyStatus(ctx, actor, group.statusId, group.durationMs);
       applyStatus(ctx, actor, CHAOS_EARTH_STATUS_ID, group.durationMs);
+      ctx.spawn.actorMarker({
+        label: `${index + 1}`,
+        target: actor,
+        markerShape: 'numberCircle',
+        color: group.markerColor,
+        resolveAfterMs: group.durationMs,
+      });
     }
     cursor += group.count;
   }
@@ -766,7 +791,7 @@ function spawnBlackHoleTether(
     sourcePosition: hole.center,
     allowTransfer: true,
     allowDeadRetarget: true,
-    preventTargetHoldingOtherTether: true,
+    preventTargetHoldingOtherTether: false,
     resolveAfterMs: resolveAfterMs + 50,
   });
 
@@ -1173,6 +1198,9 @@ export const KEFKA_P3_SECOND_TRICK_TESTING = {
   VOID_EROSION_1_STATUS_ID,
   VOID_EROSION_2_STATUS_ID,
   VOID_CORROSION_STATUS_ID,
+  FIRST_TARGET_MARKER_COLOR,
+  SECOND_TARGET_MARKER_COLOR,
+  THIRD_TARGET_MARKER_COLOR,
   BLACK_HOLE_SHOT_DELAY_MS,
   THUNDER_CAST_MS,
   CURSE_CAST_MS,
