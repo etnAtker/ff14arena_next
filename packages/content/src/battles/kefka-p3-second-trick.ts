@@ -39,7 +39,7 @@ const TELEGRAPH_MS = 500;
 const VISUAL_MS = 500;
 const MECHANIC_DAMAGE = 1;
 const INJURY_DURATION_MS = 3_000;
-const COMPLETE_AT = ZERO_AT + 115_000;
+const COMPLETE_AT = ZERO_AT + 130_200;
 
 const CHAOS_MARKER_RADIUS = 0.8;
 const CHAOS_TARGET_RING_RADIUS = 6;
@@ -680,6 +680,7 @@ function scheduleSlap(
   ctx: BattleScriptContext,
   spawnAt: number,
   castDelayMs = SLAP_SPAWN_TO_CAST_MS,
+  markerDespawnAt?: number,
 ): void {
   const position = createOutsideKefkaPosition();
   const facing = createFacingTowards(position, CENTER);
@@ -687,7 +688,7 @@ function scheduleSlap(
   const castStartAt = spawnAt + castDelayMs;
   const resolveStartAt = castStartAt + SLAP_CAST_MS;
   const followupAt = resolveStartAt + SLAP_AOE_INTERVAL_MS * 2 + SLAP_FOLLOWUP_DELAY_MS;
-  const disappearAt = followupAt + 1_000;
+  const disappearAt = markerDespawnAt ?? followupAt + 1_000;
 
   ctx.timeline.at(spawnAt, () => {
     spawnKefkaMarker(ctx, position, disappearAt - spawnAt);
@@ -810,6 +811,40 @@ function createBlackHoleCenters(): Vector2[] {
   return shuffle(cardinalDirections)
     .slice(0, 3)
     .map((direction) => createPointOnDirection(direction, BLACK_HOLE_DISTANCE));
+}
+
+function getBlackHoleCardinalIndex(center: Vector2): number {
+  const angle = normalizeAngle(Math.atan2(center.y, center.x));
+  const cardinalAngles = [Math.PI * 1.5, 0, Math.PI / 2, Math.PI];
+
+  return cardinalAngles
+    .map((cardinalAngle, index) => ({
+      index,
+      diff: getAngleDiff(angle, cardinalAngle),
+    }))
+    .sort((left, right) => left.diff - right.diff)[0]!.index;
+}
+
+function selectAdjacentBlackHolePair(holes: readonly BlackHole[]): readonly [BlackHole, BlackHole] {
+  const indexedHoles = holes.map((hole) => ({
+    hole,
+    cardinalIndex: getBlackHoleCardinalIndex(hole.center),
+  }));
+
+  for (const left of indexedHoles) {
+    const right = indexedHoles.find(
+      (candidate) =>
+        candidate !== left &&
+        ((candidate.cardinalIndex + 4 - left.cardinalIndex) % 4 === 1 ||
+          (left.cardinalIndex + 4 - candidate.cardinalIndex) % 4 === 1),
+    );
+
+    if (right !== undefined) {
+      return [left.hole, right.hole];
+    }
+  }
+
+  return [holes[0]!, holes[1]!];
 }
 
 function spawnBlackHoleMarker(
@@ -1024,6 +1059,43 @@ function schedulePersistentBlackHoles(
         );
       });
     }
+  });
+}
+
+function scheduleLateSplitBlackHoles(ctx: BattleScriptContext): void {
+  const spawnAt = t(115_000);
+
+  ctx.timeline.at(spawnAt, () => {
+    const holes = createBlackHoleCenters().map((center): BlackHole => {
+      return {
+        center,
+        markerResolveAfterMs: 0,
+        tetherId: null,
+      };
+    });
+    const firstHoles = selectAdjacentBlackHolePair(holes);
+    const secondHole = holes.find((hole) => !firstHoles.includes(hole));
+
+    for (const hole of firstHoles) {
+      hole.markerResolveAfterMs = BLACK_HOLE_SHOT_DELAY_MS + 100;
+      spawnBlackHoleMarker(ctx, hole.center, hole.markerResolveAfterMs);
+      hole.tetherId = spawnBlackHoleTether(ctx, hole, BLACK_HOLE_SHOT_DELAY_MS);
+    }
+
+    firstHoles.forEach((hole, index) => {
+      scheduleBlackHoleShot(ctx, hole, spawnAt + BLACK_HOLE_SHOT_DELAY_MS, `late:first:${index}`);
+    });
+
+    if (secondHole === undefined) {
+      return;
+    }
+
+    secondHole.markerResolveAfterMs = BLACK_HOLE_SHOT_DELAY_MS * 2 + 100;
+    spawnBlackHoleMarker(ctx, secondHole.center, secondHole.markerResolveAfterMs);
+    ctx.timeline.after(BLACK_HOLE_SHOT_DELAY_MS, () => {
+      secondHole.tetherId = spawnBlackHoleTether(ctx, secondHole, BLACK_HOLE_SHOT_DELAY_MS);
+    });
+    scheduleBlackHoleShot(ctx, secondHole, spawnAt + BLACK_HOLE_SHOT_DELAY_MS * 2, 'late:second');
   });
 }
 
@@ -1262,14 +1334,19 @@ function scheduleChaosExplosion(
   }
 }
 
-function scheduleTrueSelf(ctx: BattleScriptContext, spawnAt: number): void {
+function scheduleTrueSelf(
+  ctx: BattleScriptContext,
+  spawnAt: number,
+  markerDespawnAt?: number,
+): void {
   const position = createOutsideKefkaPosition();
   const facing = createFacingTowards(position, CENTER);
   const castStartAt = spawnAt + TRUE_SELF_SPAWN_TO_CAST_MS;
   const resolveAt = castStartAt + TRUE_SELF_CAST_MS;
+  const disappearAt = markerDespawnAt ?? resolveAt + VISUAL_MS;
 
   ctx.timeline.at(spawnAt, () => {
-    spawnKefkaMarker(ctx, position, resolveAt + VISUAL_MS - spawnAt);
+    spawnKefkaMarker(ctx, position, disappearAt - spawnAt);
   });
   ctx.timeline.at(castStartAt, () => {
     ctx.boss.cast(`kefka_p3_second_true_self_${spawnAt}`, '本色出演的我', TRUE_SELF_CAST_MS);
@@ -1328,18 +1405,19 @@ function buildKefkaP3SecondScript(ctx: BattleScriptContext): void {
     assignInitialStatuses(ctx);
   });
 
-  scheduleSlap(ctx, t(9_800));
+  scheduleSlap(ctx, t(9_800), SLAP_SPAWN_TO_CAST_MS, t(39_200));
   scheduleFirstBlackHoles(ctx);
   scheduleThunder(ctx, t(31_900), 'kefka_p3_second_thunder_1');
   scheduleCurse(ctx, t(39_900), 'kefka_p3_second_curse_1');
-  scheduleSlap(ctx, t(40_200));
+  scheduleSlap(ctx, t(40_200), SLAP_SPAWN_TO_CAST_MS, t(69_600));
   schedulePersistentBlackHoles(ctx, t(49_300), 'persistent:1');
-  scheduleCurse(ctx, t(63_500), 'kefka_p3_second_curse_2');
-  scheduleTrueSelf(ctx, t(63_500));
-  scheduleThunder(ctx, t(69_500), 'kefka_p3_second_thunder_2');
-  schedulePersistentBlackHoles(ctx, t(81_000), 'persistent:2');
-  scheduleSlap(ctx, t(100_000), 6_000);
-  scheduleChaosExplosion(ctx, t(104_000), 'kefka_p3_second_chaos_explosion');
+  scheduleCurse(ctx, t(70_600), 'kefka_p3_second_curse_2');
+  scheduleTrueSelf(ctx, t(70_600), t(106_100));
+  scheduleThunder(ctx, t(76_600), 'kefka_p3_second_thunder_2');
+  schedulePersistentBlackHoles(ctx, t(88_100), 'persistent:2');
+  scheduleSlap(ctx, t(107_100), 6_000, COMPLETE_AT);
+  scheduleChaosExplosion(ctx, t(111_100), 'kefka_p3_second_chaos_explosion');
+  scheduleLateSplitBlackHoles(ctx);
 
   ctx.timeline.at(COMPLETE_AT, () => {
     ctx.state.complete();

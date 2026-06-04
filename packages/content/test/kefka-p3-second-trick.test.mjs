@@ -83,6 +83,12 @@ function hasStatus(actor, statusId) {
   return actor.statuses.some((status) => status.id === statusId);
 }
 
+function hasKefkaMarker(snapshot) {
+  return snapshot.mechanics.some(
+    (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '凯夫卡',
+  );
+}
+
 function submitPose(simulation, actor, position, facing = actor.facing) {
   simulation.submitActorControlFrame({
     actorId: actor.id,
@@ -375,11 +381,11 @@ test('响亮亮耳光刀圈以场中为基准按凯夫卡方向旋转', () => {
   });
 });
 
-test('第三组黑洞在81秒生成并允许同一玩家持有多根连线', () => {
+test('第三组黑洞在88.1秒生成并允许同一玩家持有多根连线', () => {
   withMockedRandom(createSeededRandomValues(66, 512), () => {
     const simulation = createKefkaP3SecondSimulation();
 
-    advanceTo(simulation, ZERO_AT + 81_000);
+    advanceTo(simulation, ZERO_AT + 88_100);
 
     const snapshot = simulation.getSnapshot();
     const blackHoles = snapshot.mechanics.filter(
@@ -395,27 +401,47 @@ test('第三组黑洞在81秒生成并允许同一玩家持有多根连线', () 
   });
 });
 
-test('100秒凯夫卡先出现，106秒才开始响亮亮耳光读条', () => {
+test('107.1秒凯夫卡先出现，113.1秒才开始响亮亮耳光读条', () => {
   withMockedRandom(createSeededRandomValues(77, 512), () => {
     const simulation = createKefkaP3SecondSimulation();
 
-    advanceTo(simulation, ZERO_AT + 101_000);
+    advanceTo(simulation, ZERO_AT + 108_100);
 
     let snapshot = simulation.getSnapshot();
     assert.equal(
       snapshot.hud.bossCastBars.some((cast) => cast.actionName === '响亮亮耳光'),
       false,
     );
-    assert.ok(
-      snapshot.mechanics.some(
-        (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '凯夫卡',
-      ),
-    );
+    assert.ok(hasKefkaMarker(snapshot));
 
-    advanceTo(simulation, ZERO_AT + 106_000);
+    advanceTo(simulation, ZERO_AT + 113_100);
 
     snapshot = simulation.getSnapshot();
     assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '响亮亮耳光'));
+  });
+});
+
+test('凯夫卡释放结束后会驻留到下一次出现前1秒', () => {
+  withMockedRandom(createSeededRandomValues(79, 512), () => {
+    const simulation = createKefkaP3SecondSimulation();
+
+    advanceTo(simulation, ZERO_AT + 18_000);
+    assert.ok(hasKefkaMarker(simulation.getSnapshot()));
+
+    advanceTo(simulation, ZERO_AT + 39_200);
+    assert.equal(hasKefkaMarker(simulation.getSnapshot()), false);
+
+    advanceTo(simulation, ZERO_AT + 40_200);
+    assert.ok(hasKefkaMarker(simulation.getSnapshot()));
+
+    advanceTo(simulation, ZERO_AT + 69_600);
+    assert.equal(hasKefkaMarker(simulation.getSnapshot()), false);
+
+    advanceTo(simulation, ZERO_AT + 70_600);
+    assert.ok(hasKefkaMarker(simulation.getSnapshot()));
+
+    advanceTo(simulation, ZERO_AT + 106_100);
+    assert.equal(hasKefkaMarker(simulation.getSnapshot()), false);
   });
 });
 
@@ -423,7 +449,7 @@ test('本色出演的我使用50m矩形范围', () => {
   withMockedRandom(createSeededRandomValues(78, 512), () => {
     const simulation = createKefkaP3SecondSimulation();
 
-    advanceTo(simulation, ZERO_AT + 63_500 + 1_500 + 4_000 - TELEGRAPH_MS);
+    advanceTo(simulation, ZERO_AT + 70_600 + 1_500 + 4_000 - TELEGRAPH_MS);
 
     const telegraph = simulation
       .getSnapshot()
@@ -437,11 +463,11 @@ test('本色出演的我使用50m矩形范围', () => {
   });
 });
 
-test('104秒卡奥斯随机释放经度聚爆或纬度聚爆', () => {
+test('111.1秒卡奥斯随机释放经度聚爆或纬度聚爆', () => {
   withMockedRandom(createSeededRandomValues(88, 512), () => {
     const simulation = createKefkaP3SecondSimulation();
 
-    advanceTo(simulation, ZERO_AT + 103_950);
+    advanceTo(simulation, ZERO_AT + 111_050);
 
     const st = simulation.getSnapshot().actors.find((actor) => actor.slot === 'ST');
     assert.ok(st);
@@ -449,7 +475,7 @@ test('104秒卡奥斯随机释放经度聚爆或纬度聚爆', () => {
     simulation.tick(50);
 
     let snapshot = simulation.getSnapshot();
-    const stateKey = `kefkaP3Second:chaosExplosion:${ZERO_AT + 104_000}`;
+    const stateKey = `kefkaP3Second:chaosExplosion:${ZERO_AT + 111_100}`;
     const explosionState = snapshot.scriptState[stateKey];
     assert.ok(explosionState);
     assert.ok(['longitude', 'latitude'].includes(explosionState.mode));
@@ -460,7 +486,7 @@ test('104秒卡奥斯随机释放经度聚爆或纬度聚爆', () => {
     assert.ok(chaosMarker);
     assertCloseAngle(chaosMarker.direction, explosionState.facing);
 
-    advanceTo(simulation, ZERO_AT + 104_000 + CHAOS_EXPLOSION_CAST_MS - TELEGRAPH_MS);
+    advanceTo(simulation, ZERO_AT + 111_100 + CHAOS_EXPLOSION_CAST_MS - TELEGRAPH_MS);
 
     snapshot = simulation.getSnapshot();
     const actionName = explosionState.mode === 'longitude' ? '经度聚爆' : '纬度聚爆';
@@ -477,5 +503,56 @@ test('104秒卡奥斯随机释放经度聚爆或纬度聚爆', () => {
         ),
       );
     }
+  });
+});
+
+test('115秒黑洞先相邻两个连线，再剩余一个连线', () => {
+  withMockedRandom(createSeededRandomValues(89, 512), () => {
+    const simulation = createKefkaP3SecondSimulation();
+    const spawnAt = ZERO_AT + 115_000;
+    const firstShotAt = spawnAt + BLACK_HOLE_SHOT_DELAY_MS;
+    const secondShotAt = spawnAt + BLACK_HOLE_SHOT_DELAY_MS * 2;
+
+    advanceTo(simulation, spawnAt);
+
+    let snapshot = simulation.getSnapshot();
+    let blackHoles = snapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '黑洞',
+    );
+    let tethers = snapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'tether' && mechanic.label === '黑洞连线',
+    );
+
+    assert.equal(blackHoles.length, 3);
+    assert.equal(tethers.length, 2);
+    assert.ok(tethers[0].sourcePosition);
+    assert.ok(tethers[1].sourcePosition);
+    assert.ok(getDistance(tethers[0].sourcePosition, tethers[1].sourcePosition) < 30);
+
+    advanceTo(simulation, firstShotAt + 150);
+
+    snapshot = simulation.getSnapshot();
+    blackHoles = snapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '黑洞',
+    );
+    tethers = snapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'tether' && mechanic.label === '黑洞连线',
+    );
+
+    assert.equal(blackHoles.length, 1);
+    assert.equal(tethers.length, 1);
+
+    advanceTo(simulation, secondShotAt + 150);
+
+    snapshot = simulation.getSnapshot();
+    blackHoles = snapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '黑洞',
+    );
+    tethers = snapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'tether' && mechanic.label === '黑洞连线',
+    );
+
+    assert.equal(blackHoles.length, 0);
+    assert.equal(tethers.length, 0);
   });
 });
