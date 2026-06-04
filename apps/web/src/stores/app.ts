@@ -1330,11 +1330,21 @@ export const useAppStore = defineStore('app', () => {
           totalDurationMs: event.payload.totalDurationMs,
         };
         authoritativeSnapshot.value.hud.bossCastBar = authoritativeSnapshot.value.boss.castBar;
+        authoritativeSnapshot.value.hud.bossCastBars = [
+          ...(authoritativeSnapshot.value.hud.bossCastBars ?? []).filter(
+            (cast) => cast.actionId !== event.payload.actionId,
+          ),
+          authoritativeSnapshot.value.boss.castBar,
+        ];
         appendLog(`Boss 读条：${event.payload.actionName}`);
         break;
       case 'bossCastResolved':
-        authoritativeSnapshot.value.boss.castBar = null;
-        authoritativeSnapshot.value.hud.bossCastBar = null;
+        authoritativeSnapshot.value.hud.bossCastBars = (
+          authoritativeSnapshot.value.hud.bossCastBars ?? []
+        ).filter((cast) => cast.actionId !== event.payload.actionId);
+        authoritativeSnapshot.value.boss.castBar =
+          authoritativeSnapshot.value.hud.bossCastBars.at(-1) ?? null;
+        authoritativeSnapshot.value.hud.bossCastBar = authoritativeSnapshot.value.boss.castBar;
         appendLog(`首领结算：${event.payload.actionName}`);
         break;
       case 'aoeSpawned':

@@ -17,6 +17,15 @@
       "kefka_p3_chaos_water",
       "kefka_p3_chaos_wind",
       "kefka_p3_chaos_reverse_wind"
+    ],
+    "kefka_p3_second_trick": [
+      "kefka_p3_second_first_target",
+      "kefka_p3_second_second_target",
+      "kefka_p3_second_third_target",
+      "kefka_p3_second_chaos_earth",
+      "kefka_p3_second_void_erosion_1",
+      "kefka_p3_second_void_erosion_2",
+      "kefka_p3_second_void_corrosion"
     ]
   },
   "statusXivapiIds": {

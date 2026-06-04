@@ -124,6 +124,7 @@ export interface BattleScriptContext {
     tether(options: {
       label: string;
       target: BaseActorSnapshot;
+      sourcePosition?: Vector2;
       botTransferSequence?: BaseActorSnapshot[];
       botTransferCooldownMs?: number;
       transferCooldownMs?: number;
@@ -165,6 +166,7 @@ export interface BattleScriptContext {
       center: Vector2;
       shape: FieldMarkerShape;
       radius: number;
+      stableId?: string;
       color?: string;
       targetRingRadius?: number;
       targetRingColor?: string;

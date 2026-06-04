@@ -37,6 +37,7 @@
 16. [伊甸P4特殊：光与暗的龙诗](./09-content/eden-p4-special.md)
 17. [凯夫卡P2：一运](./09-content/kefka-p2-first-forsaken.md)
 18. [凯夫卡P3：一运](./09-content/kefka-p3-first-trick.md)
+19. [凯夫卡P3：二运](./09-content/kefka-p3-second-trick.md)
 
 文档术语：
 

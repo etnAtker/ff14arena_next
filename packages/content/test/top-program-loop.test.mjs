@@ -233,6 +233,93 @@ test('通用连线：玩家单 tick 穿过连线时也能完成传递', () => {
   );
 });
 
+test('通用场地标记：stableId 更新时复用同一个 mechanic', () => {
+  const battle = {
+    id: 'stable_field_marker_test',
+    name: '稳定场地标记测试',
+    arenaRadius: 30,
+    bossTargetRingRadius: 15,
+    slots: ['MT'],
+    bossName: '测试首领',
+    initialPartyPositions: {
+      MT: { position: { x: 0, y: 10 }, facing: 0 },
+    },
+    failureTexts: {
+      outOfBounds(actorName) {
+        return `${actorName} 触碰死亡墙`;
+      },
+      mechanicDeath(actorName, sourceLabel) {
+        return `${actorName} 因 ${sourceLabel} 死亡`;
+      },
+    },
+    buildScript(ctx) {
+      ctx.timeline.at(0, () => {
+        ctx.spawn.fieldMarker({
+          label: '稳定标记',
+          center: { x: 0, y: 0 },
+          shape: 'enemy',
+          radius: 1,
+          stableId: 'stable-marker',
+          resolveAfterMs: 1_000,
+        });
+      });
+      ctx.timeline.at(500, () => {
+        ctx.spawn.fieldMarker({
+          label: '稳定标记',
+          center: { x: 5, y: 0 },
+          shape: 'enemy',
+          radius: 1,
+          stableId: 'stable-marker',
+          resolveAfterMs: 1_000,
+        });
+      });
+    },
+  };
+  const simulation = createSimulation();
+
+  simulation.loadBattle({
+    battle,
+    roomId: 'stable-field-marker-test-room',
+    party: [
+      {
+        slot: 'MT',
+        name: 'MT',
+        kind: 'player',
+        actorId: 'player_MT',
+      },
+    ],
+  });
+  simulation.start();
+  simulation.tick(50);
+
+  const firstMarker = simulation
+    .getSnapshot()
+    .mechanics.find((mechanic) => mechanic.kind === 'fieldMarker');
+  assert.ok(firstMarker);
+  assert.equal(firstMarker.center.x, 0);
+
+  simulation.tick(450);
+
+  const updatedMarker = simulation
+    .getSnapshot()
+    .mechanics.find((mechanic) => mechanic.kind === 'fieldMarker');
+  assert.ok(updatedMarker);
+  assert.equal(updatedMarker.id, firstMarker.id);
+  assert.equal(updatedMarker.center.x, 5);
+
+  simulation.tick(500);
+  assert.ok(
+    simulation.getSnapshot().mechanics.some((mechanic) => mechanic.id === firstMarker.id),
+    '旧过期任务不应删除已延长的稳定标记',
+  );
+
+  simulation.tick(500);
+  assert.equal(
+    simulation.getSnapshot().mechanics.some((mechanic) => mechanic.id === firstMarker.id),
+    false,
+  );
+});
+
 test('通用连线：玩家无需白名单即可误穿接线', () => {
   const battle = {
     id: 'player_tether_sweep_with_bot_order_test',

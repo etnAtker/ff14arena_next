@@ -15,6 +15,7 @@ import {
   KEFKA_P2_FIRST_FORSAKEN_BOT_CONTROLLER,
 } from './battles/kefka-p2-first-forsaken';
 import { KEFKA_P3_FIRST_TRICK_BATTLE } from './battles/kefka-p3-first-trick';
+import { KEFKA_P3_SECOND_TRICK_BATTLE } from './battles/kefka-p3-second-trick';
 import type { BattleBotController } from './runtime/bot';
 import { getBattleStatusMetadata } from './status-metadata';
 
@@ -29,6 +30,7 @@ export const battleDefinitions: BattleDefinition[] = [
   EDEN_P4_SPECIAL_BATTLE,
   KEFKA_P2_FIRST_FORSAKEN_BATTLE,
   KEFKA_P3_FIRST_TRICK_BATTLE,
+  KEFKA_P3_SECOND_TRICK_BATTLE,
 ];
 
 export const battleBotControllers = new Map<string, BattleBotController>([

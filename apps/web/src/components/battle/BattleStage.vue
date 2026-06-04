@@ -64,6 +64,7 @@ let bossLabel: Text | null = null;
 const actorLabels = new Map<string, Text>();
 const markerLabels = new Map<string, Text>();
 const actorMarkerTextLabels = new Map<string, Text>();
+const fieldMarkerTextLabels = new Map<string, Text>();
 let pendingYawDelta = 0;
 let dragUpdateFrame: number | null = null;
 let pendingZoomSteps = 0;
@@ -292,6 +293,58 @@ function syncActorMarkerTextLabels(snapshot: SimulationSnapshot): void {
   }
 }
 
+function syncFieldMarkerTextLabels(snapshot: SimulationSnapshot): void {
+  if (app === null) {
+    return;
+  }
+
+  const fieldMarkerMechanics = snapshot.mechanics.filter(
+    (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy',
+  );
+  const activeFieldMarkerIds = new Set(fieldMarkerMechanics.map((mechanic) => mechanic.id));
+
+  for (const mechanic of fieldMarkerMechanics) {
+    if (fieldMarkerTextLabels.has(mechanic.id)) {
+      continue;
+    }
+
+    const label = new Text({
+      text: getEnemyFieldMarkerStageText(mechanic.label, fieldMarkerMechanics),
+      style: new TextStyle({
+        fill: '#f8fafc',
+        fontSize: 12,
+        fontWeight: '900',
+      }),
+    });
+    label.anchor.set(0.5);
+    fieldMarkerTextLabels.set(mechanic.id, label);
+    app.stage.addChild(label);
+  }
+
+  for (const [mechanicId, label] of fieldMarkerTextLabels) {
+    if (activeFieldMarkerIds.has(mechanicId)) {
+      continue;
+    }
+
+    label.destroy();
+    fieldMarkerTextLabels.delete(mechanicId);
+  }
+}
+
+function getEnemyFieldMarkerStageText(
+  label: string,
+  activeEnemyMarkers: Array<{ label: string }>,
+): string {
+  const chars = Array.from(label.trim());
+  const firstChar = chars[0] ?? '?';
+  const duplicateFirstChar =
+    activeEnemyMarkers.filter((marker) => {
+      return (Array.from(marker.label.trim())[0] ?? '?') === firstChar;
+    }).length > 1;
+
+  return duplicateFirstChar ? chars.slice(0, 2).join('') || '?' : firstChar;
+}
+
 function hideLabels(): void {
   if (bossLabel !== null) {
     bossLabel.visible = false;
@@ -306,6 +359,10 @@ function hideLabels(): void {
   }
 
   for (const label of actorMarkerTextLabels.values()) {
+    label.visible = false;
+  }
+
+  for (const label of fieldMarkerTextLabels.values()) {
     label.visible = false;
   }
 }
@@ -770,6 +827,10 @@ function draw(now: number): void {
   syncActorLabels(props.snapshot);
   syncMapMarkerLabels(props.snapshot.mapMarkers);
   syncActorMarkerTextLabels(props.snapshot);
+  syncFieldMarkerTextLabels(props.snapshot);
+  const activeEnemyFieldMarkers = props.snapshot.mechanics.filter(
+    (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy',
+  );
 
   graphics
     .circle(arenaCenter.x, arenaCenter.y, arenaRadius * scale)
@@ -791,14 +852,15 @@ function draw(now: number): void {
 
   for (const mechanic of props.snapshot.mechanics) {
     if (mechanic.kind === 'tether') {
-      const source =
-        mechanic.sourceId === props.snapshot.boss.id
-          ? props.snapshot.boss
-          : props.snapshot.actors.find((actor) => actor.id === mechanic.sourceId);
+      const sourcePosition =
+        mechanic.sourcePosition ??
+        (mechanic.sourceId === props.snapshot.boss.id
+          ? props.snapshot.boss.position
+          : props.snapshot.actors.find((actor) => actor.id === mechanic.sourceId)?.position);
       const target = props.snapshot.actors.find((actor) => actor.id === mechanic.targetId);
 
-      if (source !== undefined && target !== undefined) {
-        const sourcePoint = toStagePoint(source.position, width, height, arenaRadius);
+      if (sourcePosition !== undefined && target !== undefined) {
+        const sourcePoint = toStagePoint(sourcePosition, width, height, arenaRadius);
         const targetPoint = toStagePoint(target.position, width, height, arenaRadius);
         graphics.moveTo(sourcePoint.x, sourcePoint.y);
         graphics.lineTo(targetPoint.x, targetPoint.y);
@@ -885,6 +947,18 @@ function draw(now: number): void {
         arenaRadius,
         scale,
       );
+
+      if (mechanic.shape === 'enemy') {
+        const label = fieldMarkerTextLabels.get(mechanic.id);
+
+        if (label !== undefined) {
+          label.visible = true;
+          label.text = getEnemyFieldMarkerStageText(mechanic.label, activeEnemyFieldMarkers);
+          label.x = point.x;
+          label.y = point.y;
+          label.alpha = 0.98;
+        }
+      }
       continue;
     }
 
@@ -968,18 +1042,22 @@ function draw(now: number): void {
     });
   }
 
-  const bossPoint = toStagePoint(props.snapshot.boss.position, width, height, arenaRadius);
-  graphics.circle(bossPoint.x, bossPoint.y, 16).fill({ color: 0xf6c66a, alpha: 1 });
-  graphics.circle(bossPoint.x, bossPoint.y, 20).stroke({
-    width: 2,
-    color: 0xffefc2,
-    alpha: 0.7,
-  });
+  if (bossTargetRingRadius > 0) {
+    const bossPoint = toStagePoint(props.snapshot.boss.position, width, height, arenaRadius);
+    graphics.circle(bossPoint.x, bossPoint.y, 16).fill({ color: 0xf6c66a, alpha: 1 });
+    graphics.circle(bossPoint.x, bossPoint.y, 20).stroke({
+      width: 2,
+      color: 0xffefc2,
+      alpha: 0.7,
+    });
 
-  if (bossLabel !== null) {
-    bossLabel.visible = true;
-    bossLabel.x = bossPoint.x;
-    bossLabel.y = bossPoint.y;
+    if (bossLabel !== null) {
+      bossLabel.visible = true;
+      bossLabel.x = bossPoint.x;
+      bossLabel.y = bossPoint.y;
+    }
+  } else if (bossLabel !== null) {
+    bossLabel.visible = false;
   }
 
   for (const actor of props.snapshot.actors) {
@@ -1174,6 +1252,7 @@ onBeforeUnmount(() => {
   actorLabels.clear();
   markerLabels.clear();
   actorMarkerTextLabels.clear();
+  fieldMarkerTextLabels.clear();
   stageGraphics = null;
   bossLabel = null;
 });

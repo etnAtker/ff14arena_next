@@ -4,6 +4,7 @@ import type {
   ActorPoseSample,
   BaseActorSnapshot,
   BattleFailureMarkedEvent,
+  BossCastBarState,
   BossCastResolvedEvent,
   BossCastStartedEvent,
   BossSnapshot,
@@ -77,6 +78,7 @@ interface RuntimeState {
   mapMarkers: MapMarker[];
   actors: Map<string, BaseActorSnapshot>;
   boss: BossSnapshot;
+  bossCastBars: BossCastBarState[];
   mechanics: Map<string, MechanicSnapshot>;
   tetherReadyAt: Map<string, number>;
   botTetherReadyAt: Map<string, number>;
@@ -216,6 +218,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
 
     currentState.phase = 'waiting';
     currentState.boss.castBar = null;
+    currentState.bossCastBars = [];
     currentState.latestResult = {
       outcome: outcome ?? (currentState.failureMarked ? 'failure' : 'success'),
       failureReasons: [...currentState.failureReasons],
@@ -422,6 +425,10 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     const mechanic = currentState.mechanics.get(mechanicId);
 
     if (mechanic === undefined) {
+      return;
+    }
+
+    if (currentState.timeMs + 0.0001 < mechanic.resolveAt) {
       return;
     }
 
@@ -688,13 +695,14 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         continue;
       }
 
-      const source =
-        mechanic.sourceId === currentState.boss.id
-          ? currentState.boss
-          : currentState.actors.get(mechanic.sourceId);
+      const sourcePosition =
+        mechanic.sourcePosition ??
+        (mechanic.sourceId === currentState.boss.id
+          ? currentState.boss.position
+          : currentState.actors.get(mechanic.sourceId)?.position);
       let target = currentState.actors.get(mechanic.targetId);
 
-      if (source === undefined || target === undefined) {
+      if (sourcePosition === undefined || target === undefined) {
         continue;
       }
 
@@ -755,8 +763,8 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           return {
             actor,
             crossing:
-              isPointOnSegment(actor.position, source.position, target.position) ||
-              segmentsIntersect(previousPosition, actor.position, source.position, target.position),
+              isPointOnSegment(actor.position, sourcePosition, target.position) ||
+              segmentsIntersect(previousPosition, actor.position, sourcePosition, target.position),
           };
         })
         .filter((entry) => entry.crossing)
@@ -811,26 +819,34 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         },
         cast(actionId, actionName, totalDurationMs) {
           const currentState = assertState(state);
-          currentState.boss.castBar = {
+          const castBar = {
             actionId,
             actionName,
             startedAt: currentState.timeMs,
             totalDurationMs,
           };
+          currentState.boss.castBar = castBar;
+          currentState.bossCastBars = [
+            ...currentState.bossCastBars.filter((cast) => cast.actionId !== actionId),
+            castBar,
+          ];
 
           emit<BossCastStartedEvent>({
             type: 'bossCastStarted',
-            payload: currentState.boss.castBar,
+            payload: castBar,
           });
 
           queueScheduler(currentState.timeMs + totalDurationMs, () => {
             const latestState = assertState(state);
 
-            if (latestState.boss.castBar?.actionId !== actionId) {
+            if (!latestState.bossCastBars.some((cast) => cast.actionId === actionId)) {
               return;
             }
 
-            latestState.boss.castBar = null;
+            latestState.bossCastBars = latestState.bossCastBars.filter(
+              (cast) => cast.actionId !== actionId,
+            );
+            latestState.boss.castBar = latestState.bossCastBars.at(-1) ?? null;
             emit<BossCastResolvedEvent>({
               type: 'bossCastResolved',
               payload: {
@@ -849,6 +865,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           }
 
           currentState.boss.castBar = null;
+          currentState.bossCastBars = currentState.bossCastBars.filter(
+            (cast) => cast.actionId !== currentCast.actionId,
+          );
           emit<BossCastResolvedEvent>({
             type: 'bossCastResolved',
             payload: {
@@ -1023,6 +1042,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             kind: 'tether',
             label: options.label,
             sourceId: options.sourceId ?? currentState.boss.id,
+            ...(options.sourcePosition === undefined
+              ? {}
+              : { sourcePosition: cloneVector(options.sourcePosition) }),
             targetId: options.target.id,
             ...(options.botTransferSequence === undefined
               ? {}
@@ -1082,11 +1104,20 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         },
         fieldMarker(options) {
           const currentState = assertState(state);
+          const existing =
+            options.stableId === undefined
+              ? undefined
+              : [...currentState.mechanics.values()].find(
+                  (mechanic) =>
+                    mechanic.kind === 'fieldMarker' && mechanic.stableId === options.stableId,
+                );
+
           return spawnMechanic({
-            id: nextMechanicId(),
+            id: existing?.id ?? nextMechanicId(),
             kind: 'fieldMarker',
             label: options.label,
             sourceId: options.sourceId ?? currentState.boss.id,
+            ...(options.stableId === undefined ? {} : { stableId: options.stableId }),
             center: cloneVector(options.center),
             shape: options.shape,
             radius: options.radius,
@@ -1203,16 +1234,29 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       ui: {
         setCastBar(actionId, actionName, totalDurationMs) {
           const currentState = assertState(state);
-          currentState.boss.castBar = {
+          const castBar = {
             actionId,
             actionName,
             startedAt: currentState.timeMs,
             totalDurationMs,
           };
+          currentState.boss.castBar = castBar;
+          currentState.bossCastBars = [
+            ...currentState.bossCastBars.filter((cast) => cast.actionId !== actionId),
+            castBar,
+          ];
         },
         clearCastBar() {
           const currentState = assertState(state);
-          currentState.boss.castBar = null;
+          const currentCast = currentState.boss.castBar;
+
+          if (currentCast !== null) {
+            currentState.bossCastBars = currentState.bossCastBars.filter(
+              (cast) => cast.actionId !== currentCast.actionId,
+            );
+          }
+
+          currentState.boss.castBar = currentState.bossCastBars.at(-1) ?? null;
         },
       },
     };
@@ -1237,6 +1281,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       hud: {
         bossCastBar:
           currentState.boss.castBar === null ? null : structuredClone(currentState.boss.castBar),
+        bossCastBars: currentState.bossCastBars.map((cast) => structuredClone(cast)),
       },
       scriptState: Object.fromEntries(
         [...currentState.scriptState.entries()].map(([key, value]) => [
@@ -1415,6 +1460,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           castBar: null,
           targetRingRadius: battle.bossTargetRingRadius,
         },
+        bossCastBars: [],
         mechanics: new Map(),
         tetherReadyAt: new Map(),
         botTetherReadyAt: new Map(),

@@ -46,6 +46,7 @@ export interface BossCastBarState {
 
 export interface HudState {
   bossCastBar: BossCastBarState | null;
+  bossCastBars: BossCastBarState[];
 }
 
 export interface BaseActorSnapshot {
@@ -164,6 +165,7 @@ export interface TetherMechanicSnapshot {
   kind: 'tether';
   label: string;
   sourceId: string;
+  sourcePosition?: Vector2;
   targetId: string;
   botTransferSequenceIds?: string[];
   botTransferCooldownMs: number;
@@ -215,6 +217,7 @@ export interface FieldMarkerMechanicSnapshot {
   kind: 'fieldMarker';
   label: string;
   sourceId: string;
+  stableId?: string;
   center: Vector2;
   shape: FieldMarkerShape;
   radius: number;

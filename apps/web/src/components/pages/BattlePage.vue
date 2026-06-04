@@ -15,6 +15,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type {
   BaseActorSnapshot,
+  BossCastBarState,
   EncounterResult,
   PartySlot,
   RoomStateDto,
@@ -97,7 +98,17 @@ const actorMap = computed(() => {
   return new Map(entries.map((actor) => [actor.slot, actor]));
 });
 
-const castBar = computed(() => props.snapshot?.hud.bossCastBar ?? null);
+const castBars = computed(() => {
+  const bars = props.snapshot?.hud.bossCastBars;
+
+  if (bars !== undefined) {
+    return bars;
+  }
+
+  const singleBar = props.snapshot?.hud.bossCastBar ?? null;
+
+  return singleBar === null ? [] : [singleBar];
+});
 const hudNowMs = ref(0);
 const renderClockBase = ref({
   snapshotTimeMs: 0,
@@ -141,24 +152,17 @@ const currentActorStatuses = computed(() =>
   createStatusViewModels(currentActor.value?.statuses ?? []),
 );
 
-const castFillStyle = computed(() => {
-  const currentCastBar = castBar.value;
-
-  if (currentCastBar === null) {
-    return {};
-  }
-
+function getCastFillStyle(castBar: BossCastBarState): Record<string, string> {
   const elapsedMs = Math.min(
-    Math.max(renderSimulationTimeMs.value - currentCastBar.startedAt, 0),
-    currentCastBar.totalDurationMs,
+    Math.max(renderSimulationTimeMs.value - castBar.startedAt, 0),
+    castBar.totalDurationMs,
   );
-  const progress =
-    currentCastBar.totalDurationMs <= 0 ? 1 : elapsedMs / currentCastBar.totalDurationMs;
+  const progress = castBar.totalDurationMs <= 0 ? 1 : elapsedMs / castBar.totalDurationMs;
 
   return {
     transform: `scaleX(${progress})`,
   };
-});
+}
 
 const canUseKnockback = computed(
   () =>
@@ -753,14 +757,13 @@ onBeforeUnmount(() => {
 
           <div class="stage-shell">
             <div class="cast-overlay">
-              <template v-if="castBar">
+              <template
+                v-for="castBar in castBars"
+                :key="`${castBar.actionId}-${castBar.startedAt}`"
+              >
                 <div class="cast-name">{{ castBar.actionName }}</div>
                 <div class="cast-track">
-                  <div
-                    :key="`${castBar.actionId}-${castBar.startedAt}`"
-                    class="cast-fill"
-                    :style="castFillStyle"
-                  />
+                  <div class="cast-fill" :style="getCastFillStyle(castBar)" />
                 </div>
               </template>
             </div>
@@ -1398,13 +1401,16 @@ onBeforeUnmount(() => {
   top: 16px;
   left: 50%;
   z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
   width: min(420px, calc(100% - 80px));
   transform: translateX(-50%);
   pointer-events: none;
 }
 
 .cast-name {
-  margin-bottom: 8px;
+  margin-bottom: 2px;
   text-align: center;
   font-size: 14px;
   font-weight: 700;
