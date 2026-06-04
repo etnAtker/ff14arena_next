@@ -166,6 +166,7 @@ export interface BattleScriptContext {
       center: Vector2;
       shape: FieldMarkerShape;
       radius: number;
+      direction?: number;
       stableId?: string;
       color?: string;
       targetRingRadius?: number;

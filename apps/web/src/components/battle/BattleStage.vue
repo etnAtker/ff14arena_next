@@ -606,6 +606,7 @@ function drawFieldMarker(
   position: Vector2,
   shape: FieldMarkerShape,
   radius: number,
+  direction: number | undefined,
   colorValue: string | undefined,
   targetRingRadius: number | undefined,
   targetRingColorValue: string | undefined,
@@ -665,6 +666,10 @@ function drawFieldMarker(
 
   graphics.poly(points).fill({ color, alpha: 0.9 });
   graphics.poly(points).stroke({ width: 2, color: strokeColor, alpha: 0.95 });
+
+  if (shape === 'enemy' && direction !== undefined) {
+    drawActorFacingArrow(graphics, point, direction, strokeColor, 0.92);
+  }
 }
 
 function drawRectangleTelegraph(
@@ -942,6 +947,7 @@ function draw(now: number): void {
         mechanic.center,
         mechanic.shape,
         mechanic.radius,
+        mechanic.direction,
         mechanic.color,
         mechanic.targetRingRadius,
         mechanic.targetRingColor,

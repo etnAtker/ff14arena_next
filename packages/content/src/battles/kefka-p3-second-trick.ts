@@ -5,10 +5,14 @@ import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import { getStatusDisplayName } from '../status-metadata';
 
 type SlapHand = 'left' | 'right';
+type ChaosExplosionMode = 'longitude' | 'latitude';
+type ChaosExplosionPhase = 'first' | 'second';
 
 interface WanderingBossState {
   chaosCenter: Vector2;
   exdeathCenter: Vector2;
+  chaosFacing: number;
+  exdeathFacing: number;
   chaosLockedUntil: number;
   exdeathLockedUntil: number;
 }
@@ -17,6 +21,12 @@ interface BlackHole {
   center: Vector2;
   markerResolveAfterMs: number;
   tetherId: string | null;
+}
+
+interface ChaosExplosionState {
+  mode: ChaosExplosionMode;
+  center: Vector2;
+  facing: number;
 }
 
 const ARENA_RADIUS = 20;
@@ -29,7 +39,7 @@ const TELEGRAPH_MS = 500;
 const VISUAL_MS = 500;
 const MECHANIC_DAMAGE = 1;
 const INJURY_DURATION_MS = 3_000;
-const COMPLETE_AT = ZERO_AT + 84_000;
+const COMPLETE_AT = ZERO_AT + 115_000;
 
 const CHAOS_MARKER_RADIUS = 0.8;
 const CHAOS_TARGET_RING_RADIUS = 6;
@@ -76,10 +86,14 @@ const THUNDER_SECOND_DELAY_MS = 3_000;
 const CURSE_CAST_MS = 4_700;
 const CURSE_RADIUS = 30;
 const CURSE_ANGLE = Math.PI;
+const CHAOS_EXPLOSION_CAST_MS = 5_000;
+const CHAOS_EXPLOSION_SECOND_DELAY_MS = 2_000;
+const CHAOS_EXPLOSION_FAN_ANGLE = Math.PI / 2;
+const CHAOS_EXPLOSION_FAN_RADIUS = 60;
 
 const TRUE_SELF_SPAWN_TO_CAST_MS = 1_500;
 const TRUE_SELF_CAST_MS = 4_000;
-const TRUE_SELF_LENGTH = 40;
+const TRUE_SELF_LENGTH = 50;
 const TRUE_SELF_WIDTH = 10;
 
 const FIRST_TARGET_STATUS_ID = 'kefka_p3_second_first_target';
@@ -432,6 +446,8 @@ function getWanderingBossState(ctx: BattleScriptContext): WanderingBossState {
     ctx.state.getValue<WanderingBossState>('kefkaP3Second:wanderingBosses') ?? {
       chaosCenter: CENTER,
       exdeathCenter: CENTER,
+      chaosFacing: 0,
+      exdeathFacing: 0,
       chaosLockedUntil: 0,
       exdeathLockedUntil: 0,
     }
@@ -442,13 +458,19 @@ function setWanderingBossState(ctx: BattleScriptContext, state: WanderingBossSta
   ctx.state.setValue('kefkaP3Second:wanderingBosses', state);
 }
 
-function spawnChaosMarker(ctx: BattleScriptContext, center: Vector2, resolveAfterMs: number): void {
+function spawnChaosMarker(
+  ctx: BattleScriptContext,
+  center: Vector2,
+  resolveAfterMs: number,
+  direction = getWanderingBossState(ctx).chaosFacing,
+): void {
   ctx.spawn.fieldMarker({
     label: '卡奥斯',
     center,
     shape: 'enemy',
     stableId: CHAOS_STABLE_MARKER_ID,
     radius: CHAOS_MARKER_RADIUS,
+    direction,
     targetRingRadius: CHAOS_TARGET_RING_RADIUS,
     targetRingColor: CHAOS_TARGET_RING_COLOR,
     resolveAfterMs,
@@ -459,6 +481,7 @@ function spawnExdeathMarker(
   ctx: BattleScriptContext,
   center: Vector2,
   resolveAfterMs: number,
+  direction = getWanderingBossState(ctx).exdeathFacing,
 ): void {
   ctx.spawn.fieldMarker({
     label: '艾克斯迪斯',
@@ -466,6 +489,7 @@ function spawnExdeathMarker(
     shape: 'enemy',
     stableId: EXDEATH_STABLE_MARKER_ID,
     radius: EXDEATH_MARKER_RADIUS,
+    direction,
     color: EXDEATH_MARKER_COLOR,
     targetRingRadius: EXDEATH_TARGET_RING_RADIUS,
     targetRingColor: EXDEATH_TARGET_RING_COLOR,
@@ -480,41 +504,65 @@ function repositionWanderingBosses(ctx: BattleScriptContext): void {
 
   if (battleTime >= state.chaosLockedUntil) {
     const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+    const chaosCenter = calculateFollowerCenter(
+      state.chaosCenter,
+      st.position,
+      CHAOS_TARGET_RING_RADIUS,
+    );
+    const chaosFacing =
+      distance(chaosCenter, st.position) <= 0.0001
+        ? state.chaosFacing
+        : createFacingTowards(chaosCenter, st.position);
     nextState = {
       ...nextState,
-      chaosCenter: calculateFollowerCenter(
-        state.chaosCenter,
-        st.position,
-        CHAOS_TARGET_RING_RADIUS,
-      ),
+      chaosCenter,
+      chaosFacing,
     };
-    spawnChaosMarker(ctx, nextState.chaosCenter, REPOSITION_INTERVAL_MS);
+    spawnChaosMarker(ctx, nextState.chaosCenter, REPOSITION_INTERVAL_MS, chaosFacing);
   }
 
   if (battleTime >= state.exdeathLockedUntil) {
     const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+    const exdeathCenter = calculateFollowerCenter(
+      state.exdeathCenter,
+      mt.position,
+      EXDEATH_TARGET_RING_RADIUS,
+    );
+    const exdeathFacing =
+      distance(exdeathCenter, mt.position) <= 0.0001
+        ? state.exdeathFacing
+        : createFacingTowards(exdeathCenter, mt.position);
     nextState = {
       ...nextState,
-      exdeathCenter: calculateFollowerCenter(
-        state.exdeathCenter,
-        mt.position,
-        EXDEATH_TARGET_RING_RADIUS,
-      ),
+      exdeathCenter,
+      exdeathFacing,
     };
-    spawnExdeathMarker(ctx, nextState.exdeathCenter, REPOSITION_INTERVAL_MS);
+    spawnExdeathMarker(ctx, nextState.exdeathCenter, REPOSITION_INTERVAL_MS, exdeathFacing);
   }
 
   setWanderingBossState(ctx, nextState);
 }
 
-function lockChaosUntil(ctx: BattleScriptContext, lockedUntil: number): void {
+function lockChaosUntil(
+  ctx: BattleScriptContext,
+  lockedUntil: number,
+  direction = getWanderingBossState(ctx).chaosFacing,
+): void {
   const state = getWanderingBossState(ctx);
-  setWanderingBossState(ctx, { ...state, chaosLockedUntil: lockedUntil });
+  setWanderingBossState(ctx, { ...state, chaosFacing: direction, chaosLockedUntil: lockedUntil });
 }
 
-function lockExdeathUntil(ctx: BattleScriptContext, lockedUntil: number): void {
+function lockExdeathUntil(
+  ctx: BattleScriptContext,
+  lockedUntil: number,
+  direction = getWanderingBossState(ctx).exdeathFacing,
+): void {
   const state = getWanderingBossState(ctx);
-  setWanderingBossState(ctx, { ...state, exdeathLockedUntil: lockedUntil });
+  setWanderingBossState(ctx, {
+    ...state,
+    exdeathFacing: direction,
+    exdeathLockedUntil: lockedUntil,
+  });
 }
 
 function selectNearestActor(
@@ -552,6 +600,7 @@ function spawnKefkaMarker(ctx: BattleScriptContext, center: Vector2, resolveAfte
     center,
     shape: 'enemy',
     radius: KEFKA_MARKER_RADIUS,
+    direction: createFacingTowards(center, CENTER),
     color: '#c084fc',
     targetRingRadius: KEFKA_TARGET_RING_RADIUS,
     targetRingColor: KEFKA_TARGET_RING_COLOR,
@@ -627,11 +676,15 @@ function resolveFanDamage(
   }
 }
 
-function scheduleSlap(ctx: BattleScriptContext, spawnAt: number): void {
+function scheduleSlap(
+  ctx: BattleScriptContext,
+  spawnAt: number,
+  castDelayMs = SLAP_SPAWN_TO_CAST_MS,
+): void {
   const position = createOutsideKefkaPosition();
   const facing = createFacingTowards(position, CENTER);
   const hand: SlapHand = Math.random() < 0.5 ? 'left' : 'right';
-  const castStartAt = spawnAt + SLAP_SPAWN_TO_CAST_MS;
+  const castStartAt = spawnAt + castDelayMs;
   const resolveStartAt = castStartAt + SLAP_CAST_MS;
   const followupAt = resolveStartAt + SLAP_AOE_INTERVAL_MS * 2 + SLAP_FOLLOWUP_DELAY_MS;
   const disappearAt = followupAt + 1_000;
@@ -944,9 +997,11 @@ function scheduleFirstBlackHoles(ctx: BattleScriptContext): void {
   });
 }
 
-function schedulePersistentBlackHoles(ctx: BattleScriptContext): void {
-  const spawnAt = t(49_300);
-
+function schedulePersistentBlackHoles(
+  ctx: BattleScriptContext,
+  spawnAt: number,
+  shotKeyPrefix: string,
+): void {
   ctx.timeline.at(spawnAt, () => {
     const holes = createBlackHoleCenters().map((center): BlackHole => {
       const hole: BlackHole = {
@@ -965,7 +1020,7 @@ function schedulePersistentBlackHoles(ctx: BattleScriptContext): void {
           ctx,
           hole,
           spawnAt + BLACK_HOLE_SHOT_DELAY_MS * shotIndex,
-          `persistent:${shotIndex}:${holeIndex}`,
+          `${shotKeyPrefix}:${shotIndex}:${holeIndex}`,
         );
       });
     }
@@ -992,6 +1047,9 @@ function scheduleThunder(ctx: BattleScriptContext, castStartAt: number, actionId
         return;
       }
 
+      const direction = createFacingTowards(center, target.position);
+      lockExdeathUntil(ctx, unlockAt, direction);
+      spawnExdeathMarker(ctx, center, unlockAt - (resolveAt - TELEGRAPH_MS), direction);
       ctx.state.setValue(`kefkaP3Second:thunder:${resolveAt}`, target.id);
       ctx.spawn.circleTelegraph({
         label: '暴雷范围',
@@ -1037,8 +1095,8 @@ function scheduleCurse(ctx: BattleScriptContext, castStartAt: number, actionId: 
 
     const direction = createFacingTowards(state.chaosCenter, target.position);
 
-    lockChaosUntil(ctx, unlockAt);
-    spawnChaosMarker(ctx, state.chaosCenter, unlockAt - castStartAt);
+    lockChaosUntil(ctx, unlockAt, direction);
+    spawnChaosMarker(ctx, state.chaosCenter, unlockAt - castStartAt, direction);
     ctx.state.setValue(`kefkaP3Second:curse:${castStartAt}`, {
       center: state.chaosCenter,
       direction,
@@ -1085,6 +1143,125 @@ function scheduleCurse(ctx: BattleScriptContext, castStartAt: number, actionId: 
   });
 }
 
+function getChaosExplosionActionName(mode: ChaosExplosionMode): string {
+  return mode === 'longitude' ? '经度聚爆' : '纬度聚爆';
+}
+
+function getChaosExplosionDirections(
+  state: ChaosExplosionState,
+  phase: ChaosExplosionPhase,
+): readonly [number, number] {
+  const shouldResolveFrontBack =
+    state.mode === 'longitude' ? phase === 'first' : phase === 'second';
+
+  if (shouldResolveFrontBack) {
+    return [state.facing, state.facing + Math.PI];
+  }
+
+  return [state.facing - Math.PI / 2, state.facing + Math.PI / 2];
+}
+
+function spawnChaosExplosionTelegraphs(
+  ctx: BattleScriptContext,
+  state: ChaosExplosionState,
+  phase: ChaosExplosionPhase,
+): void {
+  const actionName = getChaosExplosionActionName(state.mode);
+
+  for (const direction of getChaosExplosionDirections(state, phase)) {
+    ctx.spawn.fanTelegraph({
+      label: `${actionName}范围`,
+      center: state.center,
+      direction,
+      angle: CHAOS_EXPLOSION_FAN_ANGLE,
+      radius: CHAOS_EXPLOSION_FAN_RADIUS,
+      resolveAfterMs: TELEGRAPH_MS,
+    });
+  }
+}
+
+function resolveChaosExplosion(
+  ctx: BattleScriptContext,
+  state: ChaosExplosionState,
+  phase: ChaosExplosionPhase,
+): void {
+  const hitActorIds = new Set<string>();
+
+  for (const direction of getChaosExplosionDirections(state, phase)) {
+    for (const hit of ctx.select
+      .allPlayers()
+      .filter((actor) =>
+        isActorInsideFan(
+          actor,
+          state.center,
+          direction,
+          CHAOS_EXPLOSION_FAN_ANGLE,
+          CHAOS_EXPLOSION_FAN_RADIUS,
+        ),
+      )) {
+      hitActorIds.add(hit.id);
+    }
+  }
+
+  for (const hitActorId of hitActorIds) {
+    const hit = getFreshActor(ctx, hitActorId);
+
+    if (hit !== null) {
+      applySecondTrickDeath(ctx, hit, '被扇形命中');
+    }
+  }
+}
+
+function scheduleChaosExplosion(
+  ctx: BattleScriptContext,
+  castStartAt: number,
+  actionId: string,
+): void {
+  const firstResolveAt = castStartAt + CHAOS_EXPLOSION_CAST_MS;
+  const secondResolveAt = firstResolveAt + CHAOS_EXPLOSION_SECOND_DELAY_MS;
+  const unlockAt = secondResolveAt + 1_000;
+  const stateKey = `kefkaP3Second:chaosExplosion:${castStartAt}`;
+
+  ctx.timeline.at(castStartAt, () => {
+    const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+    const bossState = getWanderingBossState(ctx);
+    const mode: ChaosExplosionMode = Math.random() < 0.5 ? 'longitude' : 'latitude';
+    const center = { ...bossState.chaosCenter };
+    const facing =
+      distance(st.position, center) <= 0.0001 ? 0 : createFacingTowards(center, st.position);
+    const explosionState: ChaosExplosionState = {
+      mode,
+      center,
+      facing,
+    };
+
+    lockChaosUntil(ctx, unlockAt, facing);
+    spawnChaosMarker(ctx, center, unlockAt - castStartAt, facing);
+    ctx.state.setValue(stateKey, explosionState);
+    ctx.boss.cast(actionId, getChaosExplosionActionName(mode), CHAOS_EXPLOSION_CAST_MS);
+  });
+
+  for (const [phase, resolveAt] of [
+    ['first', firstResolveAt],
+    ['second', secondResolveAt],
+  ] as const) {
+    ctx.timeline.at(resolveAt - TELEGRAPH_MS, () => {
+      const state = ctx.state.getValue<ChaosExplosionState>(stateKey);
+
+      if (state !== undefined) {
+        spawnChaosExplosionTelegraphs(ctx, state, phase);
+      }
+    });
+    ctx.timeline.at(resolveAt, () => {
+      const state = ctx.state.getValue<ChaosExplosionState>(stateKey);
+
+      if (state !== undefined) {
+        resolveChaosExplosion(ctx, state, phase);
+      }
+    });
+  }
+}
+
 function scheduleTrueSelf(ctx: BattleScriptContext, spawnAt: number): void {
   const position = createOutsideKefkaPosition();
   const facing = createFacingTowards(position, CENTER);
@@ -1123,6 +1300,8 @@ function buildKefkaP3SecondScript(ctx: BattleScriptContext): void {
   setWanderingBossState(ctx, {
     chaosCenter: CENTER,
     exdeathCenter: CENTER,
+    chaosFacing: 0,
+    exdeathFacing: 0,
     chaosLockedUntil: 0,
     exdeathLockedUntil: 0,
   });
@@ -1154,10 +1333,13 @@ function buildKefkaP3SecondScript(ctx: BattleScriptContext): void {
   scheduleThunder(ctx, t(31_900), 'kefka_p3_second_thunder_1');
   scheduleCurse(ctx, t(39_900), 'kefka_p3_second_curse_1');
   scheduleSlap(ctx, t(40_200));
-  schedulePersistentBlackHoles(ctx);
+  schedulePersistentBlackHoles(ctx, t(49_300), 'persistent:1');
   scheduleCurse(ctx, t(63_500), 'kefka_p3_second_curse_2');
   scheduleTrueSelf(ctx, t(63_500));
   scheduleThunder(ctx, t(69_500), 'kefka_p3_second_thunder_2');
+  schedulePersistentBlackHoles(ctx, t(81_000), 'persistent:2');
+  scheduleSlap(ctx, t(100_000), 6_000);
+  scheduleChaosExplosion(ctx, t(104_000), 'kefka_p3_second_chaos_explosion');
 
   ctx.timeline.at(COMPLETE_AT, () => {
     ctx.state.complete();
@@ -1202,9 +1384,15 @@ export const KEFKA_P3_SECOND_TRICK_TESTING = {
   SECOND_TARGET_MARKER_COLOR,
   THIRD_TARGET_MARKER_COLOR,
   BLACK_HOLE_SHOT_DELAY_MS,
+  CHAOS_EXPLOSION_CAST_MS,
+  CHAOS_EXPLOSION_SECOND_DELAY_MS,
+  CHAOS_EXPLOSION_FAN_ANGLE,
+  CHAOS_EXPLOSION_FAN_RADIUS,
   THUNDER_CAST_MS,
   CURSE_CAST_MS,
   TRUE_SELF_CAST_MS,
+  TRUE_SELF_LENGTH,
+  getChaosExplosionDirections,
   createBlackHoleCenters,
   calculateSlapAoeCenter,
   isActorInsideRectangle,

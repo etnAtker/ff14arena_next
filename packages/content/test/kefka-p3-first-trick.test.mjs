@@ -33,6 +33,7 @@ const {
   EXDEATH_MARKER_COLOR,
   EXDEATH_TARGET_RING_RADIUS,
   EXDEATH_TARGET_RING_COLOR,
+  EXDEATH_STABLE_MARKER_ID,
   FOLLOWUP_BURST_CAST_START_AT,
   FOLLOWUP_BURST_FIRST_RESOLVE_AT,
   FOLLOWUP_BURST_SECOND_RESOLVE_AT,
@@ -55,6 +56,7 @@ const {
   CHAOS_MARKER_ST_OFFSET,
   CHAOS_MARKER_TARGET_RING_RADIUS,
   CHAOS_MARKER_TARGET_RING_COLOR,
+  CHAOS_STABLE_MARKER_ID,
   VACUUM_WAVE_CAST_START_AT,
   VACUUM_WAVE_RESOLVE_AT,
   VACUUM_WAVE_CAST_MS,
@@ -281,25 +283,33 @@ function getChaosCenter(snapshot) {
   return chaosCenter;
 }
 
-function assertExdeathMarker(marker, expectedCenter, expectedResolveAt) {
+function assertExdeathMarker(marker, expectedCenter, expectedResolveAt, expectedDirection) {
   assert.ok(marker);
   assertClosePoint(marker.center, expectedCenter);
   assert.equal(marker.shape, 'enemy');
+  assert.equal(marker.stableId, EXDEATH_STABLE_MARKER_ID);
   assert.equal(marker.radius, EXDEATH_MARKER_RADIUS);
   assert.equal(marker.color, EXDEATH_MARKER_COLOR);
   assert.equal(marker.targetRingRadius, EXDEATH_TARGET_RING_RADIUS);
   assert.equal(marker.targetRingColor, EXDEATH_TARGET_RING_COLOR);
   assert.equal(marker.resolveAt, expectedResolveAt);
+  if (expectedDirection !== undefined) {
+    assertCloseAngle(marker.direction, expectedDirection);
+  }
 }
 
-function assertChaosMarker(marker, expectedCenter, expectedResolveAt) {
+function assertChaosMarker(marker, expectedCenter, expectedResolveAt, expectedDirection) {
   assert.ok(marker);
   assertClosePoint(marker.center, expectedCenter);
   assert.equal(marker.shape, 'enemy');
+  assert.equal(marker.stableId, CHAOS_STABLE_MARKER_ID);
   assert.equal(marker.radius, CHAOS_MARKER_RADIUS);
   assert.equal(marker.targetRingRadius, CHAOS_MARKER_TARGET_RING_RADIUS);
   assert.equal(marker.targetRingColor, CHAOS_MARKER_TARGET_RING_COLOR);
   assert.equal(marker.resolveAt, expectedResolveAt);
+  if (expectedDirection !== undefined) {
+    assertCloseAngle(marker.direction, expectedDirection);
+  }
 }
 
 function getSafePositionsOutsideRadius(center, radius, count) {
@@ -732,7 +742,12 @@ test('凯夫卡P3一运：暴雷在MT到场中的射线上锁定位置并生成�
     assert.equal(castSnapshot.boss.castBar?.startedAt, BURST_CAST_START_AT);
     assertClosePoint(burstCenter, expectedCenter);
     assert.equal(earlyBurstTelegraph, undefined);
-    assertExdeathMarker(exdeathMarker, expectedCenter, EXDEATH_REPOSITION_START_AT);
+    assertExdeathMarker(
+      exdeathMarker,
+      expectedCenter,
+      EXDEATH_REPOSITION_START_AT,
+      angleTo(expectedCenter, mtPosition),
+    );
 
     const hitActor = getActorBySlot(castSnapshot, 'D1');
     const safeActor = getActorBySlot(castSnapshot, 'D2');
@@ -856,6 +871,15 @@ test('凯夫卡P3一运：第二组暴雷选择艾克斯德司最近目标并判
     assertClosePoint(firstTelegraph.center, firstTargetPosition);
     assert.equal(firstTelegraph.color, BURST_TELEGRAPH_COLOR);
     assert.equal(firstTelegraph.resolveAt, FOLLOWUP_BURST_FIRST_RESOLVE_AT + RESOLUTION_VISUAL_MS);
+    const lockedExdeathMarker = firstResolvedSnapshot.mechanics.find(
+      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '艾克斯德司',
+    );
+    assertExdeathMarker(
+      lockedExdeathMarker,
+      burstCenter,
+      EXDEATH_REPOSITION_START_AT,
+      angleTo(burstCenter, firstTargetPosition),
+    );
     assert.equal(resolvedMt.lastDamageSource, '暴雷');
     assert.ok(hasStatus(resolvedMt, 'injury_up') || !resolvedMt.alive);
     assert.equal(resolvedSt.lastDamageSource, '暴雷');
@@ -921,11 +945,13 @@ test('凯夫卡P3一运：37秒到61秒之间艾克斯德司每秒按MT位置重
       (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '艾克斯德司',
     );
     assert.equal(exdeathMarkers.length, 1);
+    const initialExdeathMarkerId = exdeathMarkers[0].id;
     assertClosePoint(getBurstCenter(snapshot), firstExpectedCenter);
     assertExdeathMarker(
       exdeathMarkers[0],
       firstExpectedCenter,
       EXDEATH_REPOSITION_START_AT + EXDEATH_REPOSITION_INTERVAL_MS,
+      angleTo(firstExpectedCenter, firstMtPosition),
     );
 
     mt = getActorBySlot(snapshot, 'MT');
@@ -940,11 +966,13 @@ test('凯夫卡P3一运：37秒到61秒之间艾克斯德司每秒按MT位置重
       (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '艾克斯德司',
     );
     assert.equal(exdeathMarkers.length, 1);
+    assert.equal(exdeathMarkers[0].id, initialExdeathMarkerId);
     assertClosePoint(getBurstCenter(snapshot), secondExpectedCenter);
     assertExdeathMarker(
       exdeathMarkers[0],
       secondExpectedCenter,
       EXDEATH_REPOSITION_START_AT + EXDEATH_REPOSITION_INTERVAL_MS * 2,
+      angleTo(secondExpectedCenter, secondMtPosition),
     );
     assert.equal(EXDEATH_REPOSITION_END_AT, VACUUM_WAVE_CAST_START_AT);
   });
@@ -960,6 +988,7 @@ test('凯夫卡P3一运：卡奥斯3秒出现并每秒按ST位置重定位', () 
     (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '卡奥斯',
   );
   assert.equal(chaosMarkers.length, 1);
+  const initialChaosMarkerId = chaosMarkers[0].id;
   assertClosePoint(getChaosCenter(snapshot), { x: 0, y: 0 });
   assertChaosMarker(chaosMarkers[0], { x: 0, y: 0 }, CHAOS_REPOSITION_START_AT);
 
@@ -975,11 +1004,13 @@ test('凯夫卡P3一运：卡奥斯3秒出现并每秒按ST位置重定位', () 
     (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '卡奥斯',
   );
   assert.equal(chaosMarkers.length, 1);
+  assert.equal(chaosMarkers[0].id, initialChaosMarkerId);
   assertClosePoint(getChaosCenter(snapshot), firstExpectedCenter);
   assertChaosMarker(
     chaosMarkers[0],
     firstExpectedCenter,
     CHAOS_REPOSITION_START_AT + CHAOS_REPOSITION_INTERVAL_MS,
+    angleTo(firstExpectedCenter, firstStPosition),
   );
 
   st = getActorBySlot(snapshot, 'ST');
@@ -993,11 +1024,13 @@ test('凯夫卡P3一运：卡奥斯3秒出现并每秒按ST位置重定位', () 
     (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '卡奥斯',
   );
   assert.equal(chaosMarkers.length, 1);
+  assert.equal(chaosMarkers[0].id, initialChaosMarkerId);
   assertClosePoint(getChaosCenter(snapshot), firstExpectedCenter);
   assertChaosMarker(
     chaosMarkers[0],
     firstExpectedCenter,
     CHAOS_REPOSITION_START_AT + CHAOS_REPOSITION_INTERVAL_MS * 2,
+    angleTo(firstExpectedCenter, closeStPosition),
   );
   assert.equal(CHAOS_REPOSITION_END_AT, CHAOS_EXPLOSION_CAST_START_AT);
 });
@@ -1070,7 +1103,7 @@ function runChaosExplosionTest({
     assert.equal(castSnapshot.boss.castBar?.startedAt, CHAOS_EXPLOSION_CAST_START_AT);
     assertClosePoint(getChaosCenter(castSnapshot), chaosCenter);
     assertCloseAngle(chaosState.facing, lockedFacing);
-    assertChaosMarker(chaosMarker, chaosCenter, SUPER_JUMP_RESOLVE_AT);
+    assertChaosMarker(chaosMarker, chaosCenter, SUPER_JUMP_RESOLVE_AT, lockedFacing);
 
     snapshot = simulation.getSnapshot();
     const directionActors = snapshot.actors.filter((actor) => actor.alive && actor.slot !== 'ST');
@@ -1196,7 +1229,12 @@ test('凯夫卡P3一运：超级跳锁定最远玩家位置并在67s结算11m范
     const chaosState = setupSnapshot.scriptState['kefkaP3:chaosExplosion'];
 
     assert.ok(chaosState);
-    assertChaosMarker(originalChaosMarker, chaosState.center, SUPER_JUMP_RESOLVE_AT);
+    assertChaosMarker(
+      originalChaosMarker,
+      chaosState.center,
+      SUPER_JUMP_RESOLVE_AT,
+      chaosState.facing,
+    );
 
     for (const actor of setupSnapshot.actors) {
       submitPose(simulation, actor, safePosition);
@@ -1307,7 +1345,12 @@ test('凯夫卡P3一运：真空波在61s锁定并重建艾克斯德司位置', 
     assert.equal(castSnapshot.boss.castBar?.startedAt, VACUUM_WAVE_CAST_START_AT);
     assert.equal(VACUUM_WAVE_CAST_MS, 8_000);
     assertClosePoint(getBurstCenter(castSnapshot), expectedCenter);
-    assertExdeathMarker(newExdeathMarker, expectedCenter, COMPLETE_AT);
+    assertExdeathMarker(
+      newExdeathMarker,
+      expectedCenter,
+      COMPLETE_AT,
+      angleTo(expectedCenter, mtPosition),
+    );
   });
 
   withMockedRandom(createSeededRandomValues(28, 100), () => {

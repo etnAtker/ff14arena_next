@@ -221,6 +221,7 @@ export interface FieldMarkerMechanicSnapshot {
   center: Vector2;
   shape: FieldMarkerShape;
   radius: number;
+  direction?: number;
   color?: string;
   targetRingRadius?: number;
   targetRingColor?: string;

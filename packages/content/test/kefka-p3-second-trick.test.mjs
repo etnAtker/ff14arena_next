@@ -14,9 +14,13 @@ const {
   CHAOS_EARTH_STATUS_ID,
   VOID_EROSION_1_STATUS_ID,
   BLACK_HOLE_SHOT_DELAY_MS,
+  CHAOS_EXPLOSION_CAST_MS,
+  THUNDER_CAST_MS,
+  TRUE_SELF_LENGTH,
   FIRST_TARGET_MARKER_COLOR,
   SECOND_TARGET_MARKER_COLOR,
   THIRD_TARGET_MARKER_COLOR,
+  getChaosExplosionDirections,
   calculateSlapAoeCenter,
 } = KEFKA_P3_SECOND_TRICK_TESTING;
 
@@ -270,8 +274,33 @@ test('诅咒敕令读条开始时随机锁定玩家方向', () => {
       assert.ok(locked);
       assert.equal(locked.targetId, d4.id);
       assertCloseAngle(locked.direction, getFacing(locked.center, { x: 12, y: 0 }));
+      const chaosMarker = snapshot.mechanics.find(
+        (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '卡奥斯',
+      );
+      assert.ok(chaosMarker);
+      assertCloseAngle(chaosMarker.direction, locked.direction);
     },
   );
+});
+
+test('暴雷锁定最近目标时艾克斯迪斯会转向目标', () => {
+  withMockedRandom(createSeededRandomValues(34, 128), () => {
+    const simulation = createKefkaP3SecondSimulation();
+    const firstThunderResolveAt = ZERO_AT + 31_900 + THUNDER_CAST_MS;
+
+    advanceTo(simulation, firstThunderResolveAt - TELEGRAPH_MS);
+
+    const snapshot = simulation.getSnapshot();
+    const targetId = snapshot.scriptState[`kefkaP3Second:thunder:${firstThunderResolveAt}`];
+    assert.ok(targetId);
+    const target = getActorById(snapshot, targetId);
+    const exdeathMarker = snapshot.mechanics.find(
+      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '艾克斯迪斯',
+    );
+
+    assert.ok(exdeathMarker);
+    assertCloseAngle(exdeathMarker.direction, getFacing(exdeathMarker.center, target.position));
+  });
 });
 
 test('小Boss读条锁定期间仍保留场地标记', () => {
@@ -343,5 +372,110 @@ test('响亮亮耳光刀圈以场中为基准按凯夫卡方向旋转', () => {
   assertClosePoint(calculateSlapAoeCenter({ x: 25, y: 0 }, 'right', 0), {
     x: 0,
     y: -10,
+  });
+});
+
+test('第三组黑洞在81秒生成并允许同一玩家持有多根连线', () => {
+  withMockedRandom(createSeededRandomValues(66, 512), () => {
+    const simulation = createKefkaP3SecondSimulation();
+
+    advanceTo(simulation, ZERO_AT + 81_000);
+
+    const snapshot = simulation.getSnapshot();
+    const blackHoles = snapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '黑洞',
+    );
+    const tethers = snapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'tether' && mechanic.label === '黑洞连线',
+    );
+
+    assert.equal(blackHoles.length, 3);
+    assert.equal(tethers.length, 3);
+    assert.ok(tethers.every((tether) => tether.preventTargetHoldingOtherTether === false));
+  });
+});
+
+test('100秒凯夫卡先出现，106秒才开始响亮亮耳光读条', () => {
+  withMockedRandom(createSeededRandomValues(77, 512), () => {
+    const simulation = createKefkaP3SecondSimulation();
+
+    advanceTo(simulation, ZERO_AT + 101_000);
+
+    let snapshot = simulation.getSnapshot();
+    assert.equal(
+      snapshot.hud.bossCastBars.some((cast) => cast.actionName === '响亮亮耳光'),
+      false,
+    );
+    assert.ok(
+      snapshot.mechanics.some(
+        (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '凯夫卡',
+      ),
+    );
+
+    advanceTo(simulation, ZERO_AT + 106_000);
+
+    snapshot = simulation.getSnapshot();
+    assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '响亮亮耳光'));
+  });
+});
+
+test('本色出演的我使用50m矩形范围', () => {
+  withMockedRandom(createSeededRandomValues(78, 512), () => {
+    const simulation = createKefkaP3SecondSimulation();
+
+    advanceTo(simulation, ZERO_AT + 63_500 + 1_500 + 4_000 - TELEGRAPH_MS);
+
+    const telegraph = simulation
+      .getSnapshot()
+      .mechanics.find(
+        (mechanic) => mechanic.kind === 'rectangleTelegraph' && mechanic.label === '本色出演的我',
+      );
+
+    assert.ok(telegraph);
+    assert.equal(telegraph.length, TRUE_SELF_LENGTH);
+    assert.equal(telegraph.length, 50);
+  });
+});
+
+test('104秒卡奥斯随机释放经度聚爆或纬度聚爆', () => {
+  withMockedRandom(createSeededRandomValues(88, 512), () => {
+    const simulation = createKefkaP3SecondSimulation();
+
+    advanceTo(simulation, ZERO_AT + 103_950);
+
+    const st = simulation.getSnapshot().actors.find((actor) => actor.slot === 'ST');
+    assert.ok(st);
+    submitPose(simulation, st, { x: 12, y: 0 });
+    simulation.tick(50);
+
+    let snapshot = simulation.getSnapshot();
+    const stateKey = `kefkaP3Second:chaosExplosion:${ZERO_AT + 104_000}`;
+    const explosionState = snapshot.scriptState[stateKey];
+    assert.ok(explosionState);
+    assert.ok(['longitude', 'latitude'].includes(explosionState.mode));
+    assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName.endsWith('聚爆')));
+    const chaosMarker = snapshot.mechanics.find(
+      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '卡奥斯',
+    );
+    assert.ok(chaosMarker);
+    assertCloseAngle(chaosMarker.direction, explosionState.facing);
+
+    advanceTo(simulation, ZERO_AT + 104_000 + CHAOS_EXPLOSION_CAST_MS - TELEGRAPH_MS);
+
+    snapshot = simulation.getSnapshot();
+    const actionName = explosionState.mode === 'longitude' ? '经度聚爆' : '纬度聚爆';
+    const telegraphs = snapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'fanTelegraph' && mechanic.label === `${actionName}范围`,
+    );
+    const expectedDirections = getChaosExplosionDirections(explosionState, 'first');
+
+    assert.equal(telegraphs.length, 2);
+    for (const expectedDirection of expectedDirections) {
+      assert.ok(
+        telegraphs.some(
+          (telegraph) => getAngleDiff(telegraph.direction, expectedDirection) < 0.001,
+        ),
+      );
+    }
   });
 });

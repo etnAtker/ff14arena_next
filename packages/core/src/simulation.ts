@@ -1121,6 +1121,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             center: cloneVector(options.center),
             shape: options.shape,
             radius: options.radius,
+            ...(options.direction === undefined ? {} : { direction: options.direction }),
             ...(options.color === undefined ? {} : { color: options.color }),
             ...(options.targetRingRadius === undefined
               ? {}
