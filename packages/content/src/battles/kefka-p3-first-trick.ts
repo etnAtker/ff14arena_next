@@ -589,6 +589,17 @@ function createChargeOutsideCenters(
   );
 }
 
+function getOppositeRotationSign(rotationSign: ChargeRotationSign): ChargeRotationSign {
+  return rotationSign === 1 ? -1 : 1;
+}
+
+function createMahjongRectangleCenters(chargeState: ChargeState): Vector2[] {
+  return createChargeOutsideCenters(
+    chargeState.baseDirection,
+    getOppositeRotationSign(chargeState.rotationSign),
+  );
+}
+
 function createChargeState(): ChargeState {
   const baseDirection =
     CHARGE_BASE_DIRECTIONS[Math.floor(Math.random() * CHARGE_BASE_DIRECTIONS.length)]!;
@@ -1374,7 +1385,7 @@ function assignMahjongOrders(ctx: BattleScriptContext): void {
 function resolveMahjongRectangle(ctx: BattleScriptContext, index: number): void {
   const chargeState = getChargeState(ctx);
   const assignments = getMahjongAssignments(ctx);
-  const source = chargeState.outsideCenters[index];
+  const source = createMahjongRectangleCenters(chargeState)[index];
   const targetActorId = assignments[index];
 
   if (source === undefined || targetActorId === undefined) {
@@ -1649,6 +1660,7 @@ export const KEFKA_P3_FIRST_TRICK_TESTING = {
   calculateChaosCenter,
   calculateVacuumWaveCenter,
   createChargeOutsideCenters,
+  createMahjongRectangleCenters,
   createElementBlocks,
   getKnockbackDistance,
   isActorInsideRectangle,

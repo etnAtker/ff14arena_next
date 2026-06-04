@@ -39,7 +39,7 @@ const TELEGRAPH_MS = 500;
 const VISUAL_MS = 500;
 const MECHANIC_DAMAGE = 1;
 const INJURY_DURATION_MS = 3_000;
-const COMPLETE_AT = ZERO_AT + 130_200;
+const COMPLETE_AT = ZERO_AT + 135_400;
 
 const CHAOS_MARKER_RADIUS = 0.8;
 const CHAOS_TARGET_RING_RADIUS = 6;
@@ -93,6 +93,8 @@ const CHAOS_EXPLOSION_FAN_RADIUS = 60;
 
 const TRUE_SELF_SPAWN_TO_CAST_MS = 1_500;
 const TRUE_SELF_CAST_MS = 4_000;
+const TRUE_SELF_LATE_SPAWN_TO_CAST_MS = 2_000;
+const TRUE_SELF_LATE_CAST_MS = 5_000;
 const TRUE_SELF_LENGTH = 50;
 const TRUE_SELF_WIDTH = 10;
 
@@ -1063,7 +1065,7 @@ function schedulePersistentBlackHoles(
 }
 
 function scheduleLateSplitBlackHoles(ctx: BattleScriptContext): void {
-  const spawnAt = t(115_000);
+  const spawnAt = t(121_000);
 
   ctx.timeline.at(spawnAt, () => {
     const holes = createBlackHoleCenters().map((center): BlackHole => {
@@ -1338,18 +1340,20 @@ function scheduleTrueSelf(
   ctx: BattleScriptContext,
   spawnAt: number,
   markerDespawnAt?: number,
+  castDelayMs = TRUE_SELF_SPAWN_TO_CAST_MS,
+  castMs = TRUE_SELF_CAST_MS,
 ): void {
   const position = createOutsideKefkaPosition();
   const facing = createFacingTowards(position, CENTER);
-  const castStartAt = spawnAt + TRUE_SELF_SPAWN_TO_CAST_MS;
-  const resolveAt = castStartAt + TRUE_SELF_CAST_MS;
+  const castStartAt = spawnAt + castDelayMs;
+  const resolveAt = castStartAt + castMs;
   const disappearAt = markerDespawnAt ?? resolveAt + VISUAL_MS;
 
   ctx.timeline.at(spawnAt, () => {
     spawnKefkaMarker(ctx, position, disappearAt - spawnAt);
   });
   ctx.timeline.at(castStartAt, () => {
-    ctx.boss.cast(`kefka_p3_second_true_self_${spawnAt}`, '本色出演的我', TRUE_SELF_CAST_MS);
+    ctx.boss.cast(`kefka_p3_second_true_self_${spawnAt}`, '本色出演的我', castMs);
   });
   ctx.timeline.at(resolveAt - TELEGRAPH_MS, () => {
     ctx.spawn.rectangleTelegraph({
@@ -1415,9 +1419,16 @@ function buildKefkaP3SecondScript(ctx: BattleScriptContext): void {
   scheduleTrueSelf(ctx, t(70_600), t(106_100));
   scheduleThunder(ctx, t(76_600), 'kefka_p3_second_thunder_2');
   schedulePersistentBlackHoles(ctx, t(88_100), 'persistent:2');
-  scheduleSlap(ctx, t(107_100), 6_000, COMPLETE_AT);
+  scheduleSlap(ctx, t(107_100), 6_000, t(127_100));
   scheduleChaosExplosion(ctx, t(111_100), 'kefka_p3_second_chaos_explosion');
   scheduleLateSplitBlackHoles(ctx);
+  scheduleTrueSelf(
+    ctx,
+    t(128_100),
+    COMPLETE_AT,
+    TRUE_SELF_LATE_SPAWN_TO_CAST_MS,
+    TRUE_SELF_LATE_CAST_MS,
+  );
 
   ctx.timeline.at(COMPLETE_AT, () => {
     ctx.state.complete();
@@ -1469,6 +1480,8 @@ export const KEFKA_P3_SECOND_TRICK_TESTING = {
   THUNDER_CAST_MS,
   CURSE_CAST_MS,
   TRUE_SELF_CAST_MS,
+  TRUE_SELF_LATE_CAST_MS,
+  TRUE_SELF_LATE_SPAWN_TO_CAST_MS,
   TRUE_SELF_LENGTH,
   getChaosExplosionDirections,
   createBlackHoleCenters,

@@ -89,6 +89,7 @@ const {
   calculateChaosCenter,
   calculateVacuumWaveCenter,
   createChargeOutsideCenters,
+  createMahjongRectangleCenters,
   isActorInsideRectangle,
 } = KEFKA_P3_FIRST_TRICK_TESTING;
 
@@ -2141,6 +2142,17 @@ test('凯夫卡P3一运：冲锋点按随机基准方向和固定旋转方向移
       chargeState.outsideCenters,
       createChargeOutsideCenters(chargeState.baseDirection, chargeState.rotationSign),
     );
+    const mahjongRectangleCenters = createMahjongRectangleCenters(chargeState);
+    assert.equal(mahjongRectangleCenters.length, CHARGE_MARKER_ROTATION_COUNT + 1);
+    assertClosePoint(mahjongRectangleCenters[0], chargeState.outsideCenters[0]);
+    assertClosePoint(
+      mahjongRectangleCenters[1],
+      createPointOnDirection(
+        chargeState.baseDirection - chargeState.rotationSign * (Math.PI / 4),
+        CHARGE_OUTSIDE_DISTANCE,
+      ),
+    );
+    assert.ok(distance(mahjongRectangleCenters[1], chargeState.outsideCenters[1]) > 0.001);
 
     let chargeMarker = snapshot.mechanics.find(
       (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '冲锋点',
@@ -2232,7 +2244,7 @@ test('凯夫卡P3一运：麻将矩形判定距离过近和其它玩家命中', 
     const assignedSnapshot = simulation.getSnapshot();
     const chargeState = assignedSnapshot.scriptState['kefkaP3:chargeState'];
     const assignments = assignedSnapshot.scriptState['kefkaP3:mahjongAssignments'];
-    const source = chargeState.outsideCenters[0];
+    const source = createMahjongRectangleCenters(chargeState)[0];
     const inward = normalize(scale(source, -1));
     const lateral = { x: -inward.y, y: inward.x };
     const target = assignedSnapshot.actors.find((actor) => actor.id === assignments[0]);
@@ -2289,7 +2301,8 @@ test('凯夫卡P3一运：顺位本人距离足够时不会被自己的矩形命
     let snapshot = simulation.getSnapshot();
     const chargeState = snapshot.scriptState['kefkaP3:chargeState'];
     const assignments = snapshot.scriptState['kefkaP3:mahjongAssignments'];
-    const source = chargeState.outsideCenters[0];
+    const mahjongRectangleCenters = createMahjongRectangleCenters(chargeState);
+    const source = mahjongRectangleCenters[0];
     const inward = normalize(scale(source, -1));
     const target = snapshot.actors.find((actor) => actor.id === assignments[0]);
     assert.ok(target);
@@ -2306,10 +2319,7 @@ test('凯夫卡P3一运：顺位本人距离足够时不会被自己的矩形命
     submitPose(
       simulation,
       lastTarget,
-      add(
-        chargeState.outsideCenters[7],
-        scale(normalize(scale(chargeState.outsideCenters[7], -1)), 43),
-      ),
+      add(mahjongRectangleCenters[7], scale(normalize(scale(mahjongRectangleCenters[7], -1)), 43)),
     );
     advanceTo(simulation, MAHJONG_LAST_RESOLVE_AT);
 
@@ -2320,7 +2330,8 @@ test('凯夫卡P3一运：顺位本人距离足够时不会被自己的矩形命
         (mechanic) => mechanic.resolveAt === MAHJONG_LAST_RESOLVE_AT + MAHJONG_RECTANGLE_VISUAL_MS,
       );
     assert.ok(lastRectangle);
-    assertClosePoint(lastRectangle.center, chargeState.outsideCenters[7]);
+    assertClosePoint(lastRectangle.center, mahjongRectangleCenters[7]);
+    assert.ok(distance(lastRectangle.center, chargeState.outsideCenters[7]) > 0.001);
     assert.equal(lastRectangle.length, MAHJONG_RECTANGLE_LENGTH);
     assert.equal(lastRectangle.width, MAHJONG_RECTANGLE_WIDTH);
   });

@@ -16,6 +16,8 @@ const {
   BLACK_HOLE_SHOT_DELAY_MS,
   CHAOS_EXPLOSION_CAST_MS,
   THUNDER_CAST_MS,
+  TRUE_SELF_LATE_CAST_MS,
+  TRUE_SELF_LATE_SPAWN_TO_CAST_MS,
   TRUE_SELF_LENGTH,
   FIRST_TARGET_MARKER_COLOR,
   SECOND_TARGET_MARKER_COLOR,
@@ -506,10 +508,10 @@ test('111.1秒卡奥斯随机释放经度聚爆或纬度聚爆', () => {
   });
 });
 
-test('115秒黑洞先相邻两个连线，再剩余一个连线', () => {
+test('121秒黑洞先相邻两个连线，再剩余一个连线', () => {
   withMockedRandom(createSeededRandomValues(89, 512), () => {
     const simulation = createKefkaP3SecondSimulation();
-    const spawnAt = ZERO_AT + 115_000;
+    const spawnAt = ZERO_AT + 121_000;
     const firstShotAt = spawnAt + BLACK_HOLE_SHOT_DELAY_MS;
     const secondShotAt = spawnAt + BLACK_HOLE_SHOT_DELAY_MS * 2;
 
@@ -554,5 +556,37 @@ test('115秒黑洞先相邻两个连线，再剩余一个连线', () => {
 
     assert.equal(blackHoles.length, 0);
     assert.equal(tethers.length, 0);
+  });
+});
+
+test('128.1秒两黑洞判定同时凯夫卡出现并读条5秒本色出演的我', () => {
+  withMockedRandom(createSeededRandomValues(91, 512), () => {
+    const simulation = createKefkaP3SecondSimulation();
+    const blackHoleSpawnAt = ZERO_AT + 121_000;
+    const firstShotAt = blackHoleSpawnAt + BLACK_HOLE_SHOT_DELAY_MS;
+    const castStartAt = firstShotAt + TRUE_SELF_LATE_SPAWN_TO_CAST_MS;
+    const resolveAt = castStartAt + TRUE_SELF_LATE_CAST_MS;
+
+    advanceTo(simulation, firstShotAt);
+    assert.ok(hasKefkaMarker(simulation.getSnapshot()));
+
+    advanceTo(simulation, castStartAt);
+
+    let snapshot = simulation.getSnapshot();
+    const castBar = snapshot.hud.bossCastBars.find((cast) => cast.actionName === '本色出演的我');
+
+    assert.ok(castBar);
+    assert.equal(castBar.startedAt, castStartAt);
+    assert.equal(castBar.totalDurationMs, TRUE_SELF_LATE_CAST_MS);
+
+    advanceTo(simulation, resolveAt - TELEGRAPH_MS);
+
+    snapshot = simulation.getSnapshot();
+    const telegraph = snapshot.mechanics.find(
+      (mechanic) => mechanic.kind === 'rectangleTelegraph' && mechanic.label === '本色出演的我',
+    );
+
+    assert.ok(telegraph);
+    assert.equal(telegraph.length, TRUE_SELF_LENGTH);
   });
 });
