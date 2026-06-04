@@ -7,6 +7,8 @@ import { getStatusDisplayName } from '../status-metadata';
 type ElementType = 'fire' | 'water' | 'wind';
 type PendingElementKind = 'fire' | 'water' | 'wind';
 type WindStatusId = typeof CHAOS_WIND_STATUS_ID | typeof CHAOS_REVERSE_WIND_STATUS_ID;
+type ChaosExplosionMode = 'longitude' | 'latitude';
+type ChargeRotationSign = 1 | -1;
 
 interface KefkaP3ElementBlock {
   type: ElementType;
@@ -19,8 +21,20 @@ interface PendingElementResolution {
   resolveAt: number;
 }
 
+interface ChaosExplosionState {
+  mode: ChaosExplosionMode;
+  facing: number;
+  center: Vector2;
+}
+
+interface ChargeState {
+  baseDirection: number;
+  rotationSign: ChargeRotationSign;
+  outsideCenters: Vector2[];
+}
+
 const ARENA_RADIUS = 20;
-const BOSS_TARGET_RING_RADIUS = 6;
+const BOSS_TARGET_RING_RADIUS = 0;
 const CENTER = { x: 0, y: 0 } as const satisfies Vector2;
 const DEEP_AGONY_CAST_START_AT = 3_000;
 const DEEP_AGONY_CAST_MS = 1_000;
@@ -33,6 +47,9 @@ const ELEMENT_BLOCK_LIFETIME_MS = 60_000;
 const ELEMENT_CORNER_DISTANCE = 10;
 const INJURY_DURATION_MS = 3_000;
 const MECHANIC_DAMAGE = 1;
+const DEATH_STATUS_ID = 'kefka_p3_death';
+const DEATH_STATUS_MS = 999_999;
+const DEATH_STATUS_NAME = '死亡';
 const FIRE_SELF_RADIUS = 5;
 const FIRE_ELEMENT_INNER_RADIUS = 5;
 const FIRE_ELEMENT_OUTER_RADIUS = 10;
@@ -45,7 +62,67 @@ const BASE_ELEMENT_KNOCKBACK_DISTANCE = 20;
 const DELAYED_RESOLUTION_MS = 1_500;
 const TELEGRAPH_MS = 500;
 const RESOLUTION_VISUAL_MS = 500;
-const COMPLETE_AT = 55_500;
+const BURST_CAST_START_AT = 16_000;
+const BURST_RESOLVE_AT = 23_000;
+const BURST_CAST_MS = BURST_RESOLVE_AT - BURST_CAST_START_AT;
+const BURST_RADIUS = 11;
+const BURST_ST_OFFSET = 4;
+const EXDEATH_MARKER_RADIUS = 0.8;
+const EXDEATH_MARKER_COLOR = '#f97316';
+const EXDEATH_TARGET_RING_RADIUS = 4;
+const EXDEATH_TARGET_RING_COLOR = '#ef4444';
+const FOLLOWUP_BURST_CAST_START_AT = 27_000;
+const FOLLOWUP_BURST_FIRST_RESOLVE_AT = 33_000;
+const FOLLOWUP_BURST_SECOND_RESOLVE_AT = 36_000;
+const FOLLOWUP_BURST_CAST_MS = FOLLOWUP_BURST_FIRST_RESOLVE_AT - FOLLOWUP_BURST_CAST_START_AT;
+const FOLLOWUP_BURST_RADIUS = 5;
+const EXDEATH_REPOSITION_START_AT = 37_000;
+const EXDEATH_REPOSITION_END_AT = 61_000;
+const EXDEATH_REPOSITION_INTERVAL_MS = 1_000;
+const CHAOS_EXPLOSION_CAST_START_AT = 41_000;
+const CHAOS_EXPLOSION_FIRST_RESOLVE_AT = 46_000;
+const CHAOS_EXPLOSION_SECOND_RESOLVE_AT = 48_000;
+const CHAOS_EXPLOSION_CAST_MS = CHAOS_EXPLOSION_FIRST_RESOLVE_AT - CHAOS_EXPLOSION_CAST_START_AT;
+const CHAOS_EXPLOSION_FAN_ANGLE = Math.PI / 2;
+const CHAOS_EXPLOSION_FAN_RADIUS = 60;
+const CHAOS_MARKER_SPAWN_AT = 3_000;
+const CHAOS_REPOSITION_START_AT = 4_000;
+const CHAOS_REPOSITION_END_AT = 41_000;
+const CHAOS_REPOSITION_INTERVAL_MS = 1_000;
+const CHAOS_MARKER_RADIUS = 0.8;
+const CHAOS_MARKER_ST_OFFSET = 6;
+const CHAOS_MARKER_TARGET_RING_RADIUS = 6;
+const CHAOS_MARKER_TARGET_RING_COLOR = '#ef4444';
+const VACUUM_WAVE_CAST_START_AT = 61_000;
+const VACUUM_WAVE_RESOLVE_AT = 69_000;
+const VACUUM_WAVE_CAST_MS = VACUUM_WAVE_RESOLVE_AT - VACUUM_WAVE_CAST_START_AT;
+const VACUUM_WAVE_MT_OFFSET = 4;
+const SUPER_JUMP_LOCK_AT = 61_000;
+const SUPER_JUMP_RESOLVE_AT = 67_000;
+const SUPER_JUMP_RADIUS = 11;
+const CHARGE_MARKER_SPAWN_AT = 54_000;
+const CHARGE_MARKER_OUTSIDE_AT = 62_000;
+const CHARGE_MARKER_ROTATION_INTERVAL_MS = 2_000;
+const CHARGE_MARKER_ROTATION_COUNT = 7;
+const CHARGE_MARKER_DESPAWN_AT =
+  CHARGE_MARKER_OUTSIDE_AT +
+  (CHARGE_MARKER_ROTATION_COUNT + 1) * CHARGE_MARKER_ROTATION_INTERVAL_MS;
+const CHARGE_INITIAL_DISTANCE = 16;
+const CHARGE_OUTSIDE_DISTANCE = 25;
+const CHARGE_MARKER_RADIUS = 0.8;
+const CHARGE_MARKER_COLOR = '#a855f7';
+const MAHJONG_ASSIGN_AT = 72_000;
+const MAHJONG_MARKERS_RESOLVE_AT = 80_000;
+const MAHJONG_FIRST_RESOLVE_AT = 84_000;
+const MAHJONG_LAST_RESOLVE_AT = 85_750;
+const MAHJONG_RECTANGLE_INTERVAL_MS = 250;
+const MAHJONG_RECTANGLE_LENGTH = 50;
+const MAHJONG_RECTANGLE_WIDTH = 12;
+const MAHJONG_RECTANGLE_VISUAL_MS = 1_000;
+const MAHJONG_MIN_DISTANCE = 40;
+const MAHJONG_ODD_MARKER_COLOR = '#38bdf8';
+const MAHJONG_EVEN_MARKER_COLOR = '#ef4444';
+const COMPLETE_AT = MAHJONG_LAST_RESOLVE_AT + MAHJONG_RECTANGLE_VISUAL_MS;
 
 const CHAOS_FIRE_STATUS_ID = 'kefka_p3_chaos_fire';
 const CHAOS_WATER_STATUS_ID = 'kefka_p3_chaos_water';
@@ -54,8 +131,10 @@ const CHAOS_REVERSE_WIND_STATUS_ID = 'kefka_p3_chaos_reverse_wind';
 const WIND_STATUS_IDS = [CHAOS_WIND_STATUS_ID, CHAOS_REVERSE_WIND_STATUS_ID] as const;
 const WATER_TELEGRAPH_COLOR = '#38bdf8';
 const WIND_TELEGRAPH_COLOR = '#22c55e';
+const BURST_TELEGRAPH_COLOR = '#ffffff';
 const TANK_HEALER_SLOTS = ['MT', 'ST', 'H1', 'H2'] as const satisfies readonly PartySlot[];
 const DPS_SLOTS = ['D1', 'D2', 'D3', 'D4'] as const satisfies readonly PartySlot[];
+const CHARGE_BASE_DIRECTIONS = [-Math.PI / 2, 0, Math.PI / 2, Math.PI] as const;
 const INITIAL_POSITIONS: Record<PartySlot, Vector2> = {
   MT: { x: -4.2, y: 12 },
   ST: { x: -3, y: 12 },
@@ -203,6 +282,23 @@ function getFreshActor(ctx: BattleScriptContext, actorId: string): BaseActorSnap
   return getActorById(ctx.select.allPlayers(), actorId);
 }
 
+function applyKefkaP3Death(
+  ctx: BattleScriptContext,
+  actor: BaseActorSnapshot,
+  sourceLabel: string,
+): void {
+  const freshActor = getFreshActor(ctx, actor.id);
+
+  if (freshActor === null || !freshActor.alive || hasStatus(freshActor, DEATH_STATUS_ID)) {
+    return;
+  }
+
+  ctx.status.apply([freshActor.id], DEATH_STATUS_ID, DEATH_STATUS_MS, {
+    name: DEATH_STATUS_NAME,
+  });
+  ctx.state.fail(`${freshActor.name} 因 ${sourceLabel} 死亡`);
+}
+
 function applyKefkaP3Damage(
   ctx: BattleScriptContext,
   actor: BaseActorSnapshot,
@@ -215,7 +311,7 @@ function applyKefkaP3Damage(
   }
 
   if (hasStatus(freshActor, 'injury_up')) {
-    ctx.damage.kill([freshActor.id], sourceLabel);
+    applyKefkaP3Death(ctx, freshActor, sourceLabel);
     return;
   }
 
@@ -289,6 +385,235 @@ function getElementBlock(ctx: BattleScriptContext, type: ElementType): KefkaP3El
   }
 
   return elementBlock;
+}
+
+function calculateBurstCenter(tankPosition: Vector2): Vector2 {
+  const distanceToCenter = Math.hypot(tankPosition.x, tankPosition.y);
+
+  if (distanceToCenter <= BURST_ST_OFFSET) {
+    return { ...CENTER };
+  }
+
+  const centerScale = (distanceToCenter - BURST_ST_OFFSET) / distanceToCenter;
+
+  return {
+    x: tankPosition.x * centerScale,
+    y: tankPosition.y * centerScale,
+  };
+}
+
+function calculateVacuumWaveCenter(exdeathPosition: Vector2, mtPosition: Vector2): Vector2 {
+  const distanceToMt = distance(exdeathPosition, mtPosition);
+
+  if (distanceToMt <= VACUUM_WAVE_MT_OFFSET) {
+    return { ...exdeathPosition };
+  }
+
+  const scaleFromMt = VACUUM_WAVE_MT_OFFSET / distanceToMt;
+
+  return {
+    x: mtPosition.x + (exdeathPosition.x - mtPosition.x) * scaleFromMt,
+    y: mtPosition.y + (exdeathPosition.y - mtPosition.y) * scaleFromMt,
+  };
+}
+
+function calculateChaosCenter(chaosPosition: Vector2, stPosition: Vector2): Vector2 {
+  const distanceToSt = distance(chaosPosition, stPosition);
+
+  if (distanceToSt <= CHAOS_MARKER_ST_OFFSET) {
+    return { ...chaosPosition };
+  }
+
+  const scaleFromSt = CHAOS_MARKER_ST_OFFSET / distanceToSt;
+
+  return {
+    x: stPosition.x + (chaosPosition.x - stPosition.x) * scaleFromSt,
+    y: stPosition.y + (chaosPosition.y - stPosition.y) * scaleFromSt,
+  };
+}
+
+function getBurstCenter(ctx: BattleScriptContext): Vector2 {
+  const burstCenter = ctx.state.getValue<Vector2>('kefkaP3:burstCenter');
+
+  if (burstCenter === undefined) {
+    throw new Error('missing kefka p3 burst center');
+  }
+
+  return burstCenter;
+}
+
+function getChaosCenter(ctx: BattleScriptContext): Vector2 {
+  const chaosCenter = ctx.state.getValue<Vector2>('kefkaP3:chaosCenter');
+
+  if (chaosCenter === undefined) {
+    throw new Error('missing kefka p3 chaos center');
+  }
+
+  return chaosCenter;
+}
+
+function getChaosExplosionState(ctx: BattleScriptContext): ChaosExplosionState {
+  const state = ctx.state.getValue<ChaosExplosionState>('kefkaP3:chaosExplosion');
+
+  if (state === undefined) {
+    throw new Error('missing kefka p3 chaos explosion state');
+  }
+
+  return state;
+}
+
+function getPartySlotOrderIndex(actor: BaseActorSnapshot): number {
+  return actor.slot === null ? Number.MAX_SAFE_INTEGER : PARTY_SLOT_ORDER.indexOf(actor.slot);
+}
+
+function getNearestAlivePlayerToPoint(
+  actors: BaseActorSnapshot[],
+  source: Vector2,
+): BaseActorSnapshot | null {
+  return (
+    actors
+      .filter((actor) => actor.alive)
+      .sort((left, right) => {
+        const distanceDelta = distance(left.position, source) - distance(right.position, source);
+
+        if (distanceDelta !== 0) {
+          return distanceDelta;
+        }
+
+        return getPartySlotOrderIndex(left) - getPartySlotOrderIndex(right);
+      })[0] ?? null
+  );
+}
+
+function getFarthestAlivePlayerFromPoint(
+  actors: BaseActorSnapshot[],
+  source: Vector2,
+): BaseActorSnapshot | null {
+  return (
+    actors
+      .filter((actor) => actor.alive)
+      .sort((left, right) => {
+        const distanceDelta = distance(right.position, source) - distance(left.position, source);
+
+        if (distanceDelta !== 0) {
+          return distanceDelta;
+        }
+
+        return getPartySlotOrderIndex(left) - getPartySlotOrderIndex(right);
+      })[0] ?? null
+  );
+}
+
+function getSuperJumpCenter(ctx: BattleScriptContext): Vector2 {
+  const center = ctx.state.getValue<Vector2>('kefkaP3:superJumpCenter');
+
+  if (center === undefined) {
+    throw new Error('missing kefka p3 super jump center');
+  }
+
+  return center;
+}
+
+function createPointOnDirection(direction: number, radius: number): Vector2 {
+  return {
+    x: Math.cos(direction) * radius,
+    y: Math.sin(direction) * radius,
+  };
+}
+
+function createChargeOutsideCenters(
+  baseDirection: number,
+  rotationSign: ChargeRotationSign,
+): Vector2[] {
+  return Array.from({ length: CHARGE_MARKER_ROTATION_COUNT + 1 }, (_, index) =>
+    createPointOnDirection(
+      baseDirection + rotationSign * (Math.PI / 4) * index,
+      CHARGE_OUTSIDE_DISTANCE,
+    ),
+  );
+}
+
+function createChargeState(): ChargeState {
+  const baseDirection =
+    CHARGE_BASE_DIRECTIONS[Math.floor(Math.random() * CHARGE_BASE_DIRECTIONS.length)]!;
+  const rotationSign: ChargeRotationSign = Math.random() < 0.5 ? 1 : -1;
+
+  return {
+    baseDirection,
+    rotationSign,
+    outsideCenters: createChargeOutsideCenters(baseDirection, rotationSign),
+  };
+}
+
+function getChargeState(ctx: BattleScriptContext): ChargeState {
+  const state = ctx.state.getValue<ChargeState>('kefkaP3:chargeState');
+
+  if (state === undefined) {
+    throw new Error('missing kefka p3 charge state');
+  }
+
+  return state;
+}
+
+function getMahjongAssignments(ctx: BattleScriptContext): string[] {
+  const assignments = ctx.state.getValue<string[]>('kefkaP3:mahjongAssignments');
+
+  if (assignments === undefined) {
+    throw new Error('missing kefka p3 mahjong assignments');
+  }
+
+  return assignments;
+}
+
+function isActorInsideFan(
+  actor: BaseActorSnapshot,
+  center: Vector2,
+  direction: number,
+  angle: number,
+  radius: number,
+): boolean {
+  if (!actor.alive || distance(actor.position, center) > radius) {
+    return false;
+  }
+
+  if (distance(actor.position, center) === 0) {
+    return true;
+  }
+
+  return (
+    getAngleDiff(Math.atan2(actor.position.y - center.y, actor.position.x - center.x), direction) <=
+    angle / 2
+  );
+}
+
+function isActorInsideRectangle(
+  actor: BaseActorSnapshot,
+  source: Vector2,
+  direction: number,
+  length: number,
+  width: number,
+): boolean {
+  if (!actor.alive) {
+    return false;
+  }
+
+  const relative = {
+    x: actor.position.x - source.x,
+    y: actor.position.y - source.y,
+  };
+  const forward = {
+    x: Math.cos(direction),
+    y: Math.sin(direction),
+  };
+  const projection = relative.x * forward.x + relative.y * forward.y;
+
+  if (projection < 0 || projection > length) {
+    return false;
+  }
+
+  const lateral = Math.abs(relative.x * -forward.y + relative.y * forward.x);
+
+  return lateral <= width / 2;
 }
 
 function spawnElementBlocks(ctx: BattleScriptContext, elementBlocks: KefkaP3ElementBlock[]): void {
@@ -514,6 +839,20 @@ function applyElementKnockback(
   }
 }
 
+function applyVacuumWaveKnockback(ctx: BattleScriptContext, source: Vector2): void {
+  for (const hit of ctx.select.allPlayers()) {
+    const freshActor = getFreshActor(ctx, hit.id);
+
+    if (freshActor === null || !freshActor.alive || freshActor.knockbackImmune) {
+      continue;
+    }
+
+    const knockbackDistance = getKnockbackDistance(freshActor, source);
+    ctx.displacement.knockback([freshActor.id], source, knockbackDistance);
+    consumeWindStatusAfterElementKnockback(ctx, freshActor);
+  }
+}
+
 function resolveFireElement(ctx: BattleScriptContext, count: number): void {
   const fireElement = getElementBlock(ctx, 'fire');
   const targets = selectNearestDistinctActors(ctx.select.allPlayers(), fireElement.position, count);
@@ -592,7 +931,7 @@ function resolveWindShare(ctx: BattleScriptContext, count: number): void {
 
     if (hits.length < WIND_SHARE_REQUIRED_PLAYERS) {
       ctx.state.fail('混沌之风分摊人数不足');
-      ctx.damage.kill([target.id], '混沌之风分摊人数不足');
+      applyKefkaP3Death(ctx, target, '混沌之风分摊人数不足');
       continue;
     }
 
@@ -636,9 +975,364 @@ function resolvePendingElementResolutions(ctx: BattleScriptContext, resolveAt: n
   }
 }
 
+function spawnExdeathMarker(
+  ctx: BattleScriptContext,
+  center: Vector2,
+  resolveAfterMs: number,
+): void {
+  ctx.spawn.fieldMarker({
+    label: '艾克斯德司',
+    center,
+    shape: 'enemy',
+    radius: EXDEATH_MARKER_RADIUS,
+    color: EXDEATH_MARKER_COLOR,
+    targetRingRadius: EXDEATH_TARGET_RING_RADIUS,
+    targetRingColor: EXDEATH_TARGET_RING_COLOR,
+    resolveAfterMs,
+  });
+}
+
+function startBurstCast(ctx: BattleScriptContext): void {
+  const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+  const burstCenter = calculateBurstCenter(mt.position);
+
+  ctx.state.setValue('kefkaP3:burstCenter', burstCenter);
+  ctx.boss.cast('kefka_p3_burst', '暴雷', BURST_CAST_MS);
+  spawnExdeathMarker(ctx, burstCenter, EXDEATH_REPOSITION_START_AT - BURST_CAST_START_AT);
+}
+
+function resolveBurst(ctx: BattleScriptContext): void {
+  const burstCenter = getBurstCenter(ctx);
+
+  ctx.boss.clearCast();
+  ctx.spawn.circleTelegraph({
+    label: '暴雷范围',
+    center: burstCenter,
+    radius: BURST_RADIUS,
+    color: BURST_TELEGRAPH_COLOR,
+    resolveAfterMs: RESOLUTION_VISUAL_MS,
+  });
+
+  for (const hit of getActorsInsideCircle(ctx.select.allPlayers(), burstCenter, BURST_RADIUS)) {
+    applyKefkaP3Death(ctx, hit, '被暴雷命中');
+  }
+}
+
+function startVacuumWaveCast(ctx: BattleScriptContext): void {
+  const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+  const exdeathCenter = getBurstCenter(ctx);
+  const vacuumWaveCenter = calculateVacuumWaveCenter(exdeathCenter, mt.position);
+
+  ctx.state.setValue('kefkaP3:burstCenter', vacuumWaveCenter);
+  ctx.boss.cast('kefka_p3_vacuum_wave', '真空波', VACUUM_WAVE_CAST_MS);
+  spawnExdeathMarker(ctx, vacuumWaveCenter, COMPLETE_AT - VACUUM_WAVE_CAST_START_AT);
+}
+
+function repositionExdeathTowardMt(ctx: BattleScriptContext): void {
+  const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+  const exdeathCenter = getBurstCenter(ctx);
+  const nextCenter = calculateVacuumWaveCenter(exdeathCenter, mt.position);
+
+  ctx.state.setValue('kefkaP3:burstCenter', nextCenter);
+  spawnExdeathMarker(ctx, nextCenter, EXDEATH_REPOSITION_INTERVAL_MS);
+}
+
+function resolveVacuumWave(ctx: BattleScriptContext): void {
+  const exdeathCenter = getBurstCenter(ctx);
+
+  ctx.boss.clearCast();
+  applyVacuumWaveKnockback(ctx, exdeathCenter);
+}
+
+function startFollowupBurstCast(ctx: BattleScriptContext): void {
+  ctx.boss.cast('kefka_p3_followup_burst', '暴雷', FOLLOWUP_BURST_CAST_MS);
+}
+
+function resolveFollowupBurst(ctx: BattleScriptContext, options?: { clearCast?: boolean }): void {
+  const burstCenter = getBurstCenter(ctx);
+  const target = getNearestAlivePlayerToPoint(ctx.select.allPlayers(), burstCenter);
+
+  if (options?.clearCast ?? false) {
+    ctx.boss.clearCast();
+  }
+
+  if (target === null) {
+    return;
+  }
+
+  ctx.spawn.circleTelegraph({
+    label: '暴雷范围',
+    center: target.position,
+    radius: FOLLOWUP_BURST_RADIUS,
+    color: BURST_TELEGRAPH_COLOR,
+    resolveAfterMs: RESOLUTION_VISUAL_MS,
+  });
+
+  const hits = getActorsInsideCircle(
+    ctx.select.allPlayers(),
+    target.position,
+    FOLLOWUP_BURST_RADIUS,
+  );
+
+  for (const hit of hits) {
+    if (hit.slot === 'MT' || hit.slot === 'ST') {
+      applyKefkaP3Damage(ctx, hit, '暴雷');
+    } else {
+      applyKefkaP3Death(ctx, hit, '被暴雷命中');
+    }
+  }
+}
+
+function getChaosExplosionActionName(mode: ChaosExplosionMode): string {
+  return mode === 'longitude' ? '经度聚爆' : '纬度聚爆';
+}
+
+function getChaosExplosionDirections(
+  state: ChaosExplosionState,
+  resolveAt: number,
+): readonly [number, number] {
+  const shouldResolveFrontBack =
+    state.mode === 'longitude'
+      ? resolveAt === CHAOS_EXPLOSION_FIRST_RESOLVE_AT
+      : resolveAt === CHAOS_EXPLOSION_SECOND_RESOLVE_AT;
+
+  if (shouldResolveFrontBack) {
+    return [state.facing, state.facing + Math.PI];
+  }
+
+  return [state.facing - Math.PI / 2, state.facing + Math.PI / 2];
+}
+
+function spawnChaosMarker(ctx: BattleScriptContext, center: Vector2, resolveAfterMs: number): void {
+  ctx.spawn.fieldMarker({
+    label: '卡奥斯',
+    center,
+    shape: 'enemy',
+    radius: CHAOS_MARKER_RADIUS,
+    targetRingRadius: CHAOS_MARKER_TARGET_RING_RADIUS,
+    targetRingColor: CHAOS_MARKER_TARGET_RING_COLOR,
+    resolveAfterMs,
+  });
+}
+
+function spawnInitialChaosMarker(ctx: BattleScriptContext): void {
+  ctx.state.setValue<Vector2>('kefkaP3:chaosCenter', CENTER);
+  spawnChaosMarker(ctx, CENTER, CHAOS_REPOSITION_START_AT - CHAOS_MARKER_SPAWN_AT);
+}
+
+function repositionChaosTowardSt(ctx: BattleScriptContext): void {
+  const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+  const nextCenter = calculateChaosCenter(getChaosCenter(ctx), st.position);
+
+  ctx.state.setValue<Vector2>('kefkaP3:chaosCenter', nextCenter);
+  spawnChaosMarker(ctx, nextCenter, CHAOS_REPOSITION_INTERVAL_MS);
+}
+
+function startChaosExplosionCast(ctx: BattleScriptContext): void {
+  const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+  const center = getChaosCenter(ctx);
+  const mode: ChaosExplosionMode = Math.random() < 0.5 ? 'longitude' : 'latitude';
+  const facing =
+    distance(st.position, center) <= 0.0001 ? 0 : createFacingTowards(center, st.position);
+  const actionName = getChaosExplosionActionName(mode);
+
+  ctx.state.setValue<ChaosExplosionState>('kefkaP3:chaosExplosion', { mode, facing, center });
+  ctx.boss.cast(`kefka_p3_${mode}_explosion`, actionName, CHAOS_EXPLOSION_CAST_MS);
+  spawnChaosMarker(ctx, center, SUPER_JUMP_RESOLVE_AT - CHAOS_EXPLOSION_CAST_START_AT);
+}
+
+function resolveChaosExplosion(ctx: BattleScriptContext, resolveAt: number): void {
+  const state = getChaosExplosionState(ctx);
+  const actionName = getChaosExplosionActionName(state.mode);
+  const directions = getChaosExplosionDirections(state, resolveAt);
+  const hitActorIds = new Set<string>();
+
+  if (resolveAt === CHAOS_EXPLOSION_FIRST_RESOLVE_AT) {
+    ctx.boss.clearCast();
+  }
+
+  for (const direction of directions) {
+    ctx.spawn.fanTelegraph({
+      label: `${actionName}范围`,
+      center: state.center,
+      direction,
+      angle: CHAOS_EXPLOSION_FAN_ANGLE,
+      radius: CHAOS_EXPLOSION_FAN_RADIUS,
+      resolveAfterMs: RESOLUTION_VISUAL_MS,
+    });
+
+    for (const hit of ctx.select
+      .allPlayers()
+      .filter((actor) =>
+        isActorInsideFan(
+          actor,
+          state.center,
+          direction,
+          CHAOS_EXPLOSION_FAN_ANGLE,
+          CHAOS_EXPLOSION_FAN_RADIUS,
+        ),
+      )) {
+      hitActorIds.add(hit.id);
+    }
+  }
+
+  for (const hitActorId of hitActorIds) {
+    const hit = getActorById(ctx.select.allPlayers(), hitActorId);
+
+    if (hit !== null) {
+      applyKefkaP3Death(ctx, hit, '被扇形命中');
+    }
+  }
+}
+
+function lockSuperJumpTarget(ctx: BattleScriptContext): void {
+  const target = getFarthestAlivePlayerFromPoint(ctx.select.allPlayers(), CENTER);
+
+  if (target === null) {
+    return;
+  }
+
+  ctx.state.setValue('kefkaP3:superJumpCenter', { ...target.position });
+}
+
+function resolveSuperJump(ctx: BattleScriptContext): void {
+  const superJumpCenter = getSuperJumpCenter(ctx);
+
+  ctx.state.setValue<Vector2>('kefkaP3:chaosCenter', superJumpCenter);
+  spawnChaosMarker(ctx, superJumpCenter, COMPLETE_AT - SUPER_JUMP_RESOLVE_AT);
+  ctx.spawn.circleTelegraph({
+    label: '超级跳范围',
+    center: superJumpCenter,
+    radius: SUPER_JUMP_RADIUS,
+    resolveAfterMs: RESOLUTION_VISUAL_MS,
+  });
+
+  for (const hit of getActorsInsideCircle(
+    ctx.select.allPlayers(),
+    superJumpCenter,
+    SUPER_JUMP_RADIUS,
+  )) {
+    applyKefkaP3Death(ctx, hit, '被超级跳命中');
+  }
+}
+
+function spawnChargeMarker(
+  ctx: BattleScriptContext,
+  center: Vector2,
+  resolveAfterMs: number,
+): void {
+  ctx.spawn.fieldMarker({
+    label: '冲锋点',
+    center,
+    shape: 'circle',
+    radius: CHARGE_MARKER_RADIUS,
+    color: CHARGE_MARKER_COLOR,
+    resolveAfterMs,
+  });
+}
+
+function startChargeMarker(ctx: BattleScriptContext): void {
+  const chargeState = createChargeState();
+
+  ctx.state.setValue<ChargeState>('kefkaP3:chargeState', chargeState);
+  spawnChargeMarker(
+    ctx,
+    createPointOnDirection(chargeState.baseDirection, CHARGE_INITIAL_DISTANCE),
+    CHARGE_MARKER_OUTSIDE_AT - CHARGE_MARKER_SPAWN_AT,
+  );
+}
+
+function spawnChargeOutsideMarker(ctx: BattleScriptContext, index: number): void {
+  const chargeState = getChargeState(ctx);
+  const center = chargeState.outsideCenters[index];
+
+  if (center === undefined) {
+    return;
+  }
+
+  spawnChargeMarker(ctx, center, CHARGE_MARKER_ROTATION_INTERVAL_MS);
+}
+
+function assignMahjongOrders(ctx: BattleScriptContext): void {
+  const assignments = shuffle(ctx.select.allPlayers().filter((actor) => actor.alive)).slice(0, 8);
+
+  ctx.state.setValue(
+    'kefkaP3:mahjongAssignments',
+    assignments.map((actor) => actor.id),
+  );
+
+  for (const [index, actor] of assignments.entries()) {
+    const order = index + 1;
+
+    ctx.spawn.actorMarker({
+      label: `${order}`,
+      target: actor,
+      markerShape: 'circleDot',
+      color: order % 2 === 1 ? MAHJONG_ODD_MARKER_COLOR : MAHJONG_EVEN_MARKER_COLOR,
+      resolveAfterMs: MAHJONG_MARKERS_RESOLVE_AT - MAHJONG_ASSIGN_AT,
+    });
+  }
+}
+
+function resolveMahjongRectangle(ctx: BattleScriptContext, index: number): void {
+  const chargeState = getChargeState(ctx);
+  const assignments = getMahjongAssignments(ctx);
+  const source = chargeState.outsideCenters[index];
+  const targetActorId = assignments[index];
+
+  if (source === undefined || targetActorId === undefined) {
+    return;
+  }
+
+  const target = getFreshActor(ctx, targetActorId);
+
+  if (target === null || !target.alive) {
+    return;
+  }
+
+  const direction =
+    distance(source, target.position) <= 0.0001 ? 0 : createFacingTowards(source, target.position);
+
+  ctx.spawn.rectangleTelegraph({
+    label: '冲锋矩形',
+    center: source,
+    direction,
+    length: MAHJONG_RECTANGLE_LENGTH,
+    width: MAHJONG_RECTANGLE_WIDTH,
+    color: CHARGE_MARKER_COLOR,
+    resolveAfterMs: MAHJONG_RECTANGLE_VISUAL_MS,
+  });
+
+  if (distance(source, target.position) < MAHJONG_MIN_DISTANCE) {
+    applyKefkaP3Death(ctx, target, '麻将距离过近');
+  }
+
+  for (const hit of ctx.select.allPlayers()) {
+    if (hit.id === target.id) {
+      continue;
+    }
+
+    if (
+      isActorInsideRectangle(
+        hit,
+        source,
+        direction,
+        MAHJONG_RECTANGLE_LENGTH,
+        MAHJONG_RECTANGLE_WIDTH,
+      )
+    ) {
+      applyKefkaP3Death(ctx, hit, '麻将被其它人的矩形命中');
+    }
+  }
+}
+
 function buildKefkaP3Script(ctx: BattleScriptContext): void {
   ctx.timeline.at(DEEP_AGONY_CAST_START_AT, () => {
     ctx.boss.cast('kefka_p3_deep_agony', '深层痛楚', DEEP_AGONY_CAST_MS);
+  });
+
+  ctx.timeline.at(CHAOS_MARKER_SPAWN_AT, () => {
+    spawnInitialChaosMarker(ctx);
   });
 
   ctx.timeline.at(MECHANIC_START_AT, () => {
@@ -648,6 +1342,94 @@ function buildKefkaP3Script(ctx: BattleScriptContext): void {
     spawnElementBlocks(ctx, elementBlocks);
     assignInitialStatuses(ctx);
   });
+
+  ctx.timeline.at(BURST_CAST_START_AT, () => {
+    startBurstCast(ctx);
+  });
+
+  ctx.timeline.at(BURST_RESOLVE_AT, () => {
+    resolveBurst(ctx);
+  });
+
+  ctx.timeline.at(FOLLOWUP_BURST_CAST_START_AT, () => {
+    startFollowupBurstCast(ctx);
+  });
+
+  ctx.timeline.at(FOLLOWUP_BURST_FIRST_RESOLVE_AT, () => {
+    resolveFollowupBurst(ctx, { clearCast: true });
+  });
+
+  ctx.timeline.at(FOLLOWUP_BURST_SECOND_RESOLVE_AT, () => {
+    resolveFollowupBurst(ctx);
+  });
+
+  for (
+    let repositionAt = EXDEATH_REPOSITION_START_AT;
+    repositionAt < EXDEATH_REPOSITION_END_AT;
+    repositionAt += EXDEATH_REPOSITION_INTERVAL_MS
+  ) {
+    ctx.timeline.at(repositionAt, () => {
+      repositionExdeathTowardMt(ctx);
+    });
+  }
+
+  for (
+    let repositionAt = CHAOS_REPOSITION_START_AT;
+    repositionAt < CHAOS_REPOSITION_END_AT;
+    repositionAt += CHAOS_REPOSITION_INTERVAL_MS
+  ) {
+    ctx.timeline.at(repositionAt, () => {
+      repositionChaosTowardSt(ctx);
+    });
+  }
+
+  ctx.timeline.at(CHAOS_EXPLOSION_CAST_START_AT, () => {
+    startChaosExplosionCast(ctx);
+  });
+
+  ctx.timeline.at(CHAOS_EXPLOSION_FIRST_RESOLVE_AT, () => {
+    resolveChaosExplosion(ctx, CHAOS_EXPLOSION_FIRST_RESOLVE_AT);
+  });
+
+  ctx.timeline.at(CHAOS_EXPLOSION_SECOND_RESOLVE_AT, () => {
+    resolveChaosExplosion(ctx, CHAOS_EXPLOSION_SECOND_RESOLVE_AT);
+  });
+
+  ctx.timeline.at(CHARGE_MARKER_SPAWN_AT, () => {
+    startChargeMarker(ctx);
+  });
+
+  for (let index = 0; index <= CHARGE_MARKER_ROTATION_COUNT; index += 1) {
+    ctx.timeline.at(CHARGE_MARKER_OUTSIDE_AT + index * CHARGE_MARKER_ROTATION_INTERVAL_MS, () => {
+      spawnChargeOutsideMarker(ctx, index);
+    });
+  }
+
+  ctx.timeline.at(SUPER_JUMP_LOCK_AT, () => {
+    lockSuperJumpTarget(ctx);
+  });
+
+  ctx.timeline.at(VACUUM_WAVE_CAST_START_AT, () => {
+    startVacuumWaveCast(ctx);
+  });
+
+  ctx.timeline.at(SUPER_JUMP_RESOLVE_AT, () => {
+    resolveSuperJump(ctx);
+  });
+
+  ctx.timeline.at(VACUUM_WAVE_RESOLVE_AT, () => {
+    resolveVacuumWave(ctx);
+  });
+
+  ctx.timeline.at(MAHJONG_ASSIGN_AT, () => {
+    assignMahjongOrders(ctx);
+  });
+
+  for (let index = 0; index < 8; index += 1) {
+    ctx.timeline.at(MAHJONG_FIRST_RESOLVE_AT + index * MAHJONG_RECTANGLE_INTERVAL_MS, () => {
+      resolveMahjongRectangle(ctx, index);
+    });
+  }
 
   ctx.timeline.at(COMPLETE_AT, () => {
     ctx.state.complete();
@@ -684,6 +1466,8 @@ export const KEFKA_P3_FIRST_TRICK_TESTING = {
   MECHANIC_START_AT,
   SHORT_ELEMENT_BUFF_MS,
   LONG_ELEMENT_BUFF_MS,
+  DEATH_STATUS_ID,
+  DEATH_STATUS_MS,
   CHAOS_FIRE_STATUS_ID,
   CHAOS_WATER_STATUS_ID,
   CHAOS_WIND_STATUS_ID,
@@ -692,10 +1476,76 @@ export const KEFKA_P3_FIRST_TRICK_TESTING = {
   FIRE_ELEMENT_OUTER_RADIUS,
   WATER_ELEMENT_RADIUS,
   WIND_SHARE_RADIUS,
+  BASE_ELEMENT_KNOCKBACK_DISTANCE,
   DELAYED_RESOLUTION_MS,
   TELEGRAPH_MS,
+  RESOLUTION_VISUAL_MS,
+  BURST_CAST_START_AT,
+  BURST_RESOLVE_AT,
+  BURST_CAST_MS,
+  BURST_RADIUS,
+  BURST_ST_OFFSET,
+  BURST_TELEGRAPH_COLOR,
+  EXDEATH_MARKER_RADIUS,
+  EXDEATH_MARKER_COLOR,
+  EXDEATH_TARGET_RING_RADIUS,
+  EXDEATH_TARGET_RING_COLOR,
+  FOLLOWUP_BURST_CAST_START_AT,
+  FOLLOWUP_BURST_FIRST_RESOLVE_AT,
+  FOLLOWUP_BURST_SECOND_RESOLVE_AT,
+  FOLLOWUP_BURST_CAST_MS,
+  FOLLOWUP_BURST_RADIUS,
+  EXDEATH_REPOSITION_START_AT,
+  EXDEATH_REPOSITION_END_AT,
+  EXDEATH_REPOSITION_INTERVAL_MS,
+  CHAOS_EXPLOSION_CAST_START_AT,
+  CHAOS_EXPLOSION_FIRST_RESOLVE_AT,
+  CHAOS_EXPLOSION_SECOND_RESOLVE_AT,
+  CHAOS_EXPLOSION_CAST_MS,
+  CHAOS_EXPLOSION_FAN_ANGLE,
+  CHAOS_EXPLOSION_FAN_RADIUS,
+  CHAOS_MARKER_SPAWN_AT,
+  CHAOS_REPOSITION_START_AT,
+  CHAOS_REPOSITION_END_AT,
+  CHAOS_REPOSITION_INTERVAL_MS,
+  CHAOS_MARKER_RADIUS,
+  CHAOS_MARKER_ST_OFFSET,
+  CHAOS_MARKER_TARGET_RING_RADIUS,
+  CHAOS_MARKER_TARGET_RING_COLOR,
+  VACUUM_WAVE_CAST_START_AT,
+  VACUUM_WAVE_RESOLVE_AT,
+  VACUUM_WAVE_CAST_MS,
+  VACUUM_WAVE_MT_OFFSET,
+  SUPER_JUMP_LOCK_AT,
+  SUPER_JUMP_RESOLVE_AT,
+  SUPER_JUMP_RADIUS,
+  CHARGE_MARKER_SPAWN_AT,
+  CHARGE_MARKER_OUTSIDE_AT,
+  CHARGE_MARKER_ROTATION_INTERVAL_MS,
+  CHARGE_MARKER_ROTATION_COUNT,
+  CHARGE_MARKER_DESPAWN_AT,
+  CHARGE_INITIAL_DISTANCE,
+  CHARGE_OUTSIDE_DISTANCE,
+  CHARGE_MARKER_RADIUS,
+  CHARGE_MARKER_COLOR,
+  MAHJONG_ASSIGN_AT,
+  MAHJONG_MARKERS_RESOLVE_AT,
+  MAHJONG_FIRST_RESOLVE_AT,
+  MAHJONG_LAST_RESOLVE_AT,
+  MAHJONG_RECTANGLE_INTERVAL_MS,
+  MAHJONG_RECTANGLE_LENGTH,
+  MAHJONG_RECTANGLE_WIDTH,
+  MAHJONG_RECTANGLE_VISUAL_MS,
+  MAHJONG_MIN_DISTANCE,
+  MAHJONG_ODD_MARKER_COLOR,
+  MAHJONG_EVEN_MARKER_COLOR,
   COMPLETE_AT,
   ELEMENT_CORNERS,
+  calculateBurstCenter,
+  calculateChaosCenter,
+  calculateVacuumWaveCenter,
+  createChargeOutsideCenters,
   createElementBlocks,
   getKnockbackDistance,
+  isActorInsideRectangle,
 };

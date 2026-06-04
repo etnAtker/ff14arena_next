@@ -6,7 +6,7 @@ export type EncounterOutcome = 'success' | 'failure';
 export type SimulationInputType = 'move' | 'face' | 'use-knockback-immune' | 'use-sprint';
 export type StatusId = string;
 export type ActorMarkerShape = 'stackArrows' | 'circleDot' | 'fanSector';
-export type FieldMarkerShape = 'enemy' | 'square' | 'triangle' | 'diamond';
+export type FieldMarkerShape = 'enemy' | 'square' | 'triangle' | 'diamond' | 'circle';
 export type MechanicKind =
   | 'circle'
   | 'donut'
@@ -16,6 +16,7 @@ export type MechanicKind =
   | 'tether'
   | 'actorMarker'
   | 'fanTelegraph'
+  | 'rectangleTelegraph'
   | 'circleTelegraph'
   | 'fieldMarker';
 
@@ -179,6 +180,7 @@ export interface ActorMarkerMechanicSnapshot {
   sourceId: string;
   targetId: string;
   markerShape: ActorMarkerShape;
+  color?: string;
   resolveAt: number;
 }
 
@@ -194,6 +196,19 @@ export interface FanTelegraphMechanicSnapshot {
   resolveAt: number;
 }
 
+export interface RectangleTelegraphMechanicSnapshot {
+  id: string;
+  kind: 'rectangleTelegraph';
+  label: string;
+  sourceId: string;
+  center: Vector2;
+  direction: number;
+  length: number;
+  width: number;
+  color?: string;
+  resolveAt: number;
+}
+
 export interface FieldMarkerMechanicSnapshot {
   id: string;
   kind: 'fieldMarker';
@@ -203,6 +218,8 @@ export interface FieldMarkerMechanicSnapshot {
   shape: FieldMarkerShape;
   radius: number;
   color?: string;
+  targetRingRadius?: number;
+  targetRingColor?: string;
   resolveAt: number;
 }
 
@@ -217,6 +234,7 @@ export type MechanicSnapshot =
   | TetherMechanicSnapshot
   | ActorMarkerMechanicSnapshot
   | FanTelegraphMechanicSnapshot
+  | RectangleTelegraphMechanicSnapshot
   | FieldMarkerMechanicSnapshot;
 
 export interface EncounterResult {

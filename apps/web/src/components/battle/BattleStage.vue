@@ -59,6 +59,7 @@ let stageGraphics: Graphics | null = null;
 let bossLabel: Text | null = null;
 const actorLabels = new Map<string, Text>();
 const markerLabels = new Map<string, Text>();
+const actorMarkerTextLabels = new Map<string, Text>();
 let pendingYawDelta = 0;
 let dragUpdateFrame: number | null = null;
 let pendingZoomSteps = 0;
@@ -249,6 +250,44 @@ function syncMapMarkerLabels(markers: MapMarker[]): void {
   }
 }
 
+function syncActorMarkerTextLabels(snapshot: SimulationSnapshot): void {
+  if (app === null) {
+    return;
+  }
+
+  const actorMarkerMechanics = snapshot.mechanics.filter(
+    (mechanic) => mechanic.kind === 'actorMarker',
+  );
+  const activeActorMarkerIds = new Set(actorMarkerMechanics.map((mechanic) => mechanic.id));
+
+  for (const mechanic of actorMarkerMechanics) {
+    if (actorMarkerTextLabels.has(mechanic.id)) {
+      continue;
+    }
+
+    const label = new Text({
+      text: mechanic.label,
+      style: new TextStyle({
+        fill: mechanic.color ?? '#f8f5ff',
+        fontSize: 16,
+        fontWeight: '900',
+      }),
+    });
+    label.anchor.set(0.5);
+    actorMarkerTextLabels.set(mechanic.id, label);
+    app.stage.addChild(label);
+  }
+
+  for (const [mechanicId, label] of actorMarkerTextLabels) {
+    if (activeActorMarkerIds.has(mechanicId)) {
+      continue;
+    }
+
+    label.destroy();
+    actorMarkerTextLabels.delete(mechanicId);
+  }
+}
+
 function hideLabels(): void {
   if (bossLabel !== null) {
     bossLabel.visible = false;
@@ -259,6 +298,10 @@ function hideLabels(): void {
   }
 
   for (const label of markerLabels.values()) {
+    label.visible = false;
+  }
+
+  for (const label of actorMarkerTextLabels.values()) {
     label.visible = false;
   }
 }
@@ -406,6 +449,7 @@ function drawActorMarker(
   graphics: Graphics,
   position: Vector2,
   markerShape: ActorMarkerShape,
+  colorValue: string | undefined,
   width: number,
   height: number,
   arenaRadius: number,
@@ -416,15 +460,16 @@ function drawActorMarker(
     x: actorPoint.x,
     y: actorPoint.y - 2.4 * scale,
   };
+  const markerColor = colorValue === undefined ? null : parseHexColor(colorValue);
 
   if (markerShape === 'circleDot') {
     graphics.circle(markerCenter.x, markerCenter.y, 0.75 * scale).stroke({
       width: 2,
-      color: 0x7dd3fc,
+      color: markerColor ?? 0x7dd3fc,
       alpha: 0.95,
     });
     graphics.circle(markerCenter.x, markerCenter.y, 0.16 * scale).fill({
-      color: 0xe0f2fe,
+      color: markerColor ?? 0xe0f2fe,
       alpha: 0.95,
     });
     return;
@@ -450,8 +495,8 @@ function drawActorMarker(
       points.push(markerCenter.y + Math.sin(fanAngle) * radius);
     }
 
-    graphics.poly(points).fill({ color: 0xf472b6, alpha: 0.68 });
-    graphics.poly(points).stroke({ width: 1.5, color: 0x831843, alpha: 0.9 });
+    graphics.poly(points).fill({ color: markerColor ?? 0xf472b6, alpha: 0.68 });
+    graphics.poly(points).stroke({ width: 1.5, color: markerColor ?? 0x831843, alpha: 0.9 });
     return;
   }
 
@@ -487,7 +532,7 @@ function drawActorMarker(
       base.y - tangent.y * arrowHalfWidth,
     ];
 
-    graphics.poly(points).fill({ color: 0xf4d35e, alpha: 0.95 });
+    graphics.poly(points).fill({ color: markerColor ?? 0xf4d35e, alpha: 0.95 });
     graphics.poly(points).stroke({ width: 1.5, color: 0x4c2f12, alpha: 0.8 });
   }
 }
@@ -498,6 +543,8 @@ function drawFieldMarker(
   shape: FieldMarkerShape,
   radius: number,
   colorValue: string | undefined,
+  targetRingRadius: number | undefined,
+  targetRingColorValue: string | undefined,
   width: number,
   height: number,
   arenaRadius: number,
@@ -508,6 +555,24 @@ function drawFieldMarker(
   const color = colorValue === undefined ? 0xa78bfa : parseHexColor(colorValue);
   const strokeColor = shape === 'enemy' ? 0x312e81 : 0xffffff;
   const points: number[] = [];
+
+  if (targetRingRadius !== undefined) {
+    graphics.circle(point.x, point.y, targetRingRadius * scale).stroke({
+      width: 2,
+      color: targetRingColorValue === undefined ? 0xef4444 : parseHexColor(targetRingColorValue),
+      alpha: 0.95,
+    });
+  }
+
+  if (shape === 'circle') {
+    graphics.circle(point.x, point.y, markerRadius).fill({ color, alpha: 0.9 });
+    graphics.circle(point.x, point.y, markerRadius).stroke({
+      width: 2,
+      color: strokeColor,
+      alpha: 0.95,
+    });
+    return;
+  }
 
   if (shape === 'square') {
     const halfSize = markerRadius;
@@ -536,6 +601,55 @@ function drawFieldMarker(
 
   graphics.poly(points).fill({ color, alpha: 0.9 });
   graphics.poly(points).stroke({ width: 2, color: strokeColor, alpha: 0.95 });
+}
+
+function drawRectangleTelegraph(
+  graphics: Graphics,
+  center: Vector2,
+  direction: number,
+  length: number,
+  telegraphWidth: number,
+  colorValue: string | undefined,
+  width: number,
+  height: number,
+  arenaRadius: number,
+): void {
+  const forward = {
+    x: Math.cos(direction),
+    y: Math.sin(direction),
+  };
+  const right = {
+    x: -forward.y,
+    y: forward.x,
+  };
+  const halfWidth = telegraphWidth / 2;
+  const end = {
+    x: center.x + forward.x * length,
+    y: center.y + forward.y * length,
+  };
+  const corners = [
+    {
+      x: center.x + right.x * halfWidth,
+      y: center.y + right.y * halfWidth,
+    },
+    {
+      x: end.x + right.x * halfWidth,
+      y: end.y + right.y * halfWidth,
+    },
+    {
+      x: end.x - right.x * halfWidth,
+      y: end.y - right.y * halfWidth,
+    },
+    {
+      x: center.x - right.x * halfWidth,
+      y: center.y - right.y * halfWidth,
+    },
+  ].map((corner) => toStagePoint(corner, width, height, arenaRadius));
+  const color = colorValue === undefined ? 0xa855f7 : parseHexColor(colorValue);
+  const polygon = corners.flatMap((corner) => [corner.x, corner.y]);
+
+  graphics.poly(polygon).fill({ color, alpha: 0.18 });
+  graphics.poly(polygon).stroke({ width: 2, color, alpha: 0.88 });
 }
 
 function drawFanTelegraph(
@@ -612,6 +726,7 @@ function draw(now: number): void {
 
   syncActorLabels(props.snapshot);
   syncMapMarkerLabels(props.snapshot.mapMarkers);
+  syncActorMarkerTextLabels(props.snapshot);
 
   graphics
     .circle(arenaCenter.x, arenaCenter.y, arenaRadius * scale)
@@ -619,11 +734,13 @@ function draw(now: number): void {
   graphics
     .circle(arenaCenter.x, arenaCenter.y, arenaRadius * scale)
     .stroke({ width: 3, color: 0x86d8ca, alpha: 0.92 });
-  graphics.circle(arenaCenter.x, arenaCenter.y, bossTargetRingRadius * scale).stroke({
-    width: 2,
-    color: 0xf0d08b,
-    alpha: 0.9,
-  });
+  if (bossTargetRingRadius > 0) {
+    graphics.circle(arenaCenter.x, arenaCenter.y, bossTargetRingRadius * scale).stroke({
+      width: 2,
+      color: 0xf0d08b,
+      alpha: 0.9,
+    });
+  }
 
   for (const marker of props.snapshot.mapMarkers) {
     drawMapMarker(graphics, marker, width, height, arenaRadius, scale);
@@ -658,11 +775,23 @@ function draw(now: number): void {
           graphics,
           targetPosition,
           mechanic.markerShape,
+          mechanic.color,
           width,
           height,
           arenaRadius,
           scale,
         );
+
+        const label = actorMarkerTextLabels.get(mechanic.id);
+
+        if (label !== undefined) {
+          const actorPoint = toStagePoint(targetPosition, width, height, arenaRadius);
+          label.visible = true;
+          label.text = mechanic.label;
+          label.x = actorPoint.x;
+          label.y = actorPoint.y - 2.4 * scale;
+          label.alpha = 0.98;
+        }
       }
 
       continue;
@@ -684,6 +813,21 @@ function draw(now: number): void {
 
     const point = toStagePoint(mechanic.center, width, height, arenaRadius);
 
+    if (mechanic.kind === 'rectangleTelegraph') {
+      drawRectangleTelegraph(
+        graphics,
+        mechanic.center,
+        mechanic.direction,
+        mechanic.length,
+        mechanic.width,
+        mechanic.color,
+        width,
+        height,
+        arenaRadius,
+      );
+      continue;
+    }
+
     if (mechanic.kind === 'fieldMarker') {
       drawFieldMarker(
         graphics,
@@ -691,6 +835,8 @@ function draw(now: number): void {
         mechanic.shape,
         mechanic.radius,
         mechanic.color,
+        mechanic.targetRingRadius,
+        mechanic.targetRingColor,
         width,
         height,
         arenaRadius,
@@ -993,6 +1139,7 @@ onBeforeUnmount(() => {
   renderActors.clear();
   actorLabels.clear();
   markerLabels.clear();
+  actorMarkerTextLabels.clear();
   stageGraphics = null;
   bossLabel = null;
 });

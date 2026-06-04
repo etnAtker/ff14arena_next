@@ -135,6 +135,7 @@ export interface BattleScriptContext {
       label: string;
       target: BaseActorSnapshot;
       markerShape?: ActorMarkerShape;
+      color?: string;
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;
@@ -147,12 +148,24 @@ export interface BattleScriptContext {
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;
+    rectangleTelegraph(options: {
+      label: string;
+      center: Vector2;
+      direction: number;
+      length: number;
+      width: number;
+      color?: string;
+      resolveAfterMs?: number;
+      sourceId?: string;
+    }): MechanicSnapshot;
     fieldMarker(options: {
       label: string;
       center: Vector2;
       shape: FieldMarkerShape;
       radius: number;
       color?: string;
+      targetRingRadius?: number;
+      targetRingColor?: string;
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;

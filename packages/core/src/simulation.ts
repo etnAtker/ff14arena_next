@@ -430,6 +430,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       case 'tether':
       case 'actorMarker':
       case 'fanTelegraph':
+      case 'rectangleTelegraph':
       case 'fieldMarker':
         break;
     }
@@ -1030,6 +1031,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             sourceId: options.sourceId ?? currentState.boss.id,
             targetId: options.target.id,
             markerShape: options.markerShape ?? 'stackArrows',
+            ...(options.color === undefined ? {} : { color: options.color }),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
@@ -1047,6 +1049,21 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
+        rectangleTelegraph(options) {
+          const currentState = assertState(state);
+          return spawnMechanic({
+            id: nextMechanicId(),
+            kind: 'rectangleTelegraph',
+            label: options.label,
+            sourceId: options.sourceId ?? currentState.boss.id,
+            center: cloneVector(options.center),
+            direction: options.direction,
+            length: options.length,
+            width: options.width,
+            ...(options.color === undefined ? {} : { color: options.color }),
+            resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
+          });
+        },
         fieldMarker(options) {
           const currentState = assertState(state);
           return spawnMechanic({
@@ -1058,6 +1075,12 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             shape: options.shape,
             radius: options.radius,
             ...(options.color === undefined ? {} : { color: options.color }),
+            ...(options.targetRingRadius === undefined
+              ? {}
+              : { targetRingRadius: options.targetRingRadius }),
+            ...(options.targetRingColor === undefined
+              ? {}
+              : { targetRingColor: options.targetRingColor }),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },

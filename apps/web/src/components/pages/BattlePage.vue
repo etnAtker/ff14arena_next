@@ -92,11 +92,6 @@ const renderClockBase = ref({
   snapshotTimeMs: 0,
   clientNowMs: 0,
 });
-const castAnimationBase = ref<{
-  castKey: string;
-  initialElapsedMs: number;
-  totalDurationMs: number;
-} | null>(null);
 const partyListOrder = ref<PartySlot[]>(loadPartyListOrder());
 const localFailedStatusIconUrls = ref(new Set<string>());
 const pendingSlotAction = ref<{
@@ -136,15 +131,21 @@ const currentActorStatuses = computed(() =>
 );
 
 const castFillStyle = computed(() => {
-  const base = castAnimationBase.value;
+  const currentCastBar = castBar.value;
 
-  if (base === null) {
+  if (currentCastBar === null) {
     return {};
   }
 
+  const elapsedMs = Math.min(
+    Math.max(renderSimulationTimeMs.value - currentCastBar.startedAt, 0),
+    currentCastBar.totalDurationMs,
+  );
+  const progress =
+    currentCastBar.totalDurationMs <= 0 ? 1 : elapsedMs / currentCastBar.totalDurationMs;
+
   return {
-    animationDuration: `${base.totalDurationMs}ms`,
-    animationDelay: `${-base.initialElapsedMs}ms`,
+    transform: `scaleX(${progress})`,
   };
 });
 
@@ -526,31 +527,6 @@ watch(
     renderClockBase.value = {
       snapshotTimeMs: timeMs,
       clientNowMs: performance.now(),
-    };
-  },
-  { immediate: true },
-);
-
-watch(
-  () =>
-    castBar.value === null
-      ? null
-      : `${castBar.value.actionId}:${castBar.value.startedAt}:${castBar.value.totalDurationMs}`,
-  (castKey) => {
-    if (castKey === null || castBar.value === null || props.snapshot === null) {
-      castAnimationBase.value = null;
-      return;
-    }
-
-    const elapsedMs = Math.min(
-      Math.max(props.snapshot.timeMs - castBar.value.startedAt, 0),
-      castBar.value.totalDurationMs,
-    );
-
-    castAnimationBase.value = {
-      castKey,
-      initialElapsedMs: elapsedMs,
-      totalDurationMs: castBar.value.totalDurationMs,
     };
   },
   { immediate: true },
@@ -1419,19 +1395,7 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: linear-gradient(90deg, #f0d08b 0%, #d67652 100%);
   transform-origin: left center;
-  animation-name: cast-progress;
-  animation-timing-function: linear;
-  animation-fill-mode: both;
-}
-
-@keyframes cast-progress {
-  from {
-    transform: scaleX(0);
-  }
-
-  to {
-    transform: scaleX(1);
-  }
+  transform: scaleX(0);
 }
 
 .empty-stage {
