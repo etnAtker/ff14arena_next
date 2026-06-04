@@ -23,6 +23,10 @@ const ZOOM_EMIT_EPSILON = 0.001;
 const MAP_MARKER_FILL_ALPHA = 0.42;
 const MAP_MARKER_STROKE_ALPHA = 0.46;
 const MAP_MARKER_LABEL_ALPHA = 0.68;
+const ACTOR_RADIUS = 12;
+const CONTROLLED_ACTOR_RADIUS = 13;
+const ACTOR_FACING_ARROW_LENGTH = ACTOR_RADIUS / 2;
+const ACTOR_FACING_ARROW_HALF_WIDTH = 4.5;
 
 const props = defineProps<{
   snapshot: SimulationSnapshot | null;
@@ -685,6 +689,45 @@ function drawFanTelegraph(
   graphics.poly(polygon).stroke({ width: 2, color: 0xffd1ca, alpha: 0.85 });
 }
 
+function drawActorFacingArrow(
+  graphics: Graphics,
+  point: Vector2,
+  facing: number,
+  color: number,
+  alpha: number,
+): void {
+  const cameraYaw = props.operationMode === 'fixed' ? 0 : props.cameraYaw;
+  const screenFacing = facing - cameraYaw;
+  const forward = {
+    x: Math.cos(screenFacing),
+    y: Math.sin(screenFacing),
+  };
+  const tangent = {
+    x: -forward.y,
+    y: forward.x,
+  };
+  const baseCenter = {
+    x: point.x + forward.x * ACTOR_RADIUS,
+    y: point.y + forward.y * ACTOR_RADIUS,
+  };
+  const tip = {
+    x: point.x + forward.x * (ACTOR_RADIUS + ACTOR_FACING_ARROW_LENGTH),
+    y: point.y + forward.y * (ACTOR_RADIUS + ACTOR_FACING_ARROW_LENGTH),
+  };
+  const points = [
+    tip.x,
+    tip.y,
+    baseCenter.x + tangent.x * ACTOR_FACING_ARROW_HALF_WIDTH,
+    baseCenter.y + tangent.y * ACTOR_FACING_ARROW_HALF_WIDTH,
+    baseCenter.x - tangent.x * ACTOR_FACING_ARROW_HALF_WIDTH,
+    baseCenter.y - tangent.y * ACTOR_FACING_ARROW_HALF_WIDTH,
+  ];
+
+  graphics.poly(points).stroke({ width: 4, color: 0x111827, alpha: alpha * 0.78 });
+  graphics.poly(points).fill({ color, alpha });
+  graphics.poly(points).stroke({ width: 1.2, color: 0xffffff, alpha: alpha * 0.88 });
+}
+
 function draw(now: number): void {
   if (stageRootRef.value === null || app === null || !isAppReady) {
     return;
@@ -944,15 +987,6 @@ function draw(now: number): void {
     const renderPosition = renderState?.position ?? actor.position;
     const renderFacing = renderState?.facing ?? actor.facing;
     const point = toStagePoint(renderPosition, width, height, arenaRadius);
-    const lineEnd = toStagePoint(
-      {
-        x: renderPosition.x + Math.cos(renderFacing) * 1.3,
-        y: renderPosition.y + Math.sin(renderFacing) * 1.3,
-      },
-      width,
-      height,
-      arenaRadius,
-    );
     const color =
       actor.slot === null
         ? '#ffffff'
@@ -960,22 +994,22 @@ function draw(now: number): void {
     const numericColor = Number.parseInt(color.replace('#', ''), 16);
     const alpha = actor.alive ? 1 : 0.35;
 
-    graphics.circle(point.x, point.y, actor.id === props.controlledActorId ? 13 : 12).fill({
-      color: numericColor,
-      alpha,
-    });
+    graphics
+      .circle(
+        point.x,
+        point.y,
+        actor.id === props.controlledActorId ? CONTROLLED_ACTOR_RADIUS : ACTOR_RADIUS,
+      )
+      .fill({
+        color: numericColor,
+        alpha,
+      });
     graphics.circle(point.x, point.y, actor.id === props.controlledActorId ? 16 : 14).stroke({
       width: actor.id === props.controlledActorId ? 3 : 2,
       color: 0xffffff,
       alpha: actor.id === props.controlledActorId ? 0.82 : 0.24,
     });
-    graphics.moveTo(point.x, point.y);
-    graphics.lineTo(lineEnd.x, lineEnd.y);
-    graphics.stroke({
-      width: actor.id === props.controlledActorId ? 3 : 2,
-      color: numericColor,
-      alpha,
-    });
+    drawActorFacingArrow(graphics, point, renderFacing, numericColor, alpha);
 
     const label = actorLabels.get(actor.id);
 
