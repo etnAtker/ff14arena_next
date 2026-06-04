@@ -911,12 +911,8 @@ function resolveWaterElement(ctx: BattleScriptContext, count: number): void {
 }
 
 function resolveWindShare(ctx: BattleScriptContext, count: number): void {
-  const waterElement = getElementBlock(ctx, 'water');
-  const targets = selectNearestDistinctActors(
-    ctx.select.allPlayers(),
-    waterElement.position,
-    count,
-  );
+  const windElement = getElementBlock(ctx, 'wind');
+  const targets = selectNearestDistinctActors(ctx.select.allPlayers(), windElement.position, count);
 
   for (const target of targets) {
     ctx.spawn.circleTelegraph({
