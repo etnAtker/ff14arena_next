@@ -145,6 +145,7 @@ export interface BattleScriptContext {
       label: string;
       target: BaseActorSnapshot;
       markerShape?: ActorMarkerShape;
+      radius?: number;
       color?: string;
       resolveAfterMs?: number;
       sourceId?: string;

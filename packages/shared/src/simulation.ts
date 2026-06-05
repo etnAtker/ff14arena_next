@@ -5,7 +5,12 @@ export type DamageType = 'raidwide' | 'avoidable' | 'punishment';
 export type EncounterOutcome = 'success' | 'failure';
 export type SimulationInputType = 'move' | 'face' | 'use-knockback-immune' | 'use-sprint';
 export type StatusId = string;
-export type ActorMarkerShape = 'stackArrows' | 'circleDot' | 'numberCircle' | 'fanSector';
+export type ActorMarkerShape =
+  | 'stackArrows'
+  | 'circleDot'
+  | 'numberCircle'
+  | 'fanSector'
+  | 'stackCircle';
 export type FieldMarkerShape = 'enemy' | 'square' | 'triangle' | 'diamond' | 'circle';
 export type MechanicKind =
   | 'circle'
@@ -183,6 +188,7 @@ export interface ActorMarkerMechanicSnapshot {
   sourceId: string;
   targetId: string;
   markerShape: ActorMarkerShape;
+  radius?: number;
   color?: string;
   resolveAt: number;
 }

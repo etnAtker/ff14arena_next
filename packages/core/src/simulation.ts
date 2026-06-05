@@ -1102,6 +1102,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             sourceId: options.sourceId ?? currentState.boss.id,
             targetId: options.target.id,
             markerShape: options.markerShape ?? 'stackArrows',
+            ...(options.radius === undefined ? {} : { radius: options.radius }),
             ...(options.color === undefined ? {} : { color: options.color }),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });

@@ -140,12 +140,29 @@ const TRUE_SELF_LATE_CAST_MS = 5_000;
 const TRUE_SELF_LENGTH = 50;
 const TRUE_SELF_WIDTH = 10;
 
+const FIRST_SLAP_SPAWN_AT = 12_800;
+const FIRST_SLAP_DESPAWN_AT = 42_200;
+const FIRST_BLACK_HOLE_CAST_START_AT = 19_500;
+const FIRST_THUNDER_CAST_START_AT = 34_900;
+const FIRST_CURSE_CAST_START_AT = 42_900;
+const SECOND_SLAP_SPAWN_AT = 43_200;
+const SECOND_SLAP_DESPAWN_AT = 72_600;
+const FIRST_PERSISTENT_BLACK_HOLE_SPAWN_AT = 52_300;
+const SECOND_CURSE_CAST_START_AT = 73_600;
+const FIRST_TRUE_SELF_SPAWN_AT = 73_600;
+const FIRST_TRUE_SELF_DESPAWN_AT = 109_100;
+const SECOND_THUNDER_CAST_START_AT = 79_600;
+const SECOND_PERSISTENT_BLACK_HOLE_SPAWN_AT = 91_100;
+const THIRD_SLAP_SPAWN_AT = 110_100;
+const THIRD_SLAP_DESPAWN_AT = 127_100;
+const CHAOS_EXPLOSION_CAST_START_AT = 114_100;
 const LATE_BLACK_HOLE_SPAWN_AT = 121_000;
 const LATE_BLACK_HOLE_FIRST_SHOT_AT = 128_100;
 const LATE_BLACK_HOLE_SECOND_SHOT_AT = 135_100;
 const LATE_TRUE_SELF_SPAWN_AT = 128_100;
 const LATE_TRUE_SELF_CAST_START_AT = 130_100;
 const LATE_TRUE_SELF_RESOLVE_AT = 135_100;
+const LATE_TRUE_SELF_DESPAWN_AT = 138_100;
 const TERMINAL_ARROW_AT = 139_100;
 const TERMINAL_ARROW_RADIUS = 1.2;
 const TERMINAL_ARROW_COLOR = '#22d3ee';
@@ -156,6 +173,7 @@ const TERMINAL_SHARE_ASSIGN_ATS = [143_100, 149_100] as const;
 const TERMINAL_SHARE_DELAY_MS = 6_000;
 const TERMINAL_SHARE_RADIUS = 4;
 const TERMINAL_SHARE_MIN_PLAYERS = 4;
+const TERMINAL_SHARE_MARKER_COLOR = '#facc15';
 const TERMINAL_TOWER_ATS = [149_100, 150_100, 152_100, 153_100] as const;
 const TERMINAL_TOWER_SIDES = ['right', 'left', 'right', 'left'] as const;
 const TERMINAL_TOWER_OFFSET = 8;
@@ -254,10 +272,6 @@ const KEFKA_MAP_MARKERS: MapMarker[] = [
     size: 2.2,
   },
 ];
-
-function t(offsetMs: number): number {
-  return ZERO_AT + offsetMs;
-}
 
 function shuffle<T>(values: readonly T[]): T[] {
   const shuffled = [...values];
@@ -477,10 +491,6 @@ function isSupportActor(actor: BaseActorSnapshot): boolean {
   );
 }
 
-function getTerminalShareRoleGroup(actor: BaseActorSnapshot): TerminalShareRoleGroup {
-  return isSupportActor(actor) ? 'support' : 'dps';
-}
-
 function getTerminalShareCandidates(
   actors: BaseActorSnapshot[],
   roleGroup: TerminalShareRoleGroup,
@@ -490,12 +500,6 @@ function getTerminalShareCandidates(
       ? isSupportActor(actor)
       : actor.slot !== null && (DPS_SLOTS as readonly PartySlot[]).includes(actor.slot),
   );
-}
-
-function getOppositeTerminalShareRoleGroup(
-  roleGroup: TerminalShareRoleGroup,
-): TerminalShareRoleGroup {
-  return roleGroup === 'support' ? 'dps' : 'support';
 }
 
 function grantTerminalInjuryUntil(
@@ -1207,7 +1211,7 @@ function scheduleBlackHoleShot(
 }
 
 function scheduleFirstBlackHoles(ctx: BattleScriptContext): void {
-  const castStartAt = t(16_500);
+  const castStartAt = FIRST_BLACK_HOLE_CAST_START_AT;
   const spawnAt = castStartAt + 2_700;
 
   ctx.timeline.at(castStartAt, () => {
@@ -1640,7 +1644,7 @@ function spawnTerminalArrow(
   resolveAfterMs: number,
 ): void {
   ctx.spawn.fieldMarker({
-    label: '终盘箭头',
+    label: '凯夫卡',
     center: CENTER,
     shape: 'enemy',
     radius: TERMINAL_ARROW_RADIUS,
@@ -1726,20 +1730,26 @@ function getTerminalShareState(
   return ctx.state.getValue<TerminalShareState>(terminalShareStateKey(index));
 }
 
+function getTerminalShareRoleOrder(ctx: BattleScriptContext): TerminalShareRoleGroup[] {
+  const stateKey = 'kefkaP3Second:terminalShareRoleOrder';
+  const existingOrder = ctx.state.getValue<TerminalShareRoleGroup[]>(stateKey);
+
+  if (existingOrder !== undefined) {
+    return existingOrder;
+  }
+
+  const order = shuffle<TerminalShareRoleGroup>(['support', 'dps']);
+  ctx.state.setValue(stateKey, order);
+
+  return order;
+}
+
 function selectTerminalShareTarget(
   ctx: BattleScriptContext,
-  index: number,
+  roleGroup: TerminalShareRoleGroup,
 ): BaseActorSnapshot | null {
   const activeActors = ctx.select.allPlayers().filter((actor) => actor.mechanicActive);
-  const firstState = getTerminalShareState(ctx, 0);
-  const roleGroup =
-    index === 0
-      ? undefined
-      : firstState === undefined
-        ? undefined
-        : getOppositeTerminalShareRoleGroup(firstState.roleGroup);
-  const candidates =
-    roleGroup === undefined ? activeActors : getTerminalShareCandidates(activeActors, roleGroup);
+  const candidates = getTerminalShareCandidates(activeActors, roleGroup);
 
   return shuffle(candidates.length === 0 ? activeActors : candidates)[0] ?? null;
 }
@@ -1760,7 +1770,13 @@ function createTerminalShareState(
     return existingState;
   }
 
-  const target = selectTerminalShareTarget(ctx, index);
+  const roleGroup = getTerminalShareRoleOrder(ctx)[index];
+
+  if (roleGroup === undefined) {
+    return null;
+  }
+
+  const target = selectTerminalShareTarget(ctx, roleGroup);
 
   if (target === null) {
     return null;
@@ -1771,7 +1787,7 @@ function createTerminalShareState(
     assignAt,
     resolveAt: assignAt + TERMINAL_SHARE_DELAY_MS,
     targetId: target.id,
-    roleGroup: getTerminalShareRoleGroup(target),
+    roleGroup,
   };
 
   ctx.state.setValue(terminalShareStateKey(index), state);
@@ -1790,8 +1806,9 @@ function spawnTerminalShareMarker(ctx: BattleScriptContext, state: TerminalShare
   ctx.spawn.actorMarker({
     label: '终盘分摊',
     target,
-    markerShape: 'stackArrows',
-    color: '#38bdf8',
+    markerShape: 'stackCircle',
+    radius: TERMINAL_SHARE_RADIUS,
+    color: TERMINAL_SHARE_MARKER_COLOR,
     resolveAfterMs: remainingMs,
   });
 }
@@ -1902,6 +1919,30 @@ function resolveTerminalShareReturn(ctx: BattleScriptContext): void {
   }
 }
 
+function spawnTerminalShareReturnTelegraphs(ctx: BattleScriptContext): void {
+  const remainingMs = TERMINAL_SHARE_RETURN_AT - ctx.state.getBattleTime();
+
+  if (remainingMs <= 0) {
+    return;
+  }
+
+  for (let index = 0; index < TERMINAL_SHARE_ASSIGN_ATS.length; index += 1) {
+    const state = getTerminalShareState(ctx, index);
+
+    if (state?.center === undefined) {
+      continue;
+    }
+
+    ctx.spawn.circleTelegraph({
+      label: '终盘石笋范围',
+      center: state.center,
+      radius: TERMINAL_SHARE_RADIUS,
+      color: TERMINAL_SHARE_MARKER_COLOR,
+      resolveAfterMs: remainingMs,
+    });
+  }
+}
+
 function getTerminalTowerCenter(direction: number, side: 'left' | 'right'): Vector2 {
   return createPointOnDirection(
     direction + (side === 'right' ? Math.PI / 2 : -Math.PI / 2),
@@ -1972,6 +2013,10 @@ function scheduleTerminalMechanics(ctx: BattleScriptContext): void {
         applySecondTrickDeath(ctx, actor, '终盘移动检查');
       }
     }
+  });
+
+  ctx.timeline.at(TERMINAL_SHARE_RETURN_AT - TELEGRAPH_MS, () => {
+    spawnTerminalShareReturnTelegraphs(ctx);
   });
 
   ctx.timeline.at(TERMINAL_SHARE_RETURN_AT, () => {
@@ -2049,7 +2094,7 @@ function initializeShotTelegraphIfActive(
 }
 
 function initializeFirstBlackHolesAt(ctx: BattleScriptContext, startTimeMs: number): void {
-  const castStartAt = t(16_500);
+  const castStartAt = FIRST_BLACK_HOLE_CAST_START_AT;
   const spawnAt = castStartAt + 2_700;
 
   restoreCastIfActive(ctx, startTimeMs, castStartAt, 2_700, 'kefka_p3_second_black_hole_1', '黑洞');
@@ -2281,7 +2326,7 @@ function initializeKefkaAppearancesAt(ctx: BattleScriptContext, startTimeMs: num
 }
 
 function initializeChaosExplosionAt(ctx: BattleScriptContext, startTimeMs: number): void {
-  const castStartAt = t(111_100);
+  const castStartAt = CHAOS_EXPLOSION_CAST_START_AT;
 
   if (startTimeMs < castStartAt) {
     return;
@@ -2414,6 +2459,12 @@ function initializeTerminalMechanicsAt(ctx: BattleScriptContext, startTimeMs: nu
     initializeTerminalShareAt(ctx, startTimeMs, index);
   }
 
+  if (
+    isTimeInWindow(startTimeMs, TERMINAL_SHARE_RETURN_AT - TELEGRAPH_MS, TERMINAL_SHARE_RETURN_AT)
+  ) {
+    spawnTerminalShareReturnTelegraphs(ctx);
+  }
+
   initializeTerminalTowerInjuryAt(ctx, startTimeMs);
 }
 
@@ -2433,15 +2484,25 @@ function initializeKefkaP3SecondAt(ctx: BattleScriptContext, startTimeMs: number
 
   initializeWanderingBossesAt(ctx, startTimeMs);
   initializeFirstBlackHolesAt(ctx, startTimeMs);
-  initializePersistentBlackHolesAt(ctx, startTimeMs, t(49_300), 'persistent:1');
-  initializePersistentBlackHolesAt(ctx, startTimeMs, t(88_100), 'persistent:2');
+  initializePersistentBlackHolesAt(
+    ctx,
+    startTimeMs,
+    FIRST_PERSISTENT_BLACK_HOLE_SPAWN_AT,
+    'persistent:1',
+  );
+  initializePersistentBlackHolesAt(
+    ctx,
+    startTimeMs,
+    SECOND_PERSISTENT_BLACK_HOLE_SPAWN_AT,
+    'persistent:2',
+  );
   initializeLateSplitBlackHolesAt(ctx, startTimeMs);
   initializeKefkaAppearancesAt(ctx, startTimeMs);
 
   restoreCastIfActive(
     ctx,
     startTimeMs,
-    t(31_900),
+    FIRST_THUNDER_CAST_START_AT,
     THUNDER_CAST_MS,
     'kefka_p3_second_thunder_1',
     '暴雷',
@@ -2449,7 +2510,7 @@ function initializeKefkaP3SecondAt(ctx: BattleScriptContext, startTimeMs: number
   restoreCastIfActive(
     ctx,
     startTimeMs,
-    t(76_600),
+    SECOND_THUNDER_CAST_START_AT,
     THUNDER_CAST_MS,
     'kefka_p3_second_thunder_2',
     '暴雷',
@@ -2457,7 +2518,7 @@ function initializeKefkaP3SecondAt(ctx: BattleScriptContext, startTimeMs: number
   restoreCastIfActive(
     ctx,
     startTimeMs,
-    t(39_900),
+    FIRST_CURSE_CAST_START_AT,
     CURSE_CAST_MS,
     'kefka_p3_second_curse_1',
     '诅咒敕令',
@@ -2465,7 +2526,7 @@ function initializeKefkaP3SecondAt(ctx: BattleScriptContext, startTimeMs: number
   restoreCastIfActive(
     ctx,
     startTimeMs,
-    t(70_600),
+    SECOND_CURSE_CAST_START_AT,
     CURSE_CAST_MS,
     'kefka_p3_second_curse_2',
     '诅咒敕令',
@@ -2506,23 +2567,23 @@ function buildKefkaP3SecondScript(ctx: BattleScriptContext): void {
     assignInitialStatuses(ctx);
   });
 
-  scheduleSlap(ctx, t(9_800), SLAP_SPAWN_TO_CAST_MS, t(39_200));
+  scheduleSlap(ctx, FIRST_SLAP_SPAWN_AT, SLAP_SPAWN_TO_CAST_MS, FIRST_SLAP_DESPAWN_AT);
   scheduleFirstBlackHoles(ctx);
-  scheduleThunder(ctx, t(31_900), 'kefka_p3_second_thunder_1');
-  scheduleCurse(ctx, t(39_900), 'kefka_p3_second_curse_1');
-  scheduleSlap(ctx, t(40_200), SLAP_SPAWN_TO_CAST_MS, t(69_600));
-  schedulePersistentBlackHoles(ctx, t(49_300), 'persistent:1');
-  scheduleCurse(ctx, t(70_600), 'kefka_p3_second_curse_2');
-  scheduleTrueSelf(ctx, t(70_600), t(106_100));
-  scheduleThunder(ctx, t(76_600), 'kefka_p3_second_thunder_2');
-  schedulePersistentBlackHoles(ctx, t(88_100), 'persistent:2');
-  scheduleSlap(ctx, t(107_100), 6_000, t(127_100));
-  scheduleChaosExplosion(ctx, t(111_100), 'kefka_p3_second_chaos_explosion');
+  scheduleThunder(ctx, FIRST_THUNDER_CAST_START_AT, 'kefka_p3_second_thunder_1');
+  scheduleCurse(ctx, FIRST_CURSE_CAST_START_AT, 'kefka_p3_second_curse_1');
+  scheduleSlap(ctx, SECOND_SLAP_SPAWN_AT, SLAP_SPAWN_TO_CAST_MS, SECOND_SLAP_DESPAWN_AT);
+  schedulePersistentBlackHoles(ctx, FIRST_PERSISTENT_BLACK_HOLE_SPAWN_AT, 'persistent:1');
+  scheduleCurse(ctx, SECOND_CURSE_CAST_START_AT, 'kefka_p3_second_curse_2');
+  scheduleTrueSelf(ctx, FIRST_TRUE_SELF_SPAWN_AT, FIRST_TRUE_SELF_DESPAWN_AT);
+  scheduleThunder(ctx, SECOND_THUNDER_CAST_START_AT, 'kefka_p3_second_thunder_2');
+  schedulePersistentBlackHoles(ctx, SECOND_PERSISTENT_BLACK_HOLE_SPAWN_AT, 'persistent:2');
+  scheduleSlap(ctx, THIRD_SLAP_SPAWN_AT, 6_000, THIRD_SLAP_DESPAWN_AT);
+  scheduleChaosExplosion(ctx, CHAOS_EXPLOSION_CAST_START_AT, 'kefka_p3_second_chaos_explosion');
   scheduleLateSplitBlackHoles(ctx);
   scheduleTrueSelf(
     ctx,
     LATE_TRUE_SELF_SPAWN_AT,
-    COMPLETE_AT,
+    LATE_TRUE_SELF_DESPAWN_AT,
     LATE_TRUE_SELF_CAST_START_AT - LATE_TRUE_SELF_SPAWN_AT,
     TRUE_SELF_LATE_CAST_MS,
   );
@@ -2589,6 +2650,7 @@ export const KEFKA_P3_SECOND_TRICK_TESTING = {
   LATE_TRUE_SELF_SPAWN_AT,
   LATE_TRUE_SELF_CAST_START_AT,
   LATE_TRUE_SELF_RESOLVE_AT,
+  LATE_TRUE_SELF_DESPAWN_AT,
   TRUE_SELF_LENGTH,
   TERMINAL_ARROW_AT,
   TERMINAL_CIRCLE_SPAWN_ATS,
@@ -2598,6 +2660,7 @@ export const KEFKA_P3_SECOND_TRICK_TESTING = {
   TERMINAL_SHARE_DELAY_MS,
   TERMINAL_SHARE_RADIUS,
   TERMINAL_SHARE_MIN_PLAYERS,
+  TERMINAL_SHARE_MARKER_COLOR,
   TERMINAL_TOWER_ATS,
   TERMINAL_TOWER_SIDES,
   TERMINAL_TOWER_OFFSET,

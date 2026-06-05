@@ -2,6 +2,7 @@
 import { Application, Graphics, Text, TextStyle } from 'pixi.js';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import type {
+  ActorMarkerMechanicSnapshot,
   ActorMarkerShape,
   FieldMarkerShape,
   MapMarker,
@@ -261,7 +262,8 @@ function syncActorMarkerTextLabels(snapshot: SimulationSnapshot): void {
   }
 
   const actorMarkerMechanics = snapshot.mechanics.filter(
-    (mechanic) => mechanic.kind === 'actorMarker',
+    (mechanic): mechanic is ActorMarkerMechanicSnapshot =>
+      mechanic.kind === 'actorMarker' && mechanic.markerShape !== 'stackCircle',
   );
   const activeActorMarkerIds = new Set(actorMarkerMechanics.map((mechanic) => mechanic.id));
 
@@ -510,6 +512,7 @@ function drawActorMarker(
   graphics: Graphics,
   position: Vector2,
   markerShape: ActorMarkerShape,
+  radius: number | undefined,
   colorValue: string | undefined,
   width: number,
   height: number,
@@ -517,11 +520,61 @@ function drawActorMarker(
   scale: number,
 ): void {
   const actorPoint = toStagePoint(position, width, height, arenaRadius);
+  const markerColor = colorValue === undefined ? null : parseHexColor(colorValue);
+
+  if (markerShape === 'stackCircle') {
+    const markerRadius = Math.max((radius ?? 4) * scale, 0.5 * scale);
+    const arrowLength = 0.9 * scale;
+    const arrowHalfWidth = 0.32 * scale;
+
+    graphics.circle(actorPoint.x, actorPoint.y, markerRadius).fill({
+      color: markerColor ?? 0xfacc15,
+      alpha: 0.12,
+    });
+    graphics.circle(actorPoint.x, actorPoint.y, markerRadius).stroke({
+      width: 2.5,
+      color: markerColor ?? 0xfacc15,
+      alpha: 0.95,
+    });
+
+    for (let index = 0; index < 4; index += 1) {
+      const angle = -Math.PI / 2 + (Math.PI * 2 * index) / 4;
+      const outward = {
+        x: Math.cos(angle),
+        y: Math.sin(angle),
+      };
+      const tangent = {
+        x: -outward.y,
+        y: outward.x,
+      };
+      const tip = {
+        x: actorPoint.x + outward.x * (markerRadius - arrowLength),
+        y: actorPoint.y + outward.y * (markerRadius - arrowLength),
+      };
+      const base = {
+        x: actorPoint.x + outward.x * (markerRadius + 0.18 * scale),
+        y: actorPoint.y + outward.y * (markerRadius + 0.18 * scale),
+      };
+      const points = [
+        tip.x,
+        tip.y,
+        base.x + tangent.x * arrowHalfWidth,
+        base.y + tangent.y * arrowHalfWidth,
+        base.x - tangent.x * arrowHalfWidth,
+        base.y - tangent.y * arrowHalfWidth,
+      ];
+
+      graphics.poly(points).fill({ color: markerColor ?? 0xfacc15, alpha: 0.95 });
+      graphics.poly(points).stroke({ width: 1.5, color: 0x4c2f12, alpha: 0.8 });
+    }
+
+    return;
+  }
+
   const markerCenter = {
     x: actorPoint.x,
     y: actorPoint.y - 2.4 * scale,
   };
-  const markerColor = colorValue === undefined ? null : parseHexColor(colorValue);
 
   if (markerShape === 'circleDot' || markerShape === 'numberCircle') {
     graphics.circle(markerCenter.x, markerCenter.y, 0.75 * scale).stroke({
@@ -888,6 +941,7 @@ function draw(now: number): void {
           graphics,
           targetPosition,
           mechanic.markerShape,
+          mechanic.radius,
           mechanic.color,
           width,
           height,
