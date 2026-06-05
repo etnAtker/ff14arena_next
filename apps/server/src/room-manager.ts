@@ -13,6 +13,7 @@ import type {
   RoomUpdateOptionsPayload,
   ServerToClientEvents,
   SimResyncRequestPayload,
+  SimulationEvent,
   SimulationSnapshot,
   UseKnockbackImmuneSimulationInput,
   UseSprintSimulationInput,
@@ -41,6 +42,7 @@ const MIN_START_COUNTDOWN_MS = 1_000;
 const MAX_START_COUNTDOWN_MS = 30_000;
 const PENDING_ROOM_TTL_MS = 30_000;
 const QUICK_FAIL_REASON = '房主手动结束本轮模拟';
+const SNAPSHOT_BROADCAST_INTERVAL_TICKS = 20;
 const DEFAULT_ROOM_OPTIONS = {
   deadActorsInteract: true,
 };
@@ -243,6 +245,37 @@ export class RoomManager {
     }, FIXED_TICK_MS);
   }
 
+  private createClientSnapshot(snapshot: SimulationSnapshot): SimulationSnapshot {
+    return {
+      ...snapshot,
+      // scriptState 是服务端 Bot 与战斗脚本的内部状态，不参与客户端展示。
+      scriptState: {},
+    };
+  }
+
+  private emitSimulationEvents(room: RoomRecord, events: SimulationEvent[]): void {
+    if (events.length === 0) {
+      return;
+    }
+
+    this.metrics?.recordSimEvents(room.roomId, events.length);
+
+    const payload = {
+      roomId: room.roomId,
+      syncId: room.syncId,
+      events,
+    };
+    const hasReliableEvent = events.some((event) => event.type !== 'actorMoved');
+    const target = this.io.to(room.roomId);
+
+    if (hasReliableEvent) {
+      target.emit('sim:events', payload);
+      return;
+    }
+
+    target.volatile.emit('sim:events', payload);
+  }
+
   private tickRoom(room: RoomRecord): void {
     if (room.simulation === null) {
       return;
@@ -258,40 +291,38 @@ export class RoomManager {
     room.pendingControlByActorId.clear();
 
     if (room.phase === 'running' && room.battle !== null) {
-      const preTickSnapshot = room.simulation.getSnapshot();
       const botController = getBattleBotController(room.battle.id);
+      const botSlots = PARTY_SLOT_ORDER.filter((slot) => room.slots[slot].type === 'bot');
 
-      for (const slot of PARTY_SLOT_ORDER) {
-        const occupant = room.slots[slot];
+      if (botController !== undefined && botSlots.length > 0) {
+        const preTickSnapshot = room.simulation.getSnapshot();
 
-        if (occupant.type !== 'bot') {
-          continue;
+        for (const slot of botSlots) {
+          const occupant = room.slots[slot];
+
+          const actor = preTickSnapshot.actors.find(
+            (candidate) => candidate.id === occupant.actorId,
+          );
+
+          if (actor === undefined || !actor.mechanicActive) {
+            continue;
+          }
+
+          const botControllerStartedAt = performance.now();
+          const control = botController({
+            snapshot: preTickSnapshot,
+            slot,
+            actor,
+          });
+          botControllerDurationMs += performance.now() - botControllerStartedAt;
+          room.simulation.submitActorControlFrame({
+            actorId: actor.id,
+            issuedAt: Date.now(),
+            ...(control.pose === undefined ? {} : { pose: control.pose }),
+            ...(control.commands === undefined ? {} : { commands: control.commands }),
+          });
+          botControlFrames += 1;
         }
-
-        const actor = preTickSnapshot.actors.find((candidate) => candidate.id === occupant.actorId);
-
-        if (actor === undefined || !actor.mechanicActive) {
-          continue;
-        }
-
-        if (botController === undefined) {
-          continue;
-        }
-
-        const botControllerStartedAt = performance.now();
-        const control = botController({
-          snapshot: preTickSnapshot,
-          slot,
-          actor,
-        });
-        botControllerDurationMs += performance.now() - botControllerStartedAt;
-        room.simulation.submitActorControlFrame({
-          actorId: actor.id,
-          issuedAt: Date.now(),
-          ...(control.pose === undefined ? {} : { pose: control.pose }),
-          ...(control.commands === undefined ? {} : { commands: control.commands }),
-        });
-        botControlFrames += 1;
       }
     }
 
@@ -301,16 +332,9 @@ export class RoomManager {
     room.snapshotBroadcastCounter += 1;
     const events = room.simulation.drainEvents();
 
-    if (events.length > 0) {
-      this.metrics?.recordSimEvents(room.roomId, events.length);
-      this.io.to(room.roomId).emit('sim:events', {
-        roomId: room.roomId,
-        syncId: room.syncId,
-        events,
-      });
-    }
+    this.emitSimulationEvents(room, events);
 
-    if (room.snapshotBroadcastCounter >= 10) {
+    if (room.snapshotBroadcastCounter >= SNAPSHOT_BROADCAST_INTERVAL_TICKS) {
       room.snapshotBroadcastCounter = 0;
       this.emitSnapshot(room, {
         reason: 'tick',
@@ -761,7 +785,14 @@ export class RoomManager {
       return;
     }
 
-    this.startCountdown(room, countdownMs);
+    const startTimeMs = this.normalizeStartTimeMs(room.battle, payload.startTimeMs);
+
+    if (startTimeMs === null) {
+      this.emitError(socket, 'invalid_start_time', '开始时间不在当前战斗允许范围内');
+      return;
+    }
+
+    this.startCountdown(room, countdownMs, startTimeMs);
   }
 
   updateOptions(socket: TypedSocket, payload: RoomUpdateOptionsPayload): void {
@@ -831,14 +862,7 @@ export class RoomManager {
     room.simulation.failImmediately(QUICK_FAIL_REASON);
     const events = room.simulation.drainEvents();
 
-    if (events.length > 0) {
-      this.metrics?.recordSimEvents(room.roomId, events.length);
-      this.io.to(room.roomId).emit('sim:events', {
-        roomId: room.roomId,
-        syncId: room.syncId,
-        events,
-      });
-    }
+    this.emitSimulationEvents(room, events);
 
     const snapshot = room.simulation.getSnapshot();
 
@@ -904,41 +928,27 @@ export class RoomManager {
     const room = this.rooms.get(inputFrame.roomId);
 
     if (room === undefined) {
-      this.emitError(socket, 'not_in_room', '房间不存在');
-      return;
-    }
-
-    const player = this.getPlayerBySocket(room, socket.id);
-
-    if (player === undefined || player.actorId !== inputFrame.actorId) {
-      this.emitError(socket, 'slot_not_owned', '当前连接不控制该角色');
-      return;
-    }
-
-    if (room.simulation === null) {
-      this.emitError(socket, 'room_not_running', '当前房间当前不可处理输入');
-      return;
-    }
-
-    if (inputFrame.syncId !== room.syncId) {
-      console.warn('[sim-input-diagnostic:drop-sync-mismatch]', {
-        roomId: room.roomId,
-        phase: room.phase,
-        currentSyncId: room.syncId,
-        inputSyncId: inputFrame.syncId,
-        socketId: socket.id,
-        actorId: inputFrame.actorId,
-        moving:
-          Math.hypot(inputFrame.payload.moveDirection.x, inputFrame.payload.moveDirection.y) > 0,
-        position: inputFrame.payload.position,
-        moveDirection: inputFrame.payload.moveDirection,
-      });
-      this.metrics?.recordInputFrame(room.roomId);
-      this.metrics?.recordDroppedInputFrame(room.roomId);
       return;
     }
 
     this.metrics?.recordInputFrame(room.roomId);
+    const player = this.getPlayerBySocket(room, socket.id);
+
+    if (player === undefined || player.actorId !== inputFrame.actorId) {
+      this.metrics?.recordDroppedInputFrame(room.roomId);
+      return;
+    }
+
+    if (room.simulation === null) {
+      this.metrics?.recordDroppedInputFrame(room.roomId);
+      return;
+    }
+
+    if (inputFrame.syncId !== room.syncId) {
+      this.metrics?.recordDroppedInputFrame(room.roomId);
+      return;
+    }
+
     room.pendingControlByActorId.set(inputFrame.actorId, {
       actorId: inputFrame.actorId,
       issuedAt: inputFrame.issuedAt,
@@ -1043,7 +1053,7 @@ export class RoomManager {
     this.emitRoomState(room);
   }
 
-  private startCountdown(room: RoomRecord, durationMs: number): void {
+  private startCountdown(room: RoomRecord, durationMs: number, startTimeMs: number): void {
     const startedAt = Date.now();
     room.latestResult = null;
     room.snapshotBroadcastCounter = 0;
@@ -1059,6 +1069,7 @@ export class RoomManager {
       durationMs,
       startedAt,
       endsAt: startedAt + durationMs,
+      startTimeMs,
     };
 
     this.emitCountdown(room);
@@ -1084,6 +1095,7 @@ export class RoomManager {
 
   private startSimulation(room: RoomRecord): void {
     const sourceSnapshot = room.simulation?.getSnapshot() ?? null;
+    const startTimeMs = room.startCountdown?.startTimeMs ?? 0;
     this.clearStartCountdown(room);
     room.latestResult = null;
     room.snapshotBroadcastCounter = 0;
@@ -1110,6 +1122,7 @@ export class RoomManager {
       resetAllActors: true,
       preserveActorPose: true,
       keepTimeMs: false,
+      startTimeMs,
       latestResult: null,
     });
     simulation.start();
@@ -1123,7 +1136,7 @@ export class RoomManager {
     this.io.to(room.roomId).emit('sim:start', {
       roomId: room.roomId,
       syncId: room.syncId,
-      snapshot: startSnapshot,
+      snapshot: this.createClientSnapshot(startSnapshot),
     });
     this.metrics?.recordSimStart();
     this.emitRoomState(room);
@@ -1221,7 +1234,7 @@ export class RoomManager {
     const payload = {
       roomId: room.roomId,
       syncId: room.syncId,
-      snapshot,
+      snapshot: this.createClientSnapshot(snapshot),
       reason: options.reason,
     };
 
@@ -1327,6 +1340,30 @@ export class RoomManager {
     const roundedMs = Math.round(durationMs / 1_000) * 1_000;
 
     if (roundedMs < MIN_START_COUNTDOWN_MS || roundedMs > MAX_START_COUNTDOWN_MS) {
+      return null;
+    }
+
+    return roundedMs;
+  }
+
+  private normalizeStartTimeMs(
+    roomBattle: RoomRecord['battle'],
+    value: number | undefined,
+  ): number | null {
+    const startTimeOptions = roomBattle?.startTimeOptions;
+    const requestedMs = value ?? startTimeOptions?.defaultMs ?? 0;
+
+    if (!Number.isFinite(requestedMs)) {
+      return null;
+    }
+
+    const roundedMs = Math.round(requestedMs / FIXED_TICK_MS) * FIXED_TICK_MS;
+
+    if (startTimeOptions === undefined) {
+      return roundedMs === 0 ? 0 : null;
+    }
+
+    if (roundedMs < startTimeOptions.minMs || roundedMs > startTimeOptions.maxMs) {
       return null;
     }
 

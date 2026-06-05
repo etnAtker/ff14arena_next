@@ -382,6 +382,37 @@ test('建房申请：超时后过期且不能再加入', async () => {
   }
 });
 
+test('无效连续位姿输入会静默丢弃且不会产生错误回包风暴', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const socket = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    await waitForConnect(socket);
+
+    for (let index = 0; index < 5; index += 1) {
+      emitPoseFrame(socket, {
+        roomId: 'missing-room',
+        syncId: 1,
+        actorId: 'missing-actor',
+        position: { x: 0, y: 0 },
+        facing: 0,
+        moveDirection: { x: 0, y: 0 },
+      });
+    }
+
+    const noError = await waitForNoPayload(socket, 'server:error', () => true, 250);
+    assert.equal(noError, true);
+  } finally {
+    socket.close();
+    await server.close();
+  }
+});
+
 test('房间全流程：创建、立即加入、等待态快照、开始战斗', async () => {
   const server = await startServer({
     host: '127.0.0.1',
@@ -523,6 +554,177 @@ test('房间全流程：创建、立即加入、等待态快照、开始战斗',
   } finally {
     owner.close();
     guest.close();
+    await server.close();
+  }
+});
+
+test('客户端同步快照不会暴露服务端脚本状态', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '客户端快照裁剪测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'kefka_p3_second_trick',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    const waitingSnapshot = await waitingSnapshotPromise;
+    assert.deepEqual(waitingSnapshot.snapshot.scriptState, {});
+
+    const startPromise = waitForEvent(owner, 'sim:start');
+    owner.emit('room:start', {
+      roomId,
+      countdownMs: 1000,
+    });
+    const startPayload = await startPromise;
+    assert.equal(startPayload.snapshot.phase, 'running');
+    assert.deepEqual(startPayload.snapshot.scriptState, {});
+
+    const resyncPromise = waitForPayload(
+      owner,
+      'sim:snapshot',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.reason === 'resync' &&
+        payload.snapshot.phase === 'running',
+      4000,
+    );
+    owner.emit('sim:request-resync', {
+      roomId,
+      reason: 'client-snapshot-trim-check',
+    });
+    const resyncPayload = await resyncPromise;
+    assert.deepEqual(resyncPayload.snapshot.scriptState, {});
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
+test('房主开战可以携带开始时间并从该时间点启动模拟', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '跳时开战测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'kefka_p3_first_trick',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    const waitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    await waitingSnapshotPromise;
+
+    const startPromise = waitForEvent(owner, 'sim:start');
+    owner.emit('room:start', {
+      roomId,
+      countdownMs: 1000,
+      startTimeMs: 54_000,
+    });
+    const startPayload = await startPromise;
+
+    assert.equal(startPayload.snapshot.phase, 'running');
+    assert.equal(startPayload.snapshot.timeMs, 54_000);
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
+test('不支持跳时的战斗传入非零开始时间会被拒绝', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '不支持跳时测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'top_p1_program_loop',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+
+    const errorPromise = waitForPayload(
+      owner,
+      'server:error',
+      (payload) => payload.code === 'invalid_start_time',
+      4000,
+    );
+    owner.emit('room:start', {
+      roomId,
+      countdownMs: 1000,
+      startTimeMs: 1000,
+    });
+    await errorPromise;
+  } finally {
+    owner.close();
     await server.close();
   }
 });

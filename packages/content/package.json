@@ -14,7 +14,7 @@
   "scripts": {
     "dev": "tsup --watch",
     "build": "tsup",
-    "test": "TMPDIR=/tmp tsx --test test/**/*.test.mjs",
+    "test": "tsx --test \"test/**/*.test.mjs\"",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {

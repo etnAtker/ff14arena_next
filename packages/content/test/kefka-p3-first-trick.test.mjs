@@ -116,7 +116,7 @@ function createSeededRandomValues(seed, count) {
   });
 }
 
-function createKefkaP3Simulation() {
+function createKefkaP3Simulation(options = {}) {
   const battle = getBattleDefinition('kefka_p3_first_trick');
   assert.ok(battle);
 
@@ -130,6 +130,7 @@ function createKefkaP3Simulation() {
       kind: 'player',
       actorId: `player_${slot}`,
     })),
+    ...(options.startTimeMs === undefined ? {} : { startTimeMs: options.startTimeMs }),
   });
   simulation.start();
 
@@ -2360,5 +2361,85 @@ test('凯夫卡P3一运：麻将最后一次85.75秒判定并在86.75秒完成',
 
     advanceTo(simulation, COMPLETE_AT);
     assert.ok(simulation.getSnapshot().latestResult);
+  });
+});
+
+test('凯夫卡P3一运：开战跳到4秒会直接生成元素块和初始Buff', () => {
+  withMockedRandom(createSeededRandomValues(101, 300), () => {
+    const simulation = createKefkaP3Simulation({ startTimeMs: MECHANIC_START_AT });
+    const snapshot = simulation.getSnapshot();
+
+    assert.equal(snapshot.timeMs, MECHANIC_START_AT);
+    assert.equal(getElementBlocks(snapshot).length, 3);
+    assert.equal(
+      snapshot.mechanics.filter((mechanic) => mechanic.kind === 'fieldMarker').length >= 3,
+      true,
+    );
+    assert.equal(
+      snapshot.actors.filter(
+        (actor) =>
+          hasStatus(actor, CHAOS_WIND_STATUS_ID) || hasStatus(actor, CHAOS_REVERSE_WIND_STATUS_ID),
+      ).length,
+      8,
+    );
+    assert.equal(
+      snapshot.actors.filter((actor) => hasStatus(actor, CHAOS_FIRE_STATUS_ID)).length,
+      2,
+    );
+    assert.equal(
+      snapshot.actors.filter((actor) => hasStatus(actor, CHAOS_WATER_STATUS_ID)).length,
+      2,
+    );
+  });
+});
+
+test('凯夫卡P3一运：跳过短元素结算后会按预期消除对应玩家风Buff', () => {
+  withMockedRandom(createSeededRandomValues(102, 400), () => {
+    const simulation = createKefkaP3Simulation({
+      startTimeMs: MECHANIC_START_AT + SHORT_ELEMENT_BUFF_MS + 50,
+    });
+    const snapshot = simulation.getSnapshot();
+    const longElementActors =
+      snapshot.scriptState['kefkaP3:elementStatusDurations'].fire === LONG_ELEMENT_BUFF_MS
+        ? snapshot.actors.filter((actor) => hasStatus(actor, CHAOS_FIRE_STATUS_ID))
+        : snapshot.actors.filter((actor) => hasStatus(actor, CHAOS_WATER_STATUS_ID));
+
+    assert.equal(longElementActors.length, 2);
+    assert.equal(
+      longElementActors.some(
+        (actor) =>
+          hasStatus(actor, CHAOS_WIND_STATUS_ID) || hasStatus(actor, CHAOS_REVERSE_WIND_STATUS_ID),
+      ),
+      false,
+    );
+  });
+});
+
+test('凯夫卡P3一运：开战跳到冲锋和麻将阶段会重建后续判定所需脚本状态', () => {
+  withMockedRandom(createSeededRandomValues(103, 600), () => {
+    const chargeSimulation = createKefkaP3Simulation({
+      startTimeMs: CHARGE_MARKER_SPAWN_AT + 100,
+    });
+    const chargeSnapshot = chargeSimulation.getSnapshot();
+
+    assert.ok(chargeSnapshot.scriptState['kefkaP3:chargeState']);
+    assert.ok(
+      chargeSnapshot.mechanics.some(
+        (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '冲锋点',
+      ),
+    );
+
+    const mahjongSimulation = createKefkaP3Simulation({
+      startTimeMs: MAHJONG_ASSIGN_AT + 100,
+    });
+    const mahjongSnapshot = mahjongSimulation.getSnapshot();
+
+    assert.equal(mahjongSnapshot.scriptState['kefkaP3:mahjongAssignments'].length, 8);
+    assert.equal(
+      mahjongSnapshot.mechanics.filter(
+        (mechanic) => mechanic.kind === 'actorMarker' && /^\d$/.test(mechanic.label),
+      ).length,
+      8,
+    );
   });
 });

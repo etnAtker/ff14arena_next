@@ -1,9 +1,17 @@
 import type { MapMarker, PartySlot, Vector2 } from './base';
 import type { StatusId } from './simulation';
 
+export interface BattleStartTimeOptions {
+  minMs: number;
+  maxMs: number;
+  stepMs: number;
+  defaultMs: number;
+}
+
 export interface BattleSummary {
   id: string;
   name: string;
+  startTimeOptions?: BattleStartTimeOptions;
 }
 
 export interface StatusMetadata {
@@ -27,6 +35,7 @@ export interface BattleStaticData {
   mapMarkers: MapMarker[];
   statusMetadata: StatusMetadata[];
   defaultPlayerMaxHp: number;
+  startTimeOptions?: BattleStartTimeOptions;
   initialPartyPositions: Record<
     PartySlot,
     {

@@ -40,6 +40,13 @@ interface ChargeState {
   outsideCenters: Vector2[];
 }
 
+interface ElementStatusPlan {
+  fireDurationMs: number;
+  waterDurationMs: number;
+  fireSlots: readonly [PartySlot, PartySlot];
+  waterSlots: readonly [PartySlot, PartySlot];
+}
+
 const ARENA_RADIUS = 20;
 const BOSS_TARGET_RING_RADIUS = 0;
 const CENTER = { x: 0, y: 0 } as const satisfies Vector2;
@@ -129,6 +136,12 @@ const MAHJONG_MIN_DISTANCE = 40;
 const MAHJONG_ODD_MARKER_COLOR = '#38bdf8';
 const MAHJONG_EVEN_MARKER_COLOR = '#ef4444';
 const COMPLETE_AT = MAHJONG_LAST_RESOLVE_AT + MAHJONG_RECTANGLE_VISUAL_MS;
+const START_TIME_OPTIONS = {
+  minMs: 0,
+  maxMs: COMPLETE_AT,
+  stepMs: 250,
+  defaultMs: 0,
+} as const;
 
 const CHAOS_FIRE_STATUS_ID = 'kefka_p3_chaos_fire';
 const CHAOS_WATER_STATUS_ID = 'kefka_p3_chaos_water';
@@ -712,6 +725,21 @@ function applyContentStatus(
   });
 }
 
+function applyContentStatusUntil(
+  ctx: BattleScriptContext,
+  actor: BaseActorSnapshot,
+  statusId: StatusId,
+  expiresAt: number,
+): void {
+  const remainingMs = expiresAt - ctx.state.getBattleTime();
+
+  if (remainingMs <= 0) {
+    return;
+  }
+
+  applyContentStatus(ctx, actor, statusId, remainingMs);
+}
+
 function assignWindStatuses(ctx: BattleScriptContext, actors: BaseActorSnapshot[]): void {
   const shuffledActors = shuffle(actors);
 
@@ -725,30 +753,41 @@ function assignWindStatuses(ctx: BattleScriptContext, actors: BaseActorSnapshot[
   }
 }
 
-function assignElementStatuses(ctx: BattleScriptContext, actors: BaseActorSnapshot[]): void {
+function createElementStatusPlan(): ElementStatusPlan {
   const fireDurationMs = Math.random() < 0.5 ? SHORT_ELEMENT_BUFF_MS : LONG_ELEMENT_BUFF_MS;
   const waterDurationMs =
     fireDurationMs === SHORT_ELEMENT_BUFF_MS ? LONG_ELEMENT_BUFF_MS : SHORT_ELEMENT_BUFF_MS;
   const selectedTankHealerSlots = shuffle(TANK_HEALER_SLOTS).slice(0, 2);
   const selectedDpsSlots = shuffle(DPS_SLOTS).slice(0, 2);
-  const fireSlots = [selectedTankHealerSlots[0]!, selectedDpsSlots[0]!] as const;
-  const waterSlots = [selectedTankHealerSlots[1]!, selectedDpsSlots[1]!] as const;
+
+  return {
+    fireDurationMs,
+    waterDurationMs,
+    fireSlots: [selectedTankHealerSlots[0]!, selectedDpsSlots[0]!],
+    waterSlots: [selectedTankHealerSlots[1]!, selectedDpsSlots[1]!],
+  };
+}
+
+function assignElementStatuses(ctx: BattleScriptContext, actors: BaseActorSnapshot[]): void {
+  const plan = createElementStatusPlan();
 
   ctx.state.setValue('kefkaP3:elementStatusDurations', {
-    fire: fireDurationMs,
-    water: waterDurationMs,
+    fire: plan.fireDurationMs,
+    water: plan.waterDurationMs,
   });
 
-  for (const slot of fireSlots) {
+  for (const slot of plan.fireSlots) {
     const actor = getActorBySlot(actors, slot);
-    applyContentStatus(ctx, actor, CHAOS_FIRE_STATUS_ID, fireDurationMs);
-    ctx.timeline.at(MECHANIC_START_AT + fireDurationMs, () => resolveFireBuff(ctx, actor.id));
+    applyContentStatus(ctx, actor, CHAOS_FIRE_STATUS_ID, plan.fireDurationMs);
+    ctx.timeline.at(MECHANIC_START_AT + plan.fireDurationMs, () => resolveFireBuff(ctx, actor.id));
   }
 
-  for (const slot of waterSlots) {
+  for (const slot of plan.waterSlots) {
     const actor = getActorBySlot(actors, slot);
-    applyContentStatus(ctx, actor, CHAOS_WATER_STATUS_ID, waterDurationMs);
-    ctx.timeline.at(MECHANIC_START_AT + waterDurationMs, () => resolveWaterBuff(ctx, actor.id));
+    applyContentStatus(ctx, actor, CHAOS_WATER_STATUS_ID, plan.waterDurationMs);
+    ctx.timeline.at(MECHANIC_START_AT + plan.waterDurationMs, () =>
+      resolveWaterBuff(ctx, actor.id),
+    );
   }
 }
 
@@ -1359,10 +1398,20 @@ function spawnChargeOutsideMarker(ctx: BattleScriptContext, index: number): void
   spawnChargeMarker(ctx, center, CHARGE_MARKER_ROTATION_INTERVAL_MS);
 }
 
-function assignMahjongOrders(ctx: BattleScriptContext): void {
-  const assignments = shuffle(
-    ctx.select.allPlayers().filter((actor) => actor.mechanicActive),
-  ).slice(0, 8);
+function createMahjongAssignments(ctx: BattleScriptContext): BaseActorSnapshot[] {
+  return shuffle(ctx.select.allPlayers().filter((actor) => actor.mechanicActive)).slice(0, 8);
+}
+
+function spawnMahjongOrderMarkers(
+  ctx: BattleScriptContext,
+  assignments: BaseActorSnapshot[],
+  resolveAt = MAHJONG_MARKERS_RESOLVE_AT,
+): void {
+  const resolveAfterMs = resolveAt - ctx.state.getBattleTime();
+
+  if (resolveAfterMs <= 0) {
+    return;
+  }
 
   ctx.state.setValue(
     'kefkaP3:mahjongAssignments',
@@ -1377,9 +1426,13 @@ function assignMahjongOrders(ctx: BattleScriptContext): void {
       target: actor,
       markerShape: 'circleDot',
       color: order % 2 === 1 ? MAHJONG_ODD_MARKER_COLOR : MAHJONG_EVEN_MARKER_COLOR,
-      resolveAfterMs: MAHJONG_MARKERS_RESOLVE_AT - MAHJONG_ASSIGN_AT,
+      resolveAfterMs,
     });
   }
+}
+
+function assignMahjongOrders(ctx: BattleScriptContext): void {
+  spawnMahjongOrderMarkers(ctx, createMahjongAssignments(ctx));
 }
 
 function resolveMahjongRectangle(ctx: BattleScriptContext, index: number): void {
@@ -1432,6 +1485,352 @@ function resolveMahjongRectangle(ctx: BattleScriptContext, index: number): void 
       applyKefkaP3Death(ctx, hit, '麻将被其它人的矩形命中');
     }
   }
+}
+
+function isTimeInWindow(startTimeMs: number, startAt: number, endAt: number): boolean {
+  return startTimeMs >= startAt && startTimeMs < endAt;
+}
+
+function restoreCastIfActive(
+  ctx: BattleScriptContext,
+  startTimeMs: number,
+  castStartAt: number,
+  castEndAt: number,
+  actionId: string,
+  actionName: string,
+): void {
+  if (!isTimeInWindow(startTimeMs, castStartAt, castEndAt)) {
+    return;
+  }
+
+  ctx.boss.restoreCast(actionId, actionName, castStartAt, castEndAt - castStartAt);
+}
+
+function addPendingResolutionAt(
+  ctx: BattleScriptContext,
+  kind: PendingElementKind,
+  resolveAt: number,
+  count = 1,
+): void {
+  const pendingResolutions = getPendingResolutions(ctx);
+  pendingResolutions.push({ kind, count, resolveAt });
+  setPendingResolutions(ctx, pendingResolutions);
+  ctx.timeline.at(resolveAt, () => resolvePendingElementResolutions(ctx, resolveAt));
+}
+
+function initializeElementStateAt(ctx: BattleScriptContext, startTimeMs: number): void {
+  if (startTimeMs <= MECHANIC_START_AT) {
+    return;
+  }
+
+  const actors = ctx.select.allPlayers();
+  const elementBlocks = createElementBlocks();
+  const plan = createElementStatusPlan();
+  const windAssignments = shuffle(actors);
+  const fireResolveAt = MECHANIC_START_AT + plan.fireDurationMs;
+  const waterResolveAt = MECHANIC_START_AT + plan.waterDurationMs;
+  const fireElementResolveAt = fireResolveAt + DELAYED_RESOLUTION_MS;
+  const waterElementResolveAt = waterResolveAt + DELAYED_RESOLUTION_MS;
+  const fireExpired = startTimeMs >= fireResolveAt;
+  const waterExpired = startTimeMs >= waterResolveAt;
+  const windExpiresAt = MECHANIC_START_AT + WIND_BUFF_MS;
+  const windClearedByVacuumWave = startTimeMs >= VACUUM_WAVE_RESOLVE_AT;
+  const windRemovedActorIds = new Set<string>();
+
+  ctx.state.setValue('kefkaP3:elementBlocks', elementBlocks);
+  ctx.state.setValue('kefkaP3:elementStatusDurations', {
+    fire: plan.fireDurationMs,
+    water: plan.waterDurationMs,
+  });
+
+  if (startTimeMs < MECHANIC_START_AT + ELEMENT_BLOCK_LIFETIME_MS) {
+    spawnElementBlocks(ctx, elementBlocks);
+  }
+
+  if (fireExpired) {
+    for (const slot of plan.waterSlots) {
+      windRemovedActorIds.add(getActorBySlot(actors, slot).id);
+    }
+  }
+
+  if (waterExpired) {
+    for (const slot of plan.fireSlots) {
+      windRemovedActorIds.add(getActorBySlot(actors, slot).id);
+    }
+  }
+
+  for (const [index, actor] of windAssignments.entries()) {
+    if (
+      windClearedByVacuumWave ||
+      windRemovedActorIds.has(actor.id) ||
+      startTimeMs >= windExpiresAt
+    ) {
+      continue;
+    }
+
+    applyContentStatusUntil(
+      ctx,
+      actor,
+      index < windAssignments.length / 2 ? CHAOS_WIND_STATUS_ID : CHAOS_REVERSE_WIND_STATUS_ID,
+      windExpiresAt,
+    );
+  }
+
+  for (const slot of plan.fireSlots) {
+    const actor = getActorBySlot(actors, slot);
+
+    if (!fireExpired) {
+      applyContentStatusUntil(ctx, actor, CHAOS_FIRE_STATUS_ID, fireResolveAt);
+      ctx.timeline.at(fireResolveAt, () => resolveFireBuff(ctx, actor.id));
+    }
+  }
+
+  for (const slot of plan.waterSlots) {
+    const actor = getActorBySlot(actors, slot);
+
+    if (!waterExpired) {
+      applyContentStatusUntil(ctx, actor, CHAOS_WATER_STATUS_ID, waterResolveAt);
+      ctx.timeline.at(waterResolveAt, () => resolveWaterBuff(ctx, actor.id));
+    }
+  }
+
+  if (isTimeInWindow(startTimeMs, fireResolveAt, fireElementResolveAt)) {
+    addPendingResolutionAt(ctx, 'fire', fireElementResolveAt);
+  }
+
+  if (isTimeInWindow(startTimeMs, waterResolveAt, waterElementResolveAt)) {
+    addPendingResolutionAt(ctx, 'water', waterElementResolveAt);
+  }
+
+  for (const elementResolveAt of [fireElementResolveAt, waterElementResolveAt]) {
+    if (isTimeInWindow(startTimeMs, elementResolveAt, elementResolveAt + DELAYED_RESOLUTION_MS)) {
+      addPendingResolutionAt(ctx, 'wind', elementResolveAt + DELAYED_RESOLUTION_MS);
+    }
+  }
+}
+
+function calculateFollowerState(
+  current: Vector2,
+  target: Vector2,
+  offset: number,
+  defaultFacing: number,
+): { center: Vector2; facing: number } {
+  const center =
+    distance(current, target) <= offset
+      ? { ...current }
+      : {
+          x: target.x + (current.x - target.x) * (offset / distance(current, target)),
+          y: target.y + (current.y - target.y) * (offset / distance(current, target)),
+        };
+  const facing =
+    distance(center, target) <= 0.0001 ? defaultFacing : createFacingTowards(center, target);
+
+  return { center, facing };
+}
+
+function initializeBossStateAt(ctx: BattleScriptContext, startTimeMs: number): void {
+  let bossState = getBossState(ctx);
+
+  if (startTimeMs > CHAOS_MARKER_SPAWN_AT) {
+    const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+    const maxRepositionAt = Math.min(startTimeMs, CHAOS_EXPLOSION_CAST_START_AT);
+    let center: Vector2 = { ...CENTER };
+    let facing =
+      distance(CENTER, st.position) <= 0.0001 ? 0 : createFacingTowards(CENTER, st.position);
+
+    for (
+      let repositionAt = CHAOS_REPOSITION_START_AT;
+      repositionAt <= maxRepositionAt && repositionAt < CHAOS_REPOSITION_END_AT;
+      repositionAt += CHAOS_REPOSITION_INTERVAL_MS
+    ) {
+      const next = calculateFollowerState(center, st.position, CHAOS_MARKER_ST_OFFSET, facing);
+      center = next.center;
+      facing = next.facing;
+    }
+
+    bossState = { ...bossState, chaosCenter: center, chaosFacing: facing };
+  }
+
+  if (startTimeMs >= BURST_CAST_START_AT) {
+    const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+    const burstCenter = calculateBurstCenter(mt.position);
+    const facing =
+      distance(burstCenter, mt.position) <= 0.0001
+        ? bossState.exdeathFacing
+        : createFacingTowards(burstCenter, mt.position);
+    bossState = { ...bossState, exdeathCenter: burstCenter, exdeathFacing: facing };
+  }
+
+  if (startTimeMs >= EXDEATH_REPOSITION_START_AT) {
+    const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+    const maxRepositionAt = Math.min(startTimeMs, VACUUM_WAVE_CAST_START_AT);
+    let center = bossState.exdeathCenter;
+    let facing = bossState.exdeathFacing;
+
+    for (
+      let repositionAt = EXDEATH_REPOSITION_START_AT;
+      repositionAt <= maxRepositionAt && repositionAt < EXDEATH_REPOSITION_END_AT;
+      repositionAt += EXDEATH_REPOSITION_INTERVAL_MS
+    ) {
+      const next = calculateFollowerState(center, mt.position, VACUUM_WAVE_MT_OFFSET, facing);
+      center = next.center;
+      facing = next.facing;
+    }
+
+    bossState = { ...bossState, exdeathCenter: center, exdeathFacing: facing };
+  }
+
+  setBossState(ctx, bossState);
+
+  if (startTimeMs >= CHAOS_MARKER_SPAWN_AT && startTimeMs < COMPLETE_AT) {
+    spawnChaosMarker(
+      ctx,
+      bossState.chaosCenter,
+      Math.max(COMPLETE_AT - startTimeMs, 50),
+      bossState.chaosFacing,
+    );
+  }
+
+  if (startTimeMs >= BURST_CAST_START_AT && startTimeMs < COMPLETE_AT) {
+    spawnExdeathMarker(
+      ctx,
+      bossState.exdeathCenter,
+      Math.max(COMPLETE_AT - startTimeMs, 50),
+      bossState.exdeathFacing,
+    );
+  }
+}
+
+function initializeChaosExplosionAt(ctx: BattleScriptContext, startTimeMs: number): void {
+  if (startTimeMs < CHAOS_EXPLOSION_CAST_START_AT) {
+    return;
+  }
+
+  const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+  const bossState = getBossState(ctx);
+  const mode: ChaosExplosionMode = Math.random() < 0.5 ? 'longitude' : 'latitude';
+  const facing =
+    distance(st.position, bossState.chaosCenter) <= 0.0001
+      ? bossState.chaosFacing
+      : createFacingTowards(bossState.chaosCenter, st.position);
+
+  ctx.state.setValue<ChaosExplosionState>('kefkaP3:chaosExplosion', {
+    mode,
+    center: bossState.chaosCenter,
+    facing,
+  });
+  updateChaosBossState(ctx, bossState.chaosCenter, facing);
+
+  restoreCastIfActive(
+    ctx,
+    startTimeMs,
+    CHAOS_EXPLOSION_CAST_START_AT,
+    CHAOS_EXPLOSION_FIRST_RESOLVE_AT,
+    `kefka_p3_${mode}_explosion`,
+    getChaosExplosionActionName(mode),
+  );
+}
+
+function initializeChargeStateAt(ctx: BattleScriptContext, startTimeMs: number): void {
+  if (startTimeMs <= CHARGE_MARKER_SPAWN_AT) {
+    return;
+  }
+
+  const chargeState = createChargeState();
+  ctx.state.setValue<ChargeState>('kefkaP3:chargeState', chargeState);
+
+  if (startTimeMs >= CHARGE_MARKER_DESPAWN_AT) {
+    return;
+  }
+
+  if (startTimeMs < CHARGE_MARKER_OUTSIDE_AT) {
+    spawnChargeMarker(
+      ctx,
+      createPointOnDirection(chargeState.baseDirection, CHARGE_INITIAL_DISTANCE),
+      CHARGE_MARKER_OUTSIDE_AT - startTimeMs,
+    );
+    return;
+  }
+
+  const markerIndex = Math.min(
+    Math.floor((startTimeMs - CHARGE_MARKER_OUTSIDE_AT) / CHARGE_MARKER_ROTATION_INTERVAL_MS),
+    CHARGE_MARKER_ROTATION_COUNT,
+  );
+  const markerCenter = chargeState.outsideCenters[markerIndex];
+
+  if (markerCenter !== undefined) {
+    spawnChargeMarker(
+      ctx,
+      markerCenter,
+      CHARGE_MARKER_OUTSIDE_AT +
+        (markerIndex + 1) * CHARGE_MARKER_ROTATION_INTERVAL_MS -
+        startTimeMs,
+    );
+  }
+}
+
+function initializeMahjongAt(ctx: BattleScriptContext, startTimeMs: number): void {
+  if (startTimeMs <= MAHJONG_ASSIGN_AT) {
+    return;
+  }
+
+  const assignments = createMahjongAssignments(ctx);
+
+  if (startTimeMs < MAHJONG_MARKERS_RESOLVE_AT) {
+    spawnMahjongOrderMarkers(ctx, assignments);
+    return;
+  }
+
+  ctx.state.setValue(
+    'kefkaP3:mahjongAssignments',
+    assignments.map((actor) => actor.id),
+  );
+}
+
+function initializeKefkaP3FirstAt(ctx: BattleScriptContext, startTimeMs: number): void {
+  restoreCastIfActive(
+    ctx,
+    startTimeMs,
+    DEEP_AGONY_CAST_START_AT,
+    MECHANIC_START_AT,
+    'kefka_p3_deep_agony',
+    '深层痛楚',
+  );
+  initializeElementStateAt(ctx, startTimeMs);
+  initializeBossStateAt(ctx, startTimeMs);
+  initializeChaosExplosionAt(ctx, startTimeMs);
+  initializeChargeStateAt(ctx, startTimeMs);
+
+  if (startTimeMs >= SUPER_JUMP_LOCK_AT && startTimeMs < SUPER_JUMP_RESOLVE_AT) {
+    lockSuperJumpTarget(ctx);
+  }
+
+  restoreCastIfActive(
+    ctx,
+    startTimeMs,
+    BURST_CAST_START_AT,
+    BURST_RESOLVE_AT,
+    'kefka_p3_burst',
+    '暴雷',
+  );
+  restoreCastIfActive(
+    ctx,
+    startTimeMs,
+    FOLLOWUP_BURST_CAST_START_AT,
+    FOLLOWUP_BURST_FIRST_RESOLVE_AT,
+    'kefka_p3_followup_burst',
+    '暴雷',
+  );
+  restoreCastIfActive(
+    ctx,
+    startTimeMs,
+    VACUUM_WAVE_CAST_START_AT,
+    VACUUM_WAVE_RESOLVE_AT,
+    'kefka_p3_vacuum_wave',
+    '真空波',
+  );
+
+  initializeMahjongAt(ctx, startTimeMs);
 }
 
 function buildKefkaP3Script(ctx: BattleScriptContext): void {
@@ -1568,7 +1967,9 @@ export const KEFKA_P3_FIRST_TRICK_BATTLE: BattleDefinition = {
     ]),
   ) as BattleDefinition['initialPartyPositions'],
   mapMarkers: KEFKA_MAP_MARKERS,
+  startTimeOptions: START_TIME_OPTIONS,
   buildScript: buildKefkaP3Script,
+  initializeAt: initializeKefkaP3FirstAt,
   failureTexts: {
     outOfBounds: (actorName) => `${actorName} 越过场地边界`,
     mechanicDeath: (actorName, sourceLabel) => `${actorName} 因 ${sourceLabel} 死亡`,

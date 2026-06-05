@@ -27,6 +27,7 @@ export interface RoomStartCountdownState {
   durationMs: number;
   startedAt: number;
   endsAt: number;
+  startTimeMs: number;
 }
 
 export interface RoomStateDto {

@@ -28,6 +28,7 @@ import { useAppStore } from './stores/app';
 import { normalizeAngleDifference, rotateVector } from './utils/angle';
 import { loadOperationMode, saveOperationMode } from './utils/operation-mode';
 import type { OperationMode, SelectValue } from './utils/ui';
+import type { BattleStartTimeOptions } from '@ff14arena/shared';
 
 const HomePage = defineAsyncComponent(() => import('./components/pages/HomePage.vue'));
 const BattlePage = defineAsyncComponent(() => import('./components/pages/BattlePage.vue'));
@@ -105,6 +106,7 @@ const operationMode = ref<OperationMode>(loadOperationMode());
 const cameraYaw = ref(0);
 const cameraZoom = ref(1);
 const startCountdownSeconds = ref(5);
+const startTimeSeconds = ref(0);
 const roomPasswordInput = ref('');
 const isMetricsRoute = window.location.pathname === '/metrics';
 const lastTraditionalFacing = ref<number | null>(null);
@@ -136,6 +138,12 @@ const canStart = computed(() => {
 });
 const latestResult = computed(
   () => snapshot.value?.latestResult ?? room.value?.latestResult ?? null,
+);
+const startTimeOptions = computed<BattleStartTimeOptions | null>(
+  () =>
+    battleStaticData.value?.startTimeOptions ??
+    battles.value.find((battle) => battle.id === room.value?.battleId)?.startTimeOptions ??
+    null,
 );
 const roomPhaseLabel = computed(() => {
   if (snapshot.value === null) {
@@ -310,6 +318,25 @@ watch(
       resetFacingInputState();
     }
   },
+);
+
+watch(
+  startTimeOptions,
+  (options) => {
+    if (options === null) {
+      startTimeSeconds.value = 0;
+      return;
+    }
+
+    const minSeconds = options.minMs / 1_000;
+    const maxSeconds = options.maxMs / 1_000;
+    const defaultSeconds = options.defaultMs / 1_000;
+
+    if (startTimeSeconds.value < minSeconds || startTimeSeconds.value > maxSeconds) {
+      startTimeSeconds.value = defaultSeconds;
+    }
+  },
+  { immediate: true },
 );
 
 watch(
@@ -495,6 +522,8 @@ onBeforeUnmount(() => {
             :is-spectating="isSpectating"
             :can-start="canStart"
             :start-countdown-seconds="startCountdownSeconds"
+            :start-time-seconds="startTimeSeconds"
+            :start-time-options="startTimeOptions"
             :server-countdown-seconds="serverCountdownSeconds"
             :battle-start-notice-until-ms="battleStartNoticeUntilMs"
             :logs="logs"
@@ -513,6 +542,7 @@ onBeforeUnmount(() => {
             @quick-fail="store.quickFail"
             @room-options-change="store.updateRoomOptions($event)"
             @start-countdown-seconds-change="startCountdownSeconds = $event"
+            @start-time-seconds-change="startTimeSeconds = $event"
             @switch-slot="store.switchSlot($event)"
             @reset-zoom="resetCameraZoom"
             @camera-yaw-change="updateCameraYaw"

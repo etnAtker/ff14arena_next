@@ -39,6 +39,7 @@ export interface RoomSpectatePayload {
 export interface RoomStartPayload {
   roomId: string;
   countdownMs?: number;
+  startTimeMs?: number;
 }
 
 export interface RoomQuickFailPayload {

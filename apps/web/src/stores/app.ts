@@ -39,6 +39,7 @@ const RESYNC_THROTTLE_MS = 500;
 const CONTINUOUS_INPUT_INTERVAL_MS = 50;
 const TRANSPORT_PROBE_INTERVAL_MS = 1_500;
 const ROOM_PASSWORD_STORAGE_KEY = 'ff14arena.roomPassword';
+const ROOM_INVALIDATING_ERROR_CODES = new Set(['not_in_room', 'room_not_found', 'room_expired']);
 
 class HttpError extends Error {
   constructor(
@@ -78,6 +79,10 @@ function cloneVector(vector: Vector2): Vector2 {
     x: vector.x,
     y: vector.y,
   };
+}
+
+function isZeroVector(vector: Vector2): boolean {
+  return Math.hypot(vector.x, vector.y) <= 0.0001;
 }
 
 function readCachedRoomPassword(): string {
@@ -682,6 +687,13 @@ export const useAppStore = defineStore('app', () => {
 
         serverError.value = payload.message;
         spectatePending.value = false;
+
+        if (ROOM_INVALIDATING_ERROR_CODES.has(payload.code)) {
+          room.value = null;
+          resetBattleState();
+          loadLobbyData().catch(() => undefined);
+        }
+
         appendLog(`错误：${payload.message}`);
       });
 
@@ -960,7 +972,10 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
-  async function startBattle(countdownMs?: number): Promise<void> {
+  async function startBattle(options?: {
+    countdownMs?: number;
+    startTimeMs?: number;
+  }): Promise<void> {
     if (room.value === null) {
       return;
     }
@@ -968,7 +983,8 @@ export const useAppStore = defineStore('app', () => {
     const currentSocket = socket.value ?? (await ensureSocket());
     currentSocket.emit('room:start', {
       roomId: room.value.roomId,
-      ...(countdownMs === undefined ? {} : { countdownMs }),
+      ...(options?.countdownMs === undefined ? {} : { countdownMs: options.countdownMs }),
+      ...(options?.startTimeMs === undefined ? {} : { startTimeMs: options.startTimeMs }),
     });
   }
 
@@ -1133,6 +1149,13 @@ export const useAppStore = defineStore('app', () => {
 
     const issuedAt = Date.now();
     const moveDirection = normalizeMoveDirection(frame.moveDirection);
+    const isRedundantIdleFrame =
+      isZeroVector(moveDirection) && frame.facing === undefined && !actor.moveState.moving;
+
+    if (isRedundantIdleFrame) {
+      return;
+    }
+
     const nextPose = applyOptimisticContinuousInput({
       moveDirection,
       ...(frame.facing !== undefined ? { facing: frame.facing } : {}),

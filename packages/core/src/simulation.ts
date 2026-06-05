@@ -85,6 +85,7 @@ interface RuntimeState {
   scheduler: SchedulerEntry[];
   schedulerOrder: number;
   scriptCursorTimeMs: number;
+  skipScheduledEventsBeforeMs: number | null;
   scriptState: Map<string, unknown>;
   inputQueue: ActorControlFrame[];
   events: SimulationEvent[];
@@ -155,6 +156,14 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
 
   function queueScheduler(timeMs: number, fn: () => void): void {
     const currentState = assertState(state);
+
+    if (
+      currentState.skipScheduledEventsBeforeMs !== null &&
+      timeMs < currentState.skipScheduledEventsBeforeMs
+    ) {
+      return;
+    }
+
     currentState.scheduler.push({
       id: nextSchedulerId(),
       timeMs,
@@ -473,6 +482,61 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     });
     queueScheduler(mechanic.resolveAt, () => resolveMechanic(mechanic.id));
     return mechanic;
+  }
+
+  function restoreBossCast(
+    actionId: string,
+    actionName: string,
+    startedAt: number,
+    totalDurationMs: number,
+    options?: { emitStarted?: boolean },
+  ): void {
+    const currentState = assertState(state);
+    const resolvesAt = startedAt + totalDurationMs;
+
+    if (resolvesAt <= currentState.timeMs) {
+      return;
+    }
+
+    const castBar = {
+      actionId,
+      actionName,
+      startedAt,
+      totalDurationMs,
+    };
+
+    currentState.boss.castBar = castBar;
+    currentState.bossCastBars = [
+      ...currentState.bossCastBars.filter((cast) => cast.actionId !== actionId),
+      castBar,
+    ];
+
+    if (options?.emitStarted ?? false) {
+      emit<BossCastStartedEvent>({
+        type: 'bossCastStarted',
+        payload: castBar,
+      });
+    }
+
+    queueScheduler(resolvesAt, () => {
+      const latestState = assertState(state);
+
+      if (!latestState.bossCastBars.some((cast) => cast.actionId === actionId)) {
+        return;
+      }
+
+      latestState.bossCastBars = latestState.bossCastBars.filter(
+        (cast) => cast.actionId !== actionId,
+      );
+      latestState.boss.castBar = latestState.bossCastBars.at(-1) ?? null;
+      emit<BossCastResolvedEvent>({
+        type: 'bossCastResolved',
+        payload: {
+          actionId,
+          actionName,
+        },
+      });
+    });
   }
 
   function refreshStatuses(): void {
@@ -818,43 +882,12 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
           return structuredClone(assertState(state).boss);
         },
         cast(actionId, actionName, totalDurationMs) {
-          const currentState = assertState(state);
-          const castBar = {
-            actionId,
-            actionName,
-            startedAt: currentState.timeMs,
-            totalDurationMs,
-          };
-          currentState.boss.castBar = castBar;
-          currentState.bossCastBars = [
-            ...currentState.bossCastBars.filter((cast) => cast.actionId !== actionId),
-            castBar,
-          ];
-
-          emit<BossCastStartedEvent>({
-            type: 'bossCastStarted',
-            payload: castBar,
+          restoreBossCast(actionId, actionName, assertState(state).timeMs, totalDurationMs, {
+            emitStarted: true,
           });
-
-          queueScheduler(currentState.timeMs + totalDurationMs, () => {
-            const latestState = assertState(state);
-
-            if (!latestState.bossCastBars.some((cast) => cast.actionId === actionId)) {
-              return;
-            }
-
-            latestState.bossCastBars = latestState.bossCastBars.filter(
-              (cast) => cast.actionId !== actionId,
-            );
-            latestState.boss.castBar = latestState.bossCastBars.at(-1) ?? null;
-            emit<BossCastResolvedEvent>({
-              type: 'bossCastResolved',
-              payload: {
-                actionId,
-                actionName,
-              },
-            });
-          });
+        },
+        restoreCast(actionId, actionName, startedAt, totalDurationMs) {
+          restoreBossCast(actionId, actionName, startedAt, totalDurationMs);
         },
         clearCast() {
           const currentState = assertState(state);
@@ -1312,6 +1345,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       preserveActorPose = false,
       resetStateActorIds,
       resetPositionActorIds,
+      startTimeMs,
       latestResult = null,
     }) {
       const actors = new Map<string, BaseActorSnapshot>();
@@ -1321,8 +1355,14 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       );
       const nextResetStateActorIds = resetStateActorIds ?? new Set<string>();
       const nextResetPositionActorIds = resetPositionActorIds ?? new Set<string>();
-      const initialTimeMs = keepTimeMs ? (sourceSnapshot?.timeMs ?? 0) : 0;
-      const initialTick = resetAllActors ? 0 : (sourceSnapshot?.tick ?? 0);
+      const requestedStartTimeMs =
+        startTimeMs === undefined ? null : Math.max(0, Math.round(startTimeMs / tickMs) * tickMs);
+      const initialTimeMs =
+        requestedStartTimeMs ?? (keepTimeMs ? (sourceSnapshot?.timeMs ?? 0) : 0);
+      const initialTick =
+        resetAllActors || requestedStartTimeMs !== null
+          ? Math.floor(initialTimeMs / tickMs)
+          : (sourceSnapshot?.tick ?? 0);
 
       for (const member of party) {
         const placement = battle.initialPartyPositions[member.slot];
@@ -1468,6 +1508,8 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         scheduler: [],
         schedulerOrder: 0,
         scriptCursorTimeMs: 0,
+        skipScheduledEventsBeforeMs:
+          requestedStartTimeMs !== null && requestedStartTimeMs > 0 ? initialTimeMs : null,
         scriptState:
           sourceSnapshot === null || resetAllActors
             ? new Map()
@@ -1487,6 +1529,11 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       running = false;
       accumulatorMs = 0;
       battle.buildScript(createScriptContext());
+      if (requestedStartTimeMs !== null && requestedStartTimeMs > 0) {
+        drainDueScheduler();
+        battle.initializeAt?.(createScriptContext(), initialTimeMs);
+        assertState(state).events = [];
+      }
     },
     start() {
       const currentState = assertState(state);

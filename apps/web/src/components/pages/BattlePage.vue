@@ -15,6 +15,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type {
   BaseActorSnapshot,
+  BattleStartTimeOptions,
   BossCastBarState,
   EncounterResult,
   PartySlot,
@@ -36,6 +37,12 @@ const MAX_ZOOM = 2.4;
 const HUD_TICK_MS = 100;
 const MIN_START_COUNTDOWN_SECONDS = 1;
 const MAX_START_COUNTDOWN_SECONDS = 30;
+const START_TIME_STEP_SECONDS = 0.25;
+
+interface StartBattlePayload {
+  countdownMs: number;
+  startTimeMs?: number;
+}
 
 const props = defineProps<{
   room: RoomStateDto | null;
@@ -49,6 +56,8 @@ const props = defineProps<{
   isSpectating: boolean;
   canStart: boolean;
   startCountdownSeconds: number;
+  startTimeSeconds: number;
+  startTimeOptions: BattleStartTimeOptions | null;
   serverCountdownSeconds: number | null;
   battleStartNoticeUntilMs: number;
   logs: string[];
@@ -62,10 +71,11 @@ const emit = defineEmits<{
   useKnockbackImmune: [currentTimeMs: number];
   useSprint: [currentTimeMs: number];
   spectate: [];
-  startBattle: [countdownMs: number];
+  startBattle: [payload: StartBattlePayload];
   quickFail: [];
   roomOptionsChange: [options: Partial<RoomStateDto['options']>];
   startCountdownSecondsChange: [seconds: number];
+  startTimeSecondsChange: [seconds: number];
   switchSlot: [slot: PartySlot];
   resetZoom: [];
   cameraYawChange: [yaw: number];
@@ -218,6 +228,7 @@ const countdownBannerText = computed(() => {
   return props.serverCountdownSeconds <= 0 ? '战斗开始！' : String(props.serverCountdownSeconds);
 });
 const isStartCountdownActive = computed(() => props.room?.startCountdown != null);
+const supportsStartTime = computed(() => props.startTimeOptions !== null);
 const deadActorsInteractEnabled = computed(() => props.room?.options.deadActorsInteract ?? true);
 const isPartyListDefaultOrder = computed(() =>
   partyListOrder.value.every((slot, index) => slot === PARTY_SLOT_ORDER[index]),
@@ -244,11 +255,25 @@ const spectateButtonDisabled = computed(() => {
 
 function handleSpectateButton(): void {
   if (props.isOwner && props.isSpectating) {
-    emit('startBattle', props.startCountdownSeconds * 1_000);
+    emitStartBattle();
     return;
   }
 
   emit('spectate');
+}
+
+function createStartBattlePayload(): StartBattlePayload {
+  const startTimeMs =
+    props.startTimeOptions === null ? 0 : Math.round((props.startTimeSeconds * 1_000) / 50) * 50;
+
+  return {
+    countdownMs: props.startCountdownSeconds * 1_000,
+    ...(startTimeMs === 0 ? {} : { startTimeMs }),
+  };
+}
+
+function emitStartBattle(): void {
+  emit('startBattle', createStartBattlePayload());
 }
 
 function getSlotState(slot: PartySlot) {
@@ -476,7 +501,7 @@ function handleSlotAction(slot: PartySlot): void {
 
   if (slot === props.currentPlayerSlot) {
     if (props.isOwner) {
-      emit('startBattle', props.startCountdownSeconds * 1_000);
+      emitStartBattle();
       return;
     }
 
@@ -531,6 +556,17 @@ function handleStartCountdownSecondsInput(value: number | null): void {
     'startCountdownSecondsChange',
     Math.min(Math.max(Math.round(value), MIN_START_COUNTDOWN_SECONDS), MAX_START_COUNTDOWN_SECONDS),
   );
+}
+
+function handleStartTimeSecondsInput(value: number | null): void {
+  if (value === null || Number.isNaN(value) || props.startTimeOptions === null) {
+    return;
+  }
+
+  const minSeconds = props.startTimeOptions.minMs / 1_000;
+  const maxSeconds = props.startTimeOptions.maxMs / 1_000;
+
+  emit('startTimeSecondsChange', Math.min(Math.max(value, minSeconds), maxSeconds));
 }
 
 function tickHudClock(): void {
@@ -704,6 +740,23 @@ onBeforeUnmount(() => {
                   :disabled="isStartCountdownActive"
                   :value="props.startCountdownSeconds"
                   @update:value="handleStartCountdownSecondsInput"
+                />
+              </div>
+              <div
+                v-if="props.isOwner && props.snapshot?.phase === 'waiting' && supportsStartTime"
+                class="countdown-control"
+              >
+                <span class="countdown-label">开始时间</span>
+                <n-input-number
+                  size="small"
+                  class="countdown-input"
+                  :min="(props.startTimeOptions?.minMs ?? 0) / 1_000"
+                  :max="(props.startTimeOptions?.maxMs ?? 0) / 1_000"
+                  :step="START_TIME_STEP_SECONDS"
+                  :precision="2"
+                  :disabled="isStartCountdownActive"
+                  :value="props.startTimeSeconds"
+                  @update:value="handleStartTimeSecondsInput"
                 />
               </div>
               <div

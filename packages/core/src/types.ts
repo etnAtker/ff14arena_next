@@ -2,6 +2,7 @@ import type {
   ActorControlFrame,
   ActorMarkerShape,
   BaseActorSnapshot,
+  BattleStartTimeOptions,
   BossSnapshot,
   DamageType,
   EncounterResult,
@@ -46,6 +47,12 @@ export interface BattleScriptContext {
     readonly id: string;
     readonly snapshot: () => BossSnapshot;
     cast(actionId: string, actionName: string, totalDurationMs: number): void;
+    restoreCast(
+      actionId: string,
+      actionName: string,
+      startedAt: number,
+      totalDurationMs: number,
+    ): void;
     clearCast(): void;
   };
   readonly select: {
@@ -224,7 +231,9 @@ export interface BattleDefinition {
       facing: number;
     }
   >;
+  startTimeOptions?: BattleStartTimeOptions;
   buildScript(ctx: BattleScriptContext): void;
+  initializeAt?(ctx: BattleScriptContext, startTimeMs: number): void;
   failureTexts: BattleFailureTextApi;
 }
 
@@ -241,6 +250,7 @@ export interface SimulationInstance {
     preserveActorPose?: boolean;
     resetStateActorIds?: Set<string>;
     resetPositionActorIds?: Set<string>;
+    startTimeMs?: number;
     latestResult?: EncounterResult | null;
   }): void;
   start(): void;
