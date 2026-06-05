@@ -38,6 +38,7 @@
 17. [凯夫卡P2：一运](./09-content/kefka-p2-first-forsaken.md)
 18. [凯夫卡P3：一运](./09-content/kefka-p3-first-trick.md)
 19. [凯夫卡P3：二运](./09-content/kefka-p3-second-trick.md)
+20. [凯夫卡P4：一运](./09-content/kefka-p4-first-trick.md)
 
 文档术语：
 

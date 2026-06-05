@@ -25,6 +25,18 @@
       "kefka_p3_second_chaos_earth",
       "kefka_p3_second_void_erosion_1",
       "kefka_p3_second_void_corrosion"
+    ],
+    "kefka_p4_first_trick": [
+      "kefka_p4_curse_howl",
+      "kefka_p4_forked_lightning",
+      "kefka_p4_compressed_water",
+      "kefka_p4_acceleration_bomb",
+      "kefka_p4_allagan_field",
+      "kefka_p4_beyond_death",
+      "kefka_p4_living_wound",
+      "kefka_p4_dead_wound",
+      "kefka_p4_chaos_fire",
+      "kefka_p4_chaos_water"
     ]
   },
   "statusXivapiIds": {
@@ -45,6 +57,16 @@
     "kefka_p3_chaos_fire": 1600,
     "kefka_p3_chaos_water": 1601,
     "kefka_p3_chaos_wind": 1602,
-    "kefka_p3_chaos_reverse_wind": 1603
+    "kefka_p3_chaos_reverse_wind": 1603,
+    "kefka_p4_curse_howl": 5543,
+    "kefka_p4_forked_lightning": 5544,
+    "kefka_p4_compressed_water": 5545,
+    "kefka_p4_acceleration_bomb": 5546,
+    "kefka_p4_allagan_field": 454,
+    "kefka_p4_beyond_death": 5464,
+    "kefka_p4_living_wound": 4887,
+    "kefka_p4_dead_wound": 4888,
+    "kefka_p4_chaos_fire": 5547,
+    "kefka_p4_chaos_water": 5548
   }
 }

@@ -6,6 +6,7 @@ import type {
   ActorMarkerShape,
   FieldMarkerShape,
   MapMarker,
+  RingIndicatorMechanicSnapshot,
   SimulationSnapshot,
   Vector2,
 } from '@ff14arena/shared';
@@ -66,6 +67,7 @@ const actorLabels = new Map<string, Text>();
 const markerLabels = new Map<string, Text>();
 const actorMarkerTextLabels = new Map<string, Text>();
 const fieldMarkerTextLabels = new Map<string, Text>();
+const ringIndicatorQuestionLabels = new Map<string, Text>();
 let pendingYawDelta = 0;
 let dragUpdateFrame: number | null = null;
 let pendingZoomSteps = 0;
@@ -336,6 +338,58 @@ function syncFieldMarkerTextLabels(snapshot: SimulationSnapshot): void {
   }
 }
 
+function getRingIndicatorQuestionLabelId(mechanicId: string, ringIndex: number): string {
+  return `${mechanicId}:${ringIndex}`;
+}
+
+function syncRingIndicatorQuestionLabels(snapshot: SimulationSnapshot): void {
+  if (app === null) {
+    return;
+  }
+
+  const currentApp = app;
+  const ringIndicators = snapshot.mechanics.filter(
+    (mechanic): mechanic is RingIndicatorMechanicSnapshot => mechanic.kind === 'ringIndicator',
+  );
+  const activeLabelIds = new Set<string>();
+
+  for (const mechanic of ringIndicators) {
+    mechanic.rings.forEach((ring, ringIndex) => {
+      if (ring.markerKind !== 'question') {
+        return;
+      }
+
+      const labelId = getRingIndicatorQuestionLabelId(mechanic.id, ringIndex);
+      activeLabelIds.add(labelId);
+
+      if (ringIndicatorQuestionLabels.has(labelId)) {
+        return;
+      }
+
+      const label = new Text({
+        text: '?',
+        style: new TextStyle({
+          fill: '#ffffff',
+          fontSize: 16,
+          fontWeight: '900',
+        }),
+      });
+      label.anchor.set(0.5);
+      ringIndicatorQuestionLabels.set(labelId, label);
+      currentApp.stage.addChild(label);
+    });
+  }
+
+  for (const [labelId, label] of ringIndicatorQuestionLabels) {
+    if (activeLabelIds.has(labelId)) {
+      continue;
+    }
+
+    label.destroy();
+    ringIndicatorQuestionLabels.delete(labelId);
+  }
+}
+
 function getEnemyFieldMarkerStageText(
   label: string,
   activeEnemyMarkers: Array<{ label: string }>,
@@ -368,6 +422,10 @@ function hideLabels(): void {
   }
 
   for (const label of fieldMarkerTextLabels.values()) {
+    label.visible = false;
+  }
+
+  for (const label of ringIndicatorQuestionLabels.values()) {
     label.visible = false;
   }
 }
@@ -657,6 +715,57 @@ function drawActorMarker(
   }
 }
 
+function drawRingIndicator(
+  graphics: Graphics,
+  mechanic: RingIndicatorMechanicSnapshot,
+  width: number,
+  height: number,
+  arenaRadius: number,
+  scale: number,
+): void {
+  const centerPoint = toStagePoint(mechanic.center, width, height, arenaRadius);
+
+  mechanic.rings.forEach((ring, ringIndex) => {
+    const ringRadius = ring.radius * scale;
+    const markerWorldPosition = {
+      x: mechanic.center.x + Math.cos(ring.markerAngle) * ring.radius,
+      y: mechanic.center.y + Math.sin(ring.markerAngle) * ring.radius,
+    };
+    const markerPoint = toStagePoint(markerWorldPosition, width, height, arenaRadius);
+    const markerRadius = Math.max(0.38 * scale, 7);
+    const ringColor = parseHexColor(ring.color);
+    const markerColor = parseHexColor(ring.markerColor);
+
+    graphics.circle(centerPoint.x, centerPoint.y, ringRadius).stroke({
+      width: 3,
+      color: ringColor,
+      alpha: 0.95,
+    });
+    graphics.circle(markerPoint.x, markerPoint.y, markerRadius).fill({
+      color: markerColor,
+      alpha: 0.96,
+    });
+    graphics.circle(markerPoint.x, markerPoint.y, markerRadius).stroke({
+      width: 1.5,
+      color: 0xffffff,
+      alpha: 0.9,
+    });
+
+    if (ring.markerKind === 'question') {
+      const label = ringIndicatorQuestionLabels.get(
+        getRingIndicatorQuestionLabelId(mechanic.id, ringIndex),
+      );
+
+      if (label !== undefined) {
+        label.visible = true;
+        label.x = markerPoint.x;
+        label.y = markerPoint.y;
+        label.alpha = 0.98;
+      }
+    }
+  });
+}
+
 function drawFieldMarker(
   graphics: Graphics,
   position: Vector2,
@@ -892,6 +1001,7 @@ function draw(now: number): void {
   syncMapMarkerLabels(props.snapshot.mapMarkers);
   syncActorMarkerTextLabels(props.snapshot);
   syncFieldMarkerTextLabels(props.snapshot);
+  syncRingIndicatorQuestionLabels(props.snapshot);
   const activeEnemyFieldMarkers = props.snapshot.mechanics.filter(
     (mechanic) =>
       mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy' && mechanic.showLabel !== false,
@@ -965,6 +1075,11 @@ function draw(now: number): void {
         }
       }
 
+      continue;
+    }
+
+    if (mechanic.kind === 'ringIndicator') {
+      drawRingIndicator(graphics, mechanic, width, height, arenaRadius, scale);
       continue;
     }
 
@@ -1320,6 +1435,7 @@ onBeforeUnmount(() => {
   markerLabels.clear();
   actorMarkerTextLabels.clear();
   fieldMarkerTextLabels.clear();
+  ringIndicatorQuestionLabels.clear();
   stageGraphics = null;
   bossLabel = null;
 });

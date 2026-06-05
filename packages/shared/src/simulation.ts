@@ -20,6 +20,7 @@ export type MechanicKind =
   | 'tower'
   | 'tether'
   | 'actorMarker'
+  | 'ringIndicator'
   | 'fanTelegraph'
   | 'rectangleTelegraph'
   | 'circleTelegraph'
@@ -194,6 +195,24 @@ export interface ActorMarkerMechanicSnapshot {
   resolveAt: number;
 }
 
+export interface RingIndicatorRingSnapshot {
+  radius: number;
+  color: string;
+  markerAngle: number;
+  markerColor: string;
+  markerKind: 'solid' | 'question';
+}
+
+export interface RingIndicatorMechanicSnapshot {
+  id: string;
+  kind: 'ringIndicator';
+  label: string;
+  sourceId: string;
+  center: Vector2;
+  rings: RingIndicatorRingSnapshot[];
+  resolveAt: number;
+}
+
 export interface FanTelegraphMechanicSnapshot {
   id: string;
   kind: 'fanTelegraph';
@@ -246,6 +265,7 @@ export type MechanicSnapshot =
   | DonutTelegraphMechanicSnapshot
   | TetherMechanicSnapshot
   | ActorMarkerMechanicSnapshot
+  | RingIndicatorMechanicSnapshot
   | FanTelegraphMechanicSnapshot
   | RectangleTelegraphMechanicSnapshot
   | FieldMarkerMechanicSnapshot;

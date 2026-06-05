@@ -151,6 +151,19 @@ export interface BattleScriptContext {
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;
+    ringIndicator(options: {
+      label: string;
+      center: Vector2;
+      rings: Array<{
+        radius: number;
+        color: string;
+        markerAngle: number;
+        markerColor: string;
+        markerKind: 'solid' | 'question';
+      }>;
+      resolveAfterMs?: number;
+      sourceId?: string;
+    }): MechanicSnapshot;
     fanTelegraph(options: {
       label: string;
       center: Vector2;

@@ -458,6 +458,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       case 'tower':
       case 'tether':
       case 'actorMarker':
+      case 'ringIndicator':
       case 'fanTelegraph':
       case 'rectangleTelegraph':
       case 'fieldMarker':
@@ -1105,6 +1106,18 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             ...(options.radius === undefined ? {} : { radius: options.radius }),
             ...(options.color === undefined ? {} : { color: options.color }),
             ...(options.showLabel === undefined ? {} : { showLabel: options.showLabel }),
+            resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
+          });
+        },
+        ringIndicator(options) {
+          const currentState = assertState(state);
+          return spawnMechanic({
+            id: nextMechanicId(),
+            kind: 'ringIndicator',
+            label: options.label,
+            sourceId: options.sourceId ?? currentState.boss.id,
+            center: cloneVector(options.center),
+            rings: options.rings.map((ring) => ({ ...ring })),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
