@@ -152,6 +152,17 @@ function getThunderOffset(rect) {
   return lineCenter.x * normal.x + lineCenter.y * normal.y;
 }
 
+function createVoidFloodSidePosition(exdeathPosition, side) {
+  const facing = Math.atan2(-exdeathPosition.y, -exdeathPosition.x);
+  const right = { x: Math.cos(facing + Math.PI / 2), y: Math.sin(facing + Math.PI / 2) };
+  const sideMultiplier = side === 'right' ? 1 : -1;
+
+  return {
+    x: right.x * sideMultiplier * 5,
+    y: right.y * sideMultiplier * 5,
+  };
+}
+
 test('凯夫卡P4一运注册并使用 6m Boss 目标圈', () => {
   const battle = getBattleDefinition('kefka_p4_first_trick');
 
@@ -358,7 +369,7 @@ test('大十字雷水 Buff 时长组在两轮之间保持对应关系', () => {
   });
 });
 
-test('最终大十字赋予 999s 生死伤，并在每组分配 2 个领域和 2 个超越死亡', () => {
+test('最终大十字赋予 15s 生死伤，并在每组分配 2 个领域和 2 个超越死亡', () => {
   const simulation = createKefkaP4Simulation(5);
 
   advanceTo(simulation, 30_000 + BIG_CROSS_CAST_MS);
@@ -368,7 +379,7 @@ test('最终大十字赋予 999s 生死伤，并在每组分配 2 个领域和 2
     const wound =
       getStatus(actor, LIVING_WOUND_STATUS_ID) ?? getStatus(actor, DEAD_WOUND_STATUS_ID);
     assert.ok(wound, `missing wound for ${actor.slot}`);
-    assert.equal(wound.expiresAt, 1_037_000);
+    assert.equal(wound.expiresAt, 53_000);
   }
 
   for (const slots of [SUPPORT_SLOTS, DPS_SLOTS]) {
@@ -381,4 +392,39 @@ test('最终大十字赋予 999s 生死伤，并在每组分配 2 个领域和 2
     assert.equal(allaganCount, 2);
     assert.equal(beyondDeathCount, 2);
   }
+});
+
+test('生死伤吃到错误暗黑光时会立即消失', () => {
+  const simulation = createKefkaP4Simulation(6);
+
+  advanceTo(simulation, 47_000);
+  let snapshot = simulation.getSnapshot();
+  const actor = getActorBySlot(snapshot, 'MT');
+  const wound = getStatus(actor, LIVING_WOUND_STATUS_ID) ?? getStatus(actor, DEAD_WOUND_STATUS_ID);
+  const voidFlood = snapshot.scriptState['kefkaP4:voidFlood'];
+  const exdeathPosition = snapshot.scriptState['kefkaP4:exdeathPosition'];
+
+  assert.ok(wound);
+  assert.ok(voidFlood);
+  assert.ok(exdeathPosition);
+
+  const woundFake = wound.name.includes('（假）');
+  const wrongDarkKind =
+    wound.id === LIVING_WOUND_STATUS_ID
+      ? woundFake
+        ? 'dead'
+        : 'living'
+      : woundFake
+        ? 'living'
+        : 'dead';
+  const voidFloodFake = voidFlood.truth === 'fake';
+  const purpleDarkKind = voidFloodFake ? 'dead' : 'living';
+  const wrongSide = purpleDarkKind === wrongDarkKind ? voidFlood.purpleSide : voidFlood.blueSide;
+
+  submitPose(simulation, actor, createVoidFloodSidePosition(exdeathPosition, wrongSide));
+  advanceTo(simulation, 52_000);
+  snapshot = simulation.getSnapshot();
+
+  const resolvedActor = getActorBySlot(snapshot, 'MT');
+  assert.equal(getStatus(resolvedActor, wound.id), null);
 });

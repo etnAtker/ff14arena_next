@@ -29,6 +29,12 @@ const ACTOR_RADIUS = 12;
 const CONTROLLED_ACTOR_RADIUS = 13;
 const ACTOR_FACING_ARROW_LENGTH = ACTOR_RADIUS / 2;
 const ACTOR_FACING_ARROW_HALF_WIDTH = 4.5;
+const RING_INDICATOR_MARKER_RADIUS_RATIO = 0.56;
+const RING_INDICATOR_MARKER_MIN_RADIUS = 11;
+const RING_INDICATOR_QUESTION_FONT_SIZE = 22;
+const RING_INDICATOR_RADIUS_PADDING = 10;
+const RING_INDICATOR_RADIUS_INDEX_GAP = 12;
+const RING_INDICATOR_STROKE_WIDTH = 4;
 
 const props = defineProps<{
   snapshot: SimulationSnapshot | null;
@@ -370,7 +376,7 @@ function syncRingIndicatorQuestionLabels(snapshot: SimulationSnapshot): void {
         text: '?',
         style: new TextStyle({
           fill: '#ffffff',
-          fontSize: 16,
+          fontSize: RING_INDICATOR_QUESTION_FONT_SIZE,
           fontWeight: '900',
         }),
       });
@@ -726,18 +732,32 @@ function drawRingIndicator(
   const centerPoint = toStagePoint(mechanic.center, width, height, arenaRadius);
 
   mechanic.rings.forEach((ring, ringIndex) => {
-    const ringRadius = ring.radius * scale;
-    const markerWorldPosition = {
+    const baseRingRadius = ring.radius * scale;
+    const ringRadius =
+      baseRingRadius + RING_INDICATOR_RADIUS_PADDING + ringIndex * RING_INDICATOR_RADIUS_INDEX_GAP;
+    const baseMarkerWorldPosition = {
       x: mechanic.center.x + Math.cos(ring.markerAngle) * ring.radius,
       y: mechanic.center.y + Math.sin(ring.markerAngle) * ring.radius,
     };
-    const markerPoint = toStagePoint(markerWorldPosition, width, height, arenaRadius);
-    const markerRadius = Math.max(0.38 * scale, 7);
+    const baseMarkerPoint = toStagePoint(baseMarkerWorldPosition, width, height, arenaRadius);
+    const markerDirection = {
+      x: baseMarkerPoint.x - centerPoint.x,
+      y: baseMarkerPoint.y - centerPoint.y,
+    };
+    const markerDirectionLength = Math.hypot(markerDirection.x, markerDirection.y) || 1;
+    const markerPoint = {
+      x: centerPoint.x + (markerDirection.x / markerDirectionLength) * ringRadius,
+      y: centerPoint.y + (markerDirection.y / markerDirectionLength) * ringRadius,
+    };
+    const markerRadius = Math.max(
+      RING_INDICATOR_MARKER_RADIUS_RATIO * scale,
+      RING_INDICATOR_MARKER_MIN_RADIUS,
+    );
     const ringColor = parseHexColor(ring.color);
     const markerColor = parseHexColor(ring.markerColor);
 
     graphics.circle(centerPoint.x, centerPoint.y, ringRadius).stroke({
-      width: 3,
+      width: RING_INDICATOR_STROKE_WIDTH,
       color: ringColor,
       alpha: 0.95,
     });
@@ -746,7 +766,7 @@ function drawRingIndicator(
       alpha: 0.96,
     });
     graphics.circle(markerPoint.x, markerPoint.y, markerRadius).stroke({
-      width: 1.5,
+      width: 2,
       color: 0xffffff,
       alpha: 0.9,
     });

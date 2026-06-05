@@ -1317,7 +1317,7 @@ function assignFinalBigCross(ctx: BattleScriptContext, truth: TrickTruth): void 
 
   for (const actor of ctx.select.allPlayers()) {
     const statusId = Math.random() < 0.5 ? LIVING_WOUND_STATUS_ID : DEAD_WOUND_STATUS_ID;
-    applyStatus(ctx, actor, statusId, 999_000, fake);
+    applyStatus(ctx, actor, statusId, 15_000, fake);
   }
 
   for (const slots of [TANK_HEALER_SLOTS, DPS_SLOTS]) {
