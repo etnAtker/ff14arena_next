@@ -66,6 +66,7 @@ const MECHANIC_DAMAGE = 1;
 const ACCELERATION_CHECK_MS = 2_000;
 const CHAOS_ELEMENT_DELAY_MS = 5_000;
 const COMPLETE_AT = 109_000;
+const OUTSIDE_BOSS_MARKER_RADIUS = 1.275;
 
 const THUNDER_LENGTH = 40;
 const THUNDER_WIDTH = 10;
@@ -501,7 +502,7 @@ function spawnEnemyMarker(
     center,
     stableId,
     shape: 'enemy',
-    radius: 0.85,
+    radius: OUTSIDE_BOSS_MARKER_RADIUS,
     color,
     direction: createFacingTowards(center, CENTER),
     resolveAfterMs,
@@ -1325,7 +1326,7 @@ function assignFinalBigCross(ctx: BattleScriptContext, truth: TrickTruth): void 
 
     actors.forEach((actor, index) => {
       const statusId = index < 2 ? ALLAGAN_FIELD_STATUS_ID : BEYOND_DEATH_STATUS_ID;
-      const durationMs = statusId === ALLAGAN_FIELD_STATUS_ID ? 15_000 : 14_000;
+      const durationMs = statusId === ALLAGAN_FIELD_STATUS_ID ? 16_000 : 15_000;
 
       applyStatus(ctx, actor, statusId, durationMs, fake);
       setProtectionState(ctx, {

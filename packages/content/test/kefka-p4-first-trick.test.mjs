@@ -384,13 +384,23 @@ test('最终大十字赋予 15s 生死伤，并在每组分配 2 个领域和 2 
 
   for (const slots of [SUPPORT_SLOTS, DPS_SLOTS]) {
     const actors = slots.map((slot) => getActorBySlot(snapshot, slot));
-    const allaganCount = actors.filter((actor) => getStatus(actor, ALLAGAN_FIELD_STATUS_ID)).length;
-    const beyondDeathCount = actors.filter((actor) =>
-      getStatus(actor, BEYOND_DEATH_STATUS_ID),
-    ).length;
+    const allaganStatuses = actors
+      .map((actor) => getStatus(actor, ALLAGAN_FIELD_STATUS_ID))
+      .filter((status) => status !== null);
+    const beyondDeathStatuses = actors
+      .map((actor) => getStatus(actor, BEYOND_DEATH_STATUS_ID))
+      .filter((status) => status !== null);
 
-    assert.equal(allaganCount, 2);
-    assert.equal(beyondDeathCount, 2);
+    assert.equal(allaganStatuses.length, 2);
+    assert.equal(beyondDeathStatuses.length, 2);
+    assert.deepEqual(
+      allaganStatuses.map((status) => status.expiresAt),
+      [54_000, 54_000],
+    );
+    assert.deepEqual(
+      beyondDeathStatuses.map((status) => status.expiresAt),
+      [53_000, 53_000],
+    );
   }
 });
 

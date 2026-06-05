@@ -344,8 +344,16 @@ function syncFieldMarkerTextLabels(snapshot: SimulationSnapshot): void {
   }
 }
 
-function getRingIndicatorQuestionLabelId(mechanicId: string, ringIndex: number): string {
-  return `${mechanicId}:${ringIndex}`;
+function getRingIndicatorMarkerAngles(markerAngle: number): [number, number] {
+  return [markerAngle, markerAngle + Math.PI];
+}
+
+function getRingIndicatorQuestionLabelId(
+  mechanicId: string,
+  ringIndex: number,
+  markerIndex: number,
+): string {
+  return `${mechanicId}:${ringIndex}:${markerIndex}`;
 }
 
 function syncRingIndicatorQuestionLabels(snapshot: SimulationSnapshot): void {
@@ -365,24 +373,26 @@ function syncRingIndicatorQuestionLabels(snapshot: SimulationSnapshot): void {
         return;
       }
 
-      const labelId = getRingIndicatorQuestionLabelId(mechanic.id, ringIndex);
-      activeLabelIds.add(labelId);
+      getRingIndicatorMarkerAngles(ring.markerAngle).forEach((_, markerIndex) => {
+        const labelId = getRingIndicatorQuestionLabelId(mechanic.id, ringIndex, markerIndex);
+        activeLabelIds.add(labelId);
 
-      if (ringIndicatorQuestionLabels.has(labelId)) {
-        return;
-      }
+        if (ringIndicatorQuestionLabels.has(labelId)) {
+          return;
+        }
 
-      const label = new Text({
-        text: '?',
-        style: new TextStyle({
-          fill: '#ffffff',
-          fontSize: RING_INDICATOR_QUESTION_FONT_SIZE,
-          fontWeight: '900',
-        }),
+        const label = new Text({
+          text: '?',
+          style: new TextStyle({
+            fill: '#ffffff',
+            fontSize: RING_INDICATOR_QUESTION_FONT_SIZE,
+            fontWeight: '900',
+          }),
+        });
+        label.anchor.set(0.5);
+        ringIndicatorQuestionLabels.set(labelId, label);
+        currentApp.stage.addChild(label);
       });
-      label.anchor.set(0.5);
-      ringIndicatorQuestionLabels.set(labelId, label);
-      currentApp.stage.addChild(label);
     });
   }
 
@@ -735,20 +745,6 @@ function drawRingIndicator(
     const baseRingRadius = ring.radius * scale;
     const ringRadius =
       baseRingRadius + RING_INDICATOR_RADIUS_PADDING + ringIndex * RING_INDICATOR_RADIUS_INDEX_GAP;
-    const baseMarkerWorldPosition = {
-      x: mechanic.center.x + Math.cos(ring.markerAngle) * ring.radius,
-      y: mechanic.center.y + Math.sin(ring.markerAngle) * ring.radius,
-    };
-    const baseMarkerPoint = toStagePoint(baseMarkerWorldPosition, width, height, arenaRadius);
-    const markerDirection = {
-      x: baseMarkerPoint.x - centerPoint.x,
-      y: baseMarkerPoint.y - centerPoint.y,
-    };
-    const markerDirectionLength = Math.hypot(markerDirection.x, markerDirection.y) || 1;
-    const markerPoint = {
-      x: centerPoint.x + (markerDirection.x / markerDirectionLength) * ringRadius,
-      y: centerPoint.y + (markerDirection.y / markerDirectionLength) * ringRadius,
-    };
     const markerRadius = Math.max(
       RING_INDICATOR_MARKER_RADIUS_RATIO * scale,
       RING_INDICATOR_MARKER_MIN_RADIUS,
@@ -761,28 +757,46 @@ function drawRingIndicator(
       color: ringColor,
       alpha: 0.95,
     });
-    graphics.circle(markerPoint.x, markerPoint.y, markerRadius).fill({
-      color: markerColor,
-      alpha: 0.96,
-    });
-    graphics.circle(markerPoint.x, markerPoint.y, markerRadius).stroke({
-      width: 2,
-      color: 0xffffff,
-      alpha: 0.9,
-    });
 
-    if (ring.markerKind === 'question') {
-      const label = ringIndicatorQuestionLabels.get(
-        getRingIndicatorQuestionLabelId(mechanic.id, ringIndex),
-      );
+    getRingIndicatorMarkerAngles(ring.markerAngle).forEach((markerAngle, markerIndex) => {
+      const baseMarkerWorldPosition = {
+        x: mechanic.center.x + Math.cos(markerAngle) * ring.radius,
+        y: mechanic.center.y + Math.sin(markerAngle) * ring.radius,
+      };
+      const baseMarkerPoint = toStagePoint(baseMarkerWorldPosition, width, height, arenaRadius);
+      const markerDirection = {
+        x: baseMarkerPoint.x - centerPoint.x,
+        y: baseMarkerPoint.y - centerPoint.y,
+      };
+      const markerDirectionLength = Math.hypot(markerDirection.x, markerDirection.y) || 1;
+      const markerPoint = {
+        x: centerPoint.x + (markerDirection.x / markerDirectionLength) * ringRadius,
+        y: centerPoint.y + (markerDirection.y / markerDirectionLength) * ringRadius,
+      };
 
-      if (label !== undefined) {
-        label.visible = true;
-        label.x = markerPoint.x;
-        label.y = markerPoint.y;
-        label.alpha = 0.98;
+      graphics.circle(markerPoint.x, markerPoint.y, markerRadius).fill({
+        color: markerColor,
+        alpha: 0.96,
+      });
+      graphics.circle(markerPoint.x, markerPoint.y, markerRadius).stroke({
+        width: 2,
+        color: 0xffffff,
+        alpha: 0.9,
+      });
+
+      if (ring.markerKind === 'question') {
+        const label = ringIndicatorQuestionLabels.get(
+          getRingIndicatorQuestionLabelId(mechanic.id, ringIndex, markerIndex),
+        );
+
+        if (label !== undefined) {
+          label.visible = true;
+          label.x = markerPoint.x;
+          label.y = markerPoint.y;
+          label.alpha = 0.98;
+        }
       }
-    }
+    });
   });
 }
 
