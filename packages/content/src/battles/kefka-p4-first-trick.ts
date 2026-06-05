@@ -67,6 +67,7 @@ const ACCELERATION_CHECK_MS = 2_000;
 const CHAOS_ELEMENT_DELAY_MS = 5_000;
 const COMPLETE_AT = 109_000;
 const OUTSIDE_BOSS_MARKER_RADIUS = 1.275;
+const VOID_FLOOD_MARKER_SIDE_OFFSET = 5;
 
 const THUNDER_LENGTH = 40;
 const THUNDER_WIDTH = 10;
@@ -1455,8 +1456,8 @@ function scheduleVoidFlood(ctx: BattleScriptContext): void {
     ctx.spawn.fieldMarker({
       label: '生者暗黑光',
       center: {
-        x: exdeathPosition.x + purpleVector.x * 3,
-        y: exdeathPosition.y + purpleVector.y * 3,
+        x: exdeathPosition.x + purpleVector.x * VOID_FLOOD_MARKER_SIDE_OFFSET,
+        y: exdeathPosition.y + purpleVector.y * VOID_FLOOD_MARKER_SIDE_OFFSET,
       },
       shape: 'diamond',
       radius: 0.9,
@@ -1466,8 +1467,8 @@ function scheduleVoidFlood(ctx: BattleScriptContext): void {
     ctx.spawn.fieldMarker({
       label: '死者暗黑光',
       center: {
-        x: exdeathPosition.x + blueVector.x * 3,
-        y: exdeathPosition.y + blueVector.y * 3,
+        x: exdeathPosition.x + blueVector.x * VOID_FLOOD_MARKER_SIDE_OFFSET,
+        y: exdeathPosition.y + blueVector.y * VOID_FLOOD_MARKER_SIDE_OFFSET,
       },
       shape: 'triangle',
       radius: 0.9,
