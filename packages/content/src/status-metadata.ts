@@ -61,7 +61,7 @@ const manualStatusMetadataById: Record<string, StatusMetadata> = {
   kefka_p3_second_void_erosion_1: {
     id: 'kefka_p3_second_void_erosion_1',
     name: '无之侵蚀',
-    description: '无属性侵蚀效果，最多可累积到2层',
+    description: '再次受到黑洞射线时会替换为无之腐蚀',
     xivapiStatusId: 5452,
     iconId: 217398,
     iconPath: 'ui/icon/217000/217398.tex',
@@ -72,7 +72,7 @@ const manualStatusMetadataById: Record<string, StatusMetadata> = {
   kefka_p3_second_void_erosion_2: {
     id: 'kefka_p3_second_void_erosion_2',
     name: '无之侵蚀',
-    description: '无属性侵蚀效果，已累积到2层',
+    description: '旧版二层无之侵蚀状态，当前机制不再赋予',
     xivapiStatusId: 5452,
     iconId: 217399,
     iconPath: 'ui/icon/217000/217399.tex',

@@ -64,6 +64,10 @@ interface TerminalShareState {
   center?: Vector2;
 }
 
+type VoidErosionTransition =
+  | { causesDeath: true }
+  | { removeStatusId?: StatusId; applyStatusId: StatusId; causesDeath: false };
+
 const ARENA_RADIUS = 20;
 const BOSS_TARGET_RING_RADIUS = 0;
 const CENTER = { x: 0, y: 0 } as const satisfies Vector2;
@@ -306,6 +310,33 @@ function getFreshActor(ctx: BattleScriptContext, actorId: string): BaseActorSnap
 
 function hasStatus(actor: BaseActorSnapshot, statusId: StatusId): boolean {
   return actor.statuses.some((status) => status.id === statusId);
+}
+
+function getVoidErosionTransition(statusIds: readonly StatusId[]): VoidErosionTransition {
+  if (statusIds.includes(VOID_CORROSION_STATUS_ID)) {
+    return { causesDeath: true };
+  }
+
+  if (statusIds.includes(VOID_EROSION_2_STATUS_ID)) {
+    return {
+      removeStatusId: VOID_EROSION_2_STATUS_ID,
+      applyStatusId: VOID_CORROSION_STATUS_ID,
+      causesDeath: false,
+    };
+  }
+
+  if (statusIds.includes(VOID_EROSION_1_STATUS_ID)) {
+    return {
+      removeStatusId: VOID_EROSION_1_STATUS_ID,
+      applyStatusId: VOID_CORROSION_STATUS_ID,
+      causesDeath: false,
+    };
+  }
+
+  return {
+    applyStatusId: VOID_EROSION_1_STATUS_ID,
+    causesDeath: false,
+  };
 }
 
 function getActorsInsideCircle(
@@ -1124,24 +1155,18 @@ function applyVoidErosion(ctx: BattleScriptContext, actor: BaseActorSnapshot): v
     return;
   }
 
-  if (hasStatus(freshActor, VOID_CORROSION_STATUS_ID)) {
+  const transition = getVoidErosionTransition(freshActor.statuses.map((status) => status.id));
+
+  if (transition.causesDeath) {
     applySecondTrickDeath(ctx, freshActor, '无之腐蚀');
     return;
   }
 
-  if (hasStatus(freshActor, VOID_EROSION_2_STATUS_ID)) {
-    ctx.status.remove([freshActor.id], VOID_EROSION_2_STATUS_ID);
-    applyStatus(ctx, freshActor, VOID_CORROSION_STATUS_ID, 999_000);
-    return;
+  if (transition.removeStatusId !== undefined) {
+    ctx.status.remove([freshActor.id], transition.removeStatusId);
   }
 
-  if (hasStatus(freshActor, VOID_EROSION_1_STATUS_ID)) {
-    ctx.status.remove([freshActor.id], VOID_EROSION_1_STATUS_ID);
-    applyStatus(ctx, freshActor, VOID_EROSION_2_STATUS_ID, 999_000);
-    return;
-  }
-
-  applyStatus(ctx, freshActor, VOID_EROSION_1_STATUS_ID, 999_000);
+  applyStatus(ctx, freshActor, transition.applyStatusId, 999_000);
 }
 
 function lockBlackHoleShot(ctx: BattleScriptContext, hole: BlackHole, shotKey: string): void {
@@ -2055,23 +2080,17 @@ function applyVoidErosionProgress(ctx: BattleScriptContext, actor: BaseActorSnap
     return;
   }
 
-  if (hasStatus(freshActor, VOID_CORROSION_STATUS_ID)) {
+  const transition = getVoidErosionTransition(freshActor.statuses.map((status) => status.id));
+
+  if (transition.causesDeath) {
     return;
   }
 
-  if (hasStatus(freshActor, VOID_EROSION_2_STATUS_ID)) {
-    ctx.status.remove([freshActor.id], VOID_EROSION_2_STATUS_ID);
-    applyStatus(ctx, freshActor, VOID_CORROSION_STATUS_ID, 999_000);
-    return;
+  if (transition.removeStatusId !== undefined) {
+    ctx.status.remove([freshActor.id], transition.removeStatusId);
   }
 
-  if (hasStatus(freshActor, VOID_EROSION_1_STATUS_ID)) {
-    ctx.status.remove([freshActor.id], VOID_EROSION_1_STATUS_ID);
-    applyStatus(ctx, freshActor, VOID_EROSION_2_STATUS_ID, 999_000);
-    return;
-  }
-
-  applyStatus(ctx, freshActor, VOID_EROSION_1_STATUS_ID, 999_000);
+  applyStatus(ctx, freshActor, transition.applyStatusId, 999_000);
 }
 
 function applyExpectedBlackHoleShots(ctx: BattleScriptContext, count: number): void {
@@ -2687,5 +2706,6 @@ export const KEFKA_P3_SECOND_TRICK_TESTING = {
   getChaosExplosionDirections,
   createBlackHoleCenters,
   calculateSlapAoeCenter,
+  getVoidErosionTransition,
   isActorInsideRectangle,
 };

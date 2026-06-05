@@ -50,6 +50,7 @@ const {
   FIRST_TARGET_MARKER_COLOR,
   SECOND_TARGET_MARKER_COLOR,
   THIRD_TARGET_MARKER_COLOR,
+  getVoidErosionTransition,
   getChaosExplosionDirections,
   calculateSlapAoeCenter,
 } = KEFKA_P3_SECOND_TRICK_TESTING;
@@ -197,7 +198,7 @@ function getTerminalShareState(snapshot, index) {
 
 function getVoidErosionLevel(actor) {
   if (hasStatus(actor, VOID_CORROSION_STATUS_ID)) {
-    return 3;
+    return 2;
   }
 
   if (hasStatus(actor, VOID_EROSION_2_STATUS_ID)) {
@@ -635,6 +636,26 @@ test('第二组三连黑洞出现后7.1秒首射，后续每5.1秒射击', () =>
       assert.equal(getMechanics(snapshot, 'rectangleTelegraph', '黑洞射线').length, 3);
       advanceTo(simulation, shotAt + 50);
     }
+  });
+});
+
+test('黑洞射线第二次命中直接替换为无之腐蚀，第三次命中即死', () => {
+  assert.deepEqual(getVoidErosionTransition([]), {
+    applyStatusId: VOID_EROSION_1_STATUS_ID,
+    causesDeath: false,
+  });
+  assert.deepEqual(getVoidErosionTransition([VOID_EROSION_1_STATUS_ID]), {
+    removeStatusId: VOID_EROSION_1_STATUS_ID,
+    applyStatusId: VOID_CORROSION_STATUS_ID,
+    causesDeath: false,
+  });
+  assert.deepEqual(getVoidErosionTransition([VOID_CORROSION_STATUS_ID]), {
+    causesDeath: true,
+  });
+  assert.deepEqual(getVoidErosionTransition([VOID_EROSION_2_STATUS_ID]), {
+    removeStatusId: VOID_EROSION_2_STATUS_ID,
+    applyStatusId: VOID_CORROSION_STATUS_ID,
+    causesDeath: false,
   });
 });
 

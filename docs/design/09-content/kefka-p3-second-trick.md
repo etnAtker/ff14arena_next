@@ -51,13 +51,12 @@
 - 第二目标：状态 id `kefka_p3_second_second_target`，图标来源 `Status/3005`
 - 第三目标：状态 id `kefka_p3_second_third_target`，图标来源 `Status/3006`
 - 混沌之土：状态 id `kefka_p3_second_chaos_earth`，逻辑来源 `Status/5454`，中文文本由项目手写
-- 无之侵蚀 1 层：状态 id `kefka_p3_second_void_erosion_1`，逻辑来源 `Status/5452`
-- 无之侵蚀 2 层：状态 id `kefka_p3_second_void_erosion_2`，使用 1 层图标 id 加 `1`
+- 无之侵蚀：状态 id `kefka_p3_second_void_erosion_1`，逻辑来源 `Status/5452`
 - 无之腐蚀：状态 id `kefka_p3_second_void_corrosion`，逻辑来源 `Status/5453`
 
 混沌之土在持有者受到即将导致死亡的机制伤害时消耗，使持有者不死，并在 `1000ms` 后对其他所有玩家造成一次机制伤害并附加 `3s` 易伤。
 
-无之侵蚀首次获得为 1 层，第二次替换为 2 层，第三次替换为无之腐蚀。持有无之腐蚀后再次受到黑洞射线命中时死亡。
+无之侵蚀首次受到黑洞射线命中时获得，第二次命中直接替换为无之腐蚀。持有无之腐蚀后再次受到黑洞射线命中时死亡。
 
 目标状态赋予时同步生成头顶标点：
 
