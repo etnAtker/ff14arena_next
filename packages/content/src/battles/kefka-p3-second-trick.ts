@@ -103,7 +103,7 @@ const SLAP_SPAWN_TO_CAST_MS = 1_000;
 const SLAP_CAST_MS = 4_700;
 const SLAP_AOE_INTERVAL_MS = 600;
 const SLAP_AOE_RADIUS = 13;
-const SLAP_FOLLOWUP_DELAY_MS = 1_200;
+const SLAP_FOLLOWUP_DELAY_MS = 2_250;
 const SLAP_FAN_RADIUS = 30;
 const SLAP_FAN_ANGLE = Math.PI / 3;
 const SLAP_ARM_LENGTH = 4;
@@ -113,6 +113,8 @@ const SLAP_MARKER_COLOR = '#e879f9';
 const BLACK_HOLE_RADIUS = 2;
 const BLACK_HOLE_DISTANCE = 17;
 const BLACK_HOLE_SHOT_DELAY_MS = 7_100;
+const PERSISTENT_BLACK_HOLE_FIRST_SHOT_DELAY_MS = 7_100;
+const PERSISTENT_BLACK_HOLE_REPEAT_INTERVAL_MS = 5_100;
 const BLACK_HOLE_BEAM_LENGTH = 40;
 const BLACK_HOLE_BEAM_WIDTH = 2;
 const BLACK_HOLE_COLOR = '#111827';
@@ -128,40 +130,40 @@ const THUNDER_SECOND_DELAY_MS = 3_000;
 const CURSE_CAST_MS = 4_700;
 const CURSE_RADIUS = 30;
 const CURSE_ANGLE = Math.PI;
-const CHAOS_EXPLOSION_CAST_MS = 5_000;
+const CHAOS_EXPLOSION_CAST_MS = 4_700;
 const CHAOS_EXPLOSION_SECOND_DELAY_MS = 2_000;
 const CHAOS_EXPLOSION_FAN_ANGLE = Math.PI / 2;
 const CHAOS_EXPLOSION_FAN_RADIUS = 60;
 
-const TRUE_SELF_SPAWN_TO_CAST_MS = 1_500;
-const TRUE_SELF_CAST_MS = 4_000;
+const TRUE_SELF_SPAWN_TO_CAST_MS = 1_700;
+const TRUE_SELF_CAST_MS = 4_700;
 const TRUE_SELF_LATE_SPAWN_TO_CAST_MS = 2_000;
-const TRUE_SELF_LATE_CAST_MS = 5_000;
+const TRUE_SELF_LATE_CAST_MS = 4_700;
 const TRUE_SELF_LENGTH = 50;
 const TRUE_SELF_WIDTH = 10;
 
 const FIRST_SLAP_SPAWN_AT = 12_800;
-const FIRST_SLAP_DESPAWN_AT = 42_200;
-const FIRST_BLACK_HOLE_CAST_START_AT = 19_500;
-const FIRST_THUNDER_CAST_START_AT = 34_900;
-const FIRST_CURSE_CAST_START_AT = 42_900;
-const SECOND_SLAP_SPAWN_AT = 43_200;
-const SECOND_SLAP_DESPAWN_AT = 72_600;
-const FIRST_PERSISTENT_BLACK_HOLE_SPAWN_AT = 52_300;
-const SECOND_CURSE_CAST_START_AT = 73_600;
-const FIRST_TRUE_SELF_SPAWN_AT = 73_600;
-const FIRST_TRUE_SELF_DESPAWN_AT = 109_100;
-const SECOND_THUNDER_CAST_START_AT = 79_600;
-const SECOND_PERSISTENT_BLACK_HOLE_SPAWN_AT = 91_100;
-const THIRD_SLAP_SPAWN_AT = 110_100;
-const THIRD_SLAP_DESPAWN_AT = 129_100;
-const CHAOS_EXPLOSION_CAST_START_AT = 114_100;
-const LATE_BLACK_HOLE_SPAWN_AT = 123_000;
-const LATE_BLACK_HOLE_FIRST_SHOT_AT = 130_100;
-const LATE_BLACK_HOLE_SECOND_SHOT_AT = 137_100;
-const LATE_TRUE_SELF_SPAWN_AT = 130_100;
-const LATE_TRUE_SELF_CAST_START_AT = 132_100;
-const LATE_TRUE_SELF_RESOLVE_AT = 137_100;
+const FIRST_SLAP_DESPAWN_AT = 40_800;
+const FIRST_BLACK_HOLE_CAST_START_AT = 19_400;
+const FIRST_THUNDER_CAST_START_AT = 34_800;
+const FIRST_CURSE_CAST_START_AT = 42_800;
+const SECOND_SLAP_SPAWN_AT = FIRST_CURSE_CAST_START_AT;
+const SECOND_SLAP_DESPAWN_AT = 68_000;
+const FIRST_PERSISTENT_BLACK_HOLE_SPAWN_AT = 52_600;
+const SECOND_CURSE_CAST_START_AT = 70_000;
+const FIRST_TRUE_SELF_SPAWN_AT = SECOND_CURSE_CAST_START_AT;
+const FIRST_TRUE_SELF_DESPAWN_AT = 104_100;
+const SECOND_THUNDER_CAST_START_AT = 76_000;
+const SECOND_PERSISTENT_BLACK_HOLE_SPAWN_AT = 86_900;
+const THIRD_SLAP_SPAWN_AT = 106_100;
+const THIRD_SLAP_DESPAWN_AT = 125_500;
+const CHAOS_EXPLOSION_CAST_START_AT = 110_600;
+const LATE_BLACK_HOLE_SPAWN_AT = 120_400;
+const LATE_BLACK_HOLE_FIRST_SHOT_AT = 127_500;
+const LATE_BLACK_HOLE_SECOND_SHOT_AT = 134_600;
+const LATE_TRUE_SELF_SPAWN_AT = LATE_BLACK_HOLE_FIRST_SHOT_AT;
+const LATE_TRUE_SELF_CAST_START_AT = LATE_BLACK_HOLE_SECOND_SHOT_AT - TRUE_SELF_LATE_CAST_MS;
+const LATE_TRUE_SELF_RESOLVE_AT = LATE_BLACK_HOLE_SECOND_SHOT_AT;
 const LATE_TRUE_SELF_DESPAWN_AT = 140_100;
 const TERMINAL_ARROW_AT = 141_100;
 const TERMINAL_ARROW_RADIUS = 1.2;
@@ -1267,25 +1269,30 @@ function schedulePersistentBlackHoles(
   shotKeyPrefix: string,
 ): void {
   ctx.timeline.at(spawnAt, () => {
+    const shotAts = [
+      spawnAt + PERSISTENT_BLACK_HOLE_FIRST_SHOT_DELAY_MS,
+      spawnAt +
+        PERSISTENT_BLACK_HOLE_FIRST_SHOT_DELAY_MS +
+        PERSISTENT_BLACK_HOLE_REPEAT_INTERVAL_MS,
+      spawnAt +
+        PERSISTENT_BLACK_HOLE_FIRST_SHOT_DELAY_MS +
+        PERSISTENT_BLACK_HOLE_REPEAT_INTERVAL_MS * 2,
+    ];
+    const finalShotAt = shotAts[shotAts.length - 1]!;
     const holes = createBlackHoleCenters().map((center): BlackHole => {
       const hole: BlackHole = {
         center,
-        markerResolveAfterMs: BLACK_HOLE_SHOT_DELAY_MS * 3 + 100,
+        markerResolveAfterMs: finalShotAt - spawnAt + 100,
         tetherId: null,
       };
       spawnBlackHoleMarker(ctx, center, hole.markerResolveAfterMs);
-      hole.tetherId = spawnBlackHoleTether(ctx, hole, BLACK_HOLE_SHOT_DELAY_MS * 3);
+      hole.tetherId = spawnBlackHoleTether(ctx, hole, finalShotAt - spawnAt);
       return hole;
     });
 
-    for (let shotIndex = 1; shotIndex <= 3; shotIndex += 1) {
+    for (const [shotIndex, shotAt] of shotAts.entries()) {
       holes.forEach((hole, holeIndex) => {
-        scheduleBlackHoleShot(
-          ctx,
-          hole,
-          spawnAt + BLACK_HOLE_SHOT_DELAY_MS * shotIndex,
-          `${shotKeyPrefix}:${shotIndex}:${holeIndex}`,
-        );
+        scheduleBlackHoleShot(ctx, hole, shotAt, `${shotKeyPrefix}:${shotIndex + 1}:${holeIndex}`);
       });
     }
   });
@@ -2170,14 +2177,21 @@ function initializePersistentBlackHolesAt(
   const holes = createBlackHoleCenters().map(
     (center): BlackHole => ({
       center,
-      markerResolveAfterMs: BLACK_HOLE_SHOT_DELAY_MS * 3 + 100,
+      markerResolveAfterMs: 0,
       tetherId: null,
     }),
   );
-  const finalShotAt = spawnAt + BLACK_HOLE_SHOT_DELAY_MS * 3;
+  const shotAts = [
+    spawnAt + PERSISTENT_BLACK_HOLE_FIRST_SHOT_DELAY_MS,
+    spawnAt + PERSISTENT_BLACK_HOLE_FIRST_SHOT_DELAY_MS + PERSISTENT_BLACK_HOLE_REPEAT_INTERVAL_MS,
+    spawnAt +
+      PERSISTENT_BLACK_HOLE_FIRST_SHOT_DELAY_MS +
+      PERSISTENT_BLACK_HOLE_REPEAT_INTERVAL_MS * 2,
+  ];
+  const finalShotAt = shotAts[shotAts.length - 1]!;
 
-  for (let shotIndex = 1; shotIndex <= 3; shotIndex += 1) {
-    if (startTimeMs >= spawnAt + BLACK_HOLE_SHOT_DELAY_MS * shotIndex) {
+  for (const shotAt of shotAts) {
+    if (startTimeMs >= shotAt) {
       applyExpectedBlackHoleShots(ctx, holes.length);
     }
   }
@@ -2192,9 +2206,8 @@ function initializePersistentBlackHolesAt(
       hole.tetherId = spawnBlackHoleTether(ctx, hole, finalShotAt + 50 - startTimeMs);
     }
 
-    for (let shotIndex = 1; shotIndex <= 3; shotIndex += 1) {
-      const shotAt = spawnAt + BLACK_HOLE_SHOT_DELAY_MS * shotIndex;
-      const shotKey = `${shotKeyPrefix}:${shotIndex}:${holeIndex}`;
+    for (const [shotIndex, shotAt] of shotAts.entries()) {
+      const shotKey = `${shotKeyPrefix}:${shotIndex + 1}:${holeIndex}`;
 
       if (shotAt > startTimeMs) {
         scheduleBlackHoleShot(ctx, hole, shotAt, shotKey);
@@ -2571,7 +2584,7 @@ function buildKefkaP3SecondScript(ctx: BattleScriptContext): void {
   scheduleFirstBlackHoles(ctx);
   scheduleThunder(ctx, FIRST_THUNDER_CAST_START_AT, 'kefka_p3_second_thunder_1');
   scheduleCurse(ctx, FIRST_CURSE_CAST_START_AT, 'kefka_p3_second_curse_1');
-  scheduleSlap(ctx, SECOND_SLAP_SPAWN_AT, SLAP_SPAWN_TO_CAST_MS, SECOND_SLAP_DESPAWN_AT);
+  scheduleSlap(ctx, SECOND_SLAP_SPAWN_AT, 1_500, SECOND_SLAP_DESPAWN_AT);
   schedulePersistentBlackHoles(ctx, FIRST_PERSISTENT_BLACK_HOLE_SPAWN_AT, 'persistent:1');
   scheduleCurse(ctx, SECOND_CURSE_CAST_START_AT, 'kefka_p3_second_curse_2');
   scheduleTrueSelf(ctx, FIRST_TRUE_SELF_SPAWN_AT, FIRST_TRUE_SELF_DESPAWN_AT);
@@ -2635,6 +2648,8 @@ export const KEFKA_P3_SECOND_TRICK_TESTING = {
   THIRD_TARGET_MARKER_COLOR,
   TERMINAL_INJURY_DURATION_MS,
   BLACK_HOLE_SHOT_DELAY_MS,
+  PERSISTENT_BLACK_HOLE_FIRST_SHOT_DELAY_MS,
+  PERSISTENT_BLACK_HOLE_REPEAT_INTERVAL_MS,
   LATE_BLACK_HOLE_SPAWN_AT,
   LATE_BLACK_HOLE_FIRST_SHOT_AT,
   LATE_BLACK_HOLE_SECOND_SHOT_AT,
