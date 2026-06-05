@@ -263,7 +263,9 @@ function syncActorMarkerTextLabels(snapshot: SimulationSnapshot): void {
 
   const actorMarkerMechanics = snapshot.mechanics.filter(
     (mechanic): mechanic is ActorMarkerMechanicSnapshot =>
-      mechanic.kind === 'actorMarker' && mechanic.markerShape !== 'stackCircle',
+      mechanic.kind === 'actorMarker' &&
+      mechanic.markerShape !== 'stackCircle' &&
+      mechanic.showLabel !== false,
   );
   const activeActorMarkerIds = new Set(actorMarkerMechanics.map((mechanic) => mechanic.id));
 
@@ -301,7 +303,8 @@ function syncFieldMarkerTextLabels(snapshot: SimulationSnapshot): void {
   }
 
   const fieldMarkerMechanics = snapshot.mechanics.filter(
-    (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy',
+    (mechanic) =>
+      mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy' && mechanic.showLabel !== false,
   );
   const activeFieldMarkerIds = new Set(fieldMarkerMechanics.map((mechanic) => mechanic.id));
 
@@ -890,7 +893,8 @@ function draw(now: number): void {
   syncActorMarkerTextLabels(props.snapshot);
   syncFieldMarkerTextLabels(props.snapshot);
   const activeEnemyFieldMarkers = props.snapshot.mechanics.filter(
-    (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy',
+    (mechanic) =>
+      mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy' && mechanic.showLabel !== false,
   );
 
   graphics

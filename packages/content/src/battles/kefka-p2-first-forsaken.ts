@@ -347,6 +347,7 @@ function showMarker(ctx: BattleScriptContext, actor: BaseActorSnapshot, marker: 
     label: getMarkerLabel(marker),
     target: actor,
     markerShape: getMarkerShape(marker),
+    showLabel: false,
     resolveAfterMs: MARKER_DISPLAY_MS,
   });
 }
@@ -851,6 +852,7 @@ function resolveEvenRoundNearTargets(
       center: addPosition,
       shape: 'enemy',
       radius: ADD_MARKER_RADIUS,
+      showLabel: false,
       resolveAfterMs: ADD_FOOT_CAST_DELAY_MS + DESTROYING_FOOT_CAST_MS + FIXED_TICK_MS,
     });
   }

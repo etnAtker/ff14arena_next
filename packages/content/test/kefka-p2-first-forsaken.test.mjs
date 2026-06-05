@@ -176,6 +176,7 @@ test('凯夫卡一运首次点名消耗点名池且视觉头标独立过期', ()
       circleDot: 3,
       fanSector: 3,
     });
+    assert.ok(actorMarkers.every((marker) => marker.showLabel === false));
 
     advanceTo(simulation, MARKER_EXPIRED_AT);
 
@@ -382,6 +383,7 @@ test('凯夫卡一运偶数轮点名生成3个可见小怪并开始4个消灭之
     );
 
     assert.equal(fieldMarkers.length, 3);
+    assert.ok(fieldMarkers.every((marker) => marker.showLabel === false));
     assert.ok(
       fieldMarkers.every((marker) => {
         const markerDistance = Math.hypot(marker.center.x, marker.center.y);

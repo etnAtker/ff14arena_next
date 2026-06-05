@@ -147,6 +147,7 @@ export interface BattleScriptContext {
       markerShape?: ActorMarkerShape;
       radius?: number;
       color?: string;
+      showLabel?: boolean;
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;
@@ -177,6 +178,7 @@ export interface BattleScriptContext {
       direction?: number;
       stableId?: string;
       color?: string;
+      showLabel?: boolean;
       targetRingRadius?: number;
       targetRingColor?: string;
       resolveAfterMs?: number;

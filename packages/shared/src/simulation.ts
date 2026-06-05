@@ -185,6 +185,7 @@ export interface ActorMarkerMechanicSnapshot {
   id: string;
   kind: 'actorMarker';
   label: string;
+  showLabel?: boolean;
   sourceId: string;
   targetId: string;
   markerShape: ActorMarkerShape;
@@ -222,6 +223,7 @@ export interface FieldMarkerMechanicSnapshot {
   id: string;
   kind: 'fieldMarker';
   label: string;
+  showLabel?: boolean;
   sourceId: string;
   stableId?: string;
   center: Vector2;

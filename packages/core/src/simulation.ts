@@ -1104,6 +1104,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             markerShape: options.markerShape ?? 'stackArrows',
             ...(options.radius === undefined ? {} : { radius: options.radius }),
             ...(options.color === undefined ? {} : { color: options.color }),
+            ...(options.showLabel === undefined ? {} : { showLabel: options.showLabel }),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
@@ -1157,6 +1158,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             radius: options.radius,
             ...(options.direction === undefined ? {} : { direction: options.direction }),
             ...(options.color === undefined ? {} : { color: options.color }),
+            ...(options.showLabel === undefined ? {} : { showLabel: options.showLabel }),
             ...(options.targetRingRadius === undefined
               ? {}
               : { targetRingRadius: options.targetRingRadius }),
