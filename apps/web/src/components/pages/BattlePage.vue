@@ -94,7 +94,6 @@ interface StatusViewModel {
   countdownLabel: string;
   title: string;
   iconFailed: boolean;
-  isFake: boolean;
   partyListPriority: number;
   originalIndex: number;
 }
@@ -402,7 +401,6 @@ function createStatusViewModels(statuses: BaseActorSnapshot['statuses']): Status
         countdownLabel: formatStatusCountdown(status.expiresAt),
         title: '',
         iconFailed,
-        isFake: status.name.includes('（假）'),
         partyListPriority: metadata?.partyListPriority ?? Number.MAX_SAFE_INTEGER,
         originalIndex: index,
       };
@@ -709,7 +707,6 @@ onBeforeUnmount(() => {
                 @error="handleStatusIconError(status)"
               />
               <span v-else class="status-icon-fallback">{{ status.fallbackText }}</span>
-              <span v-if="status.isFake" class="status-fake-badge">?</span>
               <span class="status-countdown">{{ status.countdownLabel }}</span>
             </span>
           </div>
@@ -855,7 +852,6 @@ onBeforeUnmount(() => {
                   @error="handleStatusIconError(status)"
                 />
                 <span v-else class="status-icon-fallback">{{ status.fallbackText }}</span>
-                <span v-if="status.isFake" class="status-fake-badge">?</span>
                 <span class="status-countdown">{{ status.countdownLabel }}</span>
               </span>
             </div>
@@ -1103,26 +1099,6 @@ onBeforeUnmount(() => {
   font-weight: 700;
   line-height: 1.1;
   text-align: center;
-}
-
-.status-fake-badge {
-  position: absolute;
-  top: -2px;
-  right: 0;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  width: 13px;
-  height: 13px;
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  border-radius: 999px;
-  background: #dc2626;
-  color: #ffffff;
-  font-size: 10px;
-  font-weight: 900;
-  line-height: 1;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
-  pointer-events: none;
 }
 
 .status-countdown {
