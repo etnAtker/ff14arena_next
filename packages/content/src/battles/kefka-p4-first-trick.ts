@@ -27,13 +27,20 @@ interface FanSpec {
 
 interface MagicPattern {
   icePreview: FanSpec[];
+  iceOpposite: FanSpec[];
   iceResolve: FanSpec[];
   thunderPreview: RectSpec[];
+  thunderOpposite: RectSpec[];
   thunderResolve: RectSpec[];
   iceTruth: TrickTruth;
   thunderTruth: TrickTruth;
   iceMarkerAngle: number;
   thunderMarkerAngle: number;
+}
+
+interface MagicResolveInversion {
+  ice?: boolean;
+  thunder?: boolean;
 }
 
 interface BigCrossPlan {
@@ -589,14 +596,14 @@ function createMagicPattern(): MagicPattern {
     createThunderRect(thunderDirection, thunderSide * THUNDER_NEAR_OFFSET),
     createThunderRect(thunderDirection, -thunderSide * THUNDER_FAR_OFFSET),
   ];
-  const thunderResolveFake = [
+  const thunderOpposite = [
     createThunderRect(thunderDirection, thunderSide * THUNDER_FAR_OFFSET),
     createThunderRect(thunderDirection, -thunderSide * THUNDER_NEAR_OFFSET),
   ];
   const icePairIndex = Math.random() < 0.5 ? 0 : 1;
   const icePreviewDirections =
     icePairIndex === 0 ? [-Math.PI / 4, (3 * Math.PI) / 4] : [(-3 * Math.PI) / 4, Math.PI / 4];
-  const iceResolveFakeDirections =
+  const iceOppositeDirections =
     icePairIndex === 0 ? [(-3 * Math.PI) / 4, Math.PI / 4] : [-Math.PI / 4, (3 * Math.PI) / 4];
   const icePreview = icePreviewDirections.map((direction) => ({
     center: CENTER,
@@ -604,7 +611,7 @@ function createMagicPattern(): MagicPattern {
     angle: ICE_ANGLE,
     radius: ICE_RADIUS,
   }));
-  const iceResolveFake = iceResolveFakeDirections.map((direction) => ({
+  const iceOpposite = iceOppositeDirections.map((direction) => ({
     center: CENTER,
     direction,
     angle: ICE_ANGLE,
@@ -615,9 +622,11 @@ function createMagicPattern(): MagicPattern {
 
   return {
     icePreview,
-    iceResolve: isFake(iceTruth) ? iceResolveFake : icePreview,
+    iceOpposite,
+    iceResolve: isFake(iceTruth) ? iceOpposite : icePreview,
     thunderPreview,
-    thunderResolve: isFake(thunderTruth) ? thunderResolveFake : thunderPreview,
+    thunderOpposite,
+    thunderResolve: isFake(thunderTruth) ? thunderOpposite : thunderPreview,
     iceTruth,
     thunderTruth,
     iceMarkerAngle: Math.random() * Math.PI * 2,
@@ -703,17 +712,31 @@ function spawnMagicTruthIndicator(
   });
 }
 
+function getMagicIceResolve(pattern: MagicPattern, inverted = false): FanSpec[] {
+  return isFake(pattern.iceTruth) !== inverted ? pattern.iceOpposite : pattern.icePreview;
+}
+
+function getMagicThunderResolve(pattern: MagicPattern, inverted = false): RectSpec[] {
+  return isFake(pattern.thunderTruth) !== inverted
+    ? pattern.thunderOpposite
+    : pattern.thunderPreview;
+}
+
 function resolveMagic(
   ctx: BattleScriptContext,
   pattern: MagicPattern,
   components: readonly MagicComponent[] = ['ice', 'thunder'],
+  inversion: MagicResolveInversion = {},
 ): void {
+  const iceResolve = getMagicIceResolve(pattern, inversion.ice === true);
+  const thunderResolve = getMagicThunderResolve(pattern, inversion.thunder === true);
+
   for (const actor of ctx.select.allPlayers()) {
     const hitIce =
-      components.includes('ice') && pattern.iceResolve.some((fan) => isActorInsideFan(actor, fan));
+      components.includes('ice') && iceResolve.some((fan) => isActorInsideFan(actor, fan));
     const hitThunder =
       components.includes('thunder') &&
-      pattern.thunderResolve.some((rect) => isActorInsideRectangle(actor, rect));
+      thunderResolve.some((rect) => isActorInsideRectangle(actor, rect));
 
     if (hitIce) {
       applyP4Damage(ctx, actor, '玄乎乎魔法：冰');
@@ -788,9 +811,14 @@ function scheduleManaReleaseMagic(ctx: BattleScriptContext): void {
   });
   ctx.timeline.at(96_000 + MAGIC_CAST_MS, () => {
     const pattern = ctx.state.getValue<MagicPattern>('kefkaP4:magic:6');
+    const thunderPattern = ctx.state.getValue<MagicPattern>('kefkaP4:magic:4');
+    const icePattern = ctx.state.getValue<MagicPattern>('kefkaP4:magic:5');
 
     if (pattern !== undefined) {
-      resolveMagic(ctx, pattern);
+      resolveMagic(ctx, pattern, ['ice', 'thunder'], {
+        ice: icePattern !== undefined && isFake(icePattern.iceTruth),
+        thunder: thunderPattern !== undefined && isFake(thunderPattern.thunderTruth),
+      });
     }
   });
 }

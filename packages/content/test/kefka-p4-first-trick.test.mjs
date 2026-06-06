@@ -25,6 +25,8 @@ const {
   THUNDER_NEAR_OFFSET,
   THUNDER_FAR_OFFSET,
   createMagicPattern,
+  isActorInsideRectangle,
+  isActorInsideFan,
 } = KEFKA_P4_FIRST_TRICK_TESTING;
 
 const SUPPORT_SLOTS = ['MT', 'ST', 'H1', 'H2'];
@@ -172,6 +174,54 @@ function createVoidFloodSidePosition(exdeathPosition, side) {
     x: right.x * sideMultiplier * 5,
     y: right.y * sideMultiplier * 5,
   };
+}
+
+function createProbeActor(position) {
+  return {
+    mechanicActive: true,
+    position,
+    facing: 0,
+  };
+}
+
+function isPointInsideAnyRectangle(position, rectangles) {
+  const actor = createProbeActor(position);
+
+  return rectangles.some((rectangle) => isActorInsideRectangle(actor, rectangle));
+}
+
+function isPointInsideAnyFan(position, fans) {
+  const actor = createProbeActor(position);
+
+  return fans.some((fan) => isActorInsideFan(actor, fan));
+}
+
+function getMagicThunderResolveForTest(pattern, inverted = false) {
+  return (pattern.thunderTruth === 'fake') !== inverted
+    ? pattern.thunderOpposite
+    : pattern.thunderPreview;
+}
+
+function getMagicIceResolveForTest(pattern, inverted = false) {
+  return (pattern.iceTruth === 'fake') !== inverted ? pattern.iceOpposite : pattern.icePreview;
+}
+
+function findIsolatedMagicPoint(matches, excludes) {
+  for (let x = -18; x <= 18; x += 0.5) {
+    for (let y = -18; y <= 18; y += 0.5) {
+      const position = { x, y };
+
+      if (Math.hypot(x, y) > 19) {
+        continue;
+      }
+
+      if (matches(position) && excludes.every((exclude) => !exclude(position))) {
+        return position;
+      }
+    }
+  }
+
+  assert.fail('missing isolated magic test point');
 }
 
 test('凯夫卡P4一运注册并使用 6m Boss 目标圈', () => {
@@ -517,4 +567,50 @@ test('后续机制按时间轴显示雷冰变体、究极预兆和隐藏玄乎�
   assert.equal(getMechanics(snapshot, 'ringIndicator', '玄乎乎魔法真假').length, 0);
   assert.ok(getMechanics(snapshot, 'fanTelegraph', '玄乎乎魔法：冰').length > 0);
   assert.ok(getMechanics(snapshot, 'rectangleTelegraph', '玄乎乎魔法：雷').length > 0);
+});
+
+test('最终玄乎乎魔法按前置雷冰真假额外反转判定', () => {
+  withMockedRandom(new Array(5000).fill(0.6), () => {
+    const simulation = createKefkaP4SimulationDirect();
+
+    advanceTo(simulation, 96_000 + 50);
+    let snapshot = simulation.getSnapshot();
+    const thunderPattern = snapshot.scriptState['kefkaP4:magic:4'];
+    const icePattern = snapshot.scriptState['kefkaP4:magic:5'];
+    const finalPattern = snapshot.scriptState['kefkaP4:magic:6'];
+
+    assert.equal(thunderPattern.thunderTruth, 'fake');
+    assert.equal(icePattern.iceTruth, 'fake');
+    assert.equal(finalPattern.thunderTruth, 'fake');
+    assert.equal(finalPattern.iceTruth, 'fake');
+
+    const finalThunder = getMagicThunderResolveForTest(finalPattern, true);
+    const finalThunderWithoutExtraInvert = getMagicThunderResolveForTest(finalPattern, false);
+    const finalIce = getMagicIceResolveForTest(finalPattern, true);
+    const finalIceWithoutExtraInvert = getMagicIceResolveForTest(finalPattern, false);
+
+    const thunderPoint = findIsolatedMagicPoint(
+      (position) => isPointInsideAnyRectangle(position, finalThunder),
+      [
+        (position) => isPointInsideAnyRectangle(position, finalThunderWithoutExtraInvert),
+        (position) => isPointInsideAnyFan(position, finalIce),
+      ],
+    );
+    const icePoint = findIsolatedMagicPoint(
+      (position) => isPointInsideAnyFan(position, finalIce),
+      [
+        (position) => isPointInsideAnyFan(position, finalIceWithoutExtraInvert),
+        (position) => isPointInsideAnyRectangle(position, finalThunder),
+      ],
+    );
+
+    submitPose(simulation, getActorBySlot(snapshot, 'MT'), thunderPoint);
+    submitPose(simulation, getActorBySlot(snapshot, 'ST'), icePoint);
+
+    advanceTo(simulation, 96_000 + MAGIC_CAST_MS);
+    snapshot = simulation.getSnapshot();
+
+    assert.equal(getActorBySlot(snapshot, 'MT').lastDamageSource, '玄乎乎魔法：雷');
+    assert.equal(getActorBySlot(snapshot, 'ST').lastDamageSource, '玄乎乎魔法：冰');
+  });
 });
