@@ -86,7 +86,6 @@ const THUNDER_NEAR_OFFSET = 5;
 const THUNDER_FAR_OFFSET = 15;
 const ICE_RADIUS = 20;
 const ICE_ANGLE = Math.PI / 2;
-const FLAPPING_ULTIMATE_RADIUS = 10;
 const LIGHTNING_RADIUS = 8;
 const WATER_SHARE_RADIUS = 8;
 const WATER_SHARE_REQUIRED_PLAYERS = 3;
@@ -827,24 +826,6 @@ function scheduleManaReleaseMagic(ctx: BattleScriptContext): void {
 function scheduleFlappingUltimate(ctx: BattleScriptContext): void {
   ctx.timeline.at(71_000, () => {
     ctx.boss.cast('kefka_p4_flapping_ultimate', '扑腾腾究极', MAGIC_CAST_MS);
-  });
-  ctx.timeline.at(71_000 + MAGIC_CAST_MS - TELEGRAPH_MS, () => {
-    ctx.spawn.circleTelegraph({
-      label: '扑腾腾究极',
-      center: CENTER,
-      radius: FLAPPING_ULTIMATE_RADIUS,
-      color: '#f97316',
-      resolveAfterMs: TELEGRAPH_MS,
-    });
-  });
-  ctx.timeline.at(71_000 + MAGIC_CAST_MS, () => {
-    for (const actor of getActorsInsideCircle(
-      ctx.select.allPlayers(),
-      CENTER,
-      FLAPPING_ULTIMATE_RADIUS,
-    )) {
-      applyP4FatalDamage(ctx, actor, '扑腾腾究极');
-    }
   });
 }
 
@@ -1712,7 +1693,6 @@ export const KEFKA_P4_FIRST_TRICK_TESTING = {
   CHAOS_ELEMENT_DELAY_MS,
   VOID_FLOOD_CAST_MS,
   MANA_RELEASE_CAST_MS,
-  FLAPPING_ULTIMATE_RADIUS,
   TELEGRAPH_MS,
   CURSE_HOWL_STATUS_ID,
   FORKED_LIGHTNING_STATUS_ID,
