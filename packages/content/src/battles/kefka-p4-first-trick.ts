@@ -7,6 +7,7 @@ import { getStatusDisplayName } from '../status-metadata';
 type TrickTruth = 'real' | 'fake';
 type DarkLightKind = 'living' | 'dead';
 type BigCrossPlanId = 'curse_accel' | 'accel' | 'lightning' | 'water';
+type BigCrossPlanCategory = 'A' | 'B';
 type ProtectionStatusId = typeof ALLAGAN_FIELD_STATUS_ID | typeof BEYOND_DEATH_STATUS_ID;
 type ChaosElementKind = 'fire' | 'water';
 type MagicComponent = 'ice' | 'thunder';
@@ -939,29 +940,19 @@ function getBigCrossPlans(round: 1 | 2): BigCrossPlan[] {
   ];
 }
 
-function planHasStatus(plan: BigCrossPlan, statusId: StatusId): boolean {
-  return plan.statuses.some((status) => status.statusId === statusId);
+function getBigCrossPlanCategory(planId: BigCrossPlanId): BigCrossPlanCategory {
+  return planId === 'curse_accel' || planId === 'accel' ? 'A' : 'B';
 }
 
 function canAssignBigCrossPlan(
   plan: BigCrossPlan,
   previousPlanId: BigCrossPlanId | undefined,
-  allPlans: readonly BigCrossPlan[],
 ): boolean {
   if (previousPlanId === undefined) {
     return true;
   }
 
-  if (previousPlanId === plan.id) {
-    return false;
-  }
-
-  const previousPlan = allPlans.find((candidate) => candidate.id === previousPlanId);
-
-  return (
-    previousPlan === undefined ||
-    !plan.statuses.some((status) => planHasStatus(previousPlan, status.statusId))
-  );
+  return getBigCrossPlanCategory(plan.id) !== getBigCrossPlanCategory(previousPlanId);
 }
 
 function selectRoundPlansForGroup(
@@ -970,9 +961,7 @@ function selectRoundPlansForGroup(
   previousPlans: Record<PartySlot, BigCrossPlanId> | undefined,
 ): Map<PartySlot, BigCrossPlan> {
   const validPermutations = createPermutations(plans).filter((permutation) =>
-    slots.every((slot, index) =>
-      canAssignBigCrossPlan(permutation[index]!, previousPlans?.[slot], plans),
-    ),
+    slots.every((slot, index) => canAssignBigCrossPlan(permutation[index]!, previousPlans?.[slot])),
   );
 
   if (validPermutations.length === 0) {

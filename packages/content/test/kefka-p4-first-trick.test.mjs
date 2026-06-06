@@ -37,6 +37,12 @@ const BIG_CROSS_STATUS_IDS = [
   KEFKA_P4_FIRST_TRICK_TESTING.COMPRESSED_WATER_STATUS_ID,
   KEFKA_P4_FIRST_TRICK_TESTING.ACCELERATION_BOMB_STATUS_ID,
 ];
+const BIG_CROSS_PLAN_CATEGORIES = {
+  curse_accel: 'A',
+  accel: 'A',
+  lightning: 'B',
+  water: 'B',
+};
 
 function withMockedRandom(randomValues, fn) {
   const originalRandom = Math.random;
@@ -136,6 +142,30 @@ function getStatus(actor, statusId) {
 
 function getBigCrossStatuses(actor) {
   return actor.statuses.filter((status) => BIG_CROSS_STATUS_IDS.includes(status.id));
+}
+
+function getBigCrossPlanCategory(planId) {
+  return BIG_CROSS_PLAN_CATEGORIES[planId];
+}
+
+function assertBigCrossPlanCategoriesAlternate(firstPlans, secondPlans) {
+  for (const slot of PARTY_SLOT_ORDER) {
+    assert.notEqual(
+      getBigCrossPlanCategory(secondPlans[slot]),
+      getBigCrossPlanCategory(firstPlans[slot]),
+    );
+  }
+}
+
+function assertNoPlayerGetsBothElementalPlans(firstPlans, secondPlans) {
+  for (const slot of PARTY_SLOT_ORDER) {
+    assert.ok(
+      !(
+        (firstPlans[slot] === 'lightning' && secondPlans[slot] === 'water') ||
+        (firstPlans[slot] === 'water' && secondPlans[slot] === 'lightning')
+      ),
+    );
+  }
 }
 
 function getStatusExpiresAtBySlot(snapshot, slot, statusId) {
@@ -262,7 +292,7 @@ test('开场同时显示玄乎乎魔法和真假环机制', () => {
   assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '大十字'));
 });
 
-test('两轮大十字同组内不会把同一 Buff 组重复给同一玩家', () => {
+test('两轮大十字按 A/B 组交替分配', () => {
   const simulation = createKefkaP4Simulation(3);
 
   advanceTo(simulation, 8_000 + BIG_CROSS_CAST_MS);
@@ -274,13 +304,24 @@ test('两轮大十字同组内不会把同一 Buff 组重复给同一玩家', ()
   assert.ok(firstPlans);
   assert.ok(secondPlans);
 
-  for (const slot of PARTY_SLOT_ORDER) {
-    assert.notEqual(secondPlans[slot], firstPlans[slot]);
-  }
+  assertBigCrossPlanCategoriesAlternate(firstPlans, secondPlans);
+  assertNoPlayerGetsBothElementalPlans(firstPlans, secondPlans);
 
   for (const slots of [SUPPORT_SLOTS, DPS_SLOTS]) {
     assert.equal(new Set(slots.map((slot) => firstPlans[slot])).size, 4);
     assert.equal(new Set(slots.map((slot) => secondPlans[slot])).size, 4);
+    assert.deepEqual(slots.map((slot) => getBigCrossPlanCategory(firstPlans[slot])).sort(), [
+      'A',
+      'A',
+      'B',
+      'B',
+    ]);
+    assert.deepEqual(slots.map((slot) => getBigCrossPlanCategory(secondPlans[slot])).sort(), [
+      'A',
+      'A',
+      'B',
+      'B',
+    ]);
   }
 
   for (const actor of snapshot.actors) {
@@ -304,9 +345,8 @@ test('大十字合法分配不依赖随机重试兜底', () => {
     assert.ok(firstPlans);
     assert.ok(secondPlans);
 
-    for (const slot of PARTY_SLOT_ORDER) {
-      assert.notEqual(secondPlans[slot], firstPlans[slot]);
-    }
+    assertBigCrossPlanCategoriesAlternate(firstPlans, secondPlans);
+    assertNoPlayerGetsBothElementalPlans(firstPlans, secondPlans);
 
     for (const actor of snapshot.actors) {
       const statuses = getBigCrossStatuses(actor);
@@ -414,6 +454,8 @@ test('大十字雷水 Buff 时长组在两轮之间保持对应关系', () => {
     snapshot = simulation.getSnapshot();
     const secondPlans = snapshot.scriptState['kefkaP4:bigCrossPlans:2'];
     assert.ok(secondPlans);
+    assertBigCrossPlanCategoriesAlternate(firstPlans, secondPlans);
+    assertNoPlayerGetsBothElementalPlans(firstPlans, secondPlans);
     const secondElementalExpiresAts = [];
 
     for (const slots of [SUPPORT_SLOTS, DPS_SLOTS]) {
