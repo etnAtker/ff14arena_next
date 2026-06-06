@@ -525,7 +525,7 @@ function getInitialOutsideBosses(): { chaos: Vector2; exdeath: Vector2 } {
   const left = createPointOnDirection((-3 * Math.PI) / 4, OUTSIDE_BOSS_DISTANCE);
   const right = createPointOnDirection(-Math.PI / 4, OUTSIDE_BOSS_DISTANCE);
 
-  return Math.random() < 0.5 ? { chaos: left, exdeath: right } : { chaos: right, exdeath: left };
+  return { chaos: left, exdeath: right };
 }
 
 function setChaosPosition(ctx: BattleScriptContext, position: Vector2): void {

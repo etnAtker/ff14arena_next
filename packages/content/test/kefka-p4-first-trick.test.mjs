@@ -177,6 +177,15 @@ function getMechanics(snapshot, kind, label = null) {
   );
 }
 
+function getFieldMarkerByStableId(snapshot, stableId) {
+  const marker = snapshot.mechanics.find(
+    (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.stableId === stableId,
+  );
+  assert.ok(marker, `missing field marker ${stableId}`);
+
+  return marker;
+}
+
 function getThunderOffset(rect) {
   const forward = {
     x: Math.cos(rect.direction),
@@ -289,6 +298,26 @@ test('开场同时显示玄乎乎魔法和真假环机制', () => {
   assert.ok(snapshot.mechanics.some((mechanic) => mechanic.kind === 'rectangleTelegraph'));
   assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '玄乎乎魔法'));
   assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '大十字'));
+});
+
+test('开场卡奥斯固定左上且艾克斯迪斯固定右上', () => {
+  withMockedRandom(new Array(5000).fill(0.9), () => {
+    const simulation = createKefkaP4SimulationDirect();
+
+    advanceTo(simulation, 50);
+    const snapshot = simulation.getSnapshot();
+    const chaos = getFieldMarkerByStableId(snapshot, 'kefka_p4_chaos');
+    const exdeath = getFieldMarkerByStableId(snapshot, 'kefka_p4_exdeath');
+
+    assert.equal(chaos.label, '卡奥斯');
+    assert.equal(exdeath.label, '艾克斯迪斯');
+    assert.ok(chaos.center.x < 0);
+    assert.ok(chaos.center.y < 0);
+    assert.ok(exdeath.center.x > 0);
+    assert.ok(exdeath.center.y < 0);
+    assert.equal(Math.round(Math.hypot(chaos.center.x, chaos.center.y)), 25);
+    assert.equal(Math.round(Math.hypot(exdeath.center.x, exdeath.center.y)), 25);
+  });
 });
 
 test('两轮大十字按 A/B 组交替分配', () => {
