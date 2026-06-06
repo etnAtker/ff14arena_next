@@ -6,9 +6,14 @@ import { getBattleDefinition } from '../src/index.ts';
 import { KEFKA_P4_FIRST_TRICK_TESTING } from '../src/battles/kefka-p4-first-trick.ts';
 
 const {
+  MAGIC_CAST_MS,
+  MANA_STORE_CAST_MS,
   BIG_CROSS_CAST_MS,
   CHAOS_CAST_MS,
   CHAOS_ELEMENT_DELAY_MS,
+  MANA_RELEASE_CAST_MS,
+  FLAPPING_ULTIMATE_RADIUS,
+  TELEGRAPH_MS,
   FORKED_LIGHTNING_STATUS_ID,
   COMPRESSED_WATER_STATUS_ID,
   ALLAGAN_FIELD_STATUS_ID,
@@ -133,6 +138,12 @@ function getBigCrossStatuses(actor) {
 
 function getStatusExpiresAtBySlot(snapshot, slot, statusId) {
   return getStatus(getActorBySlot(snapshot, slot), statusId)?.expiresAt ?? null;
+}
+
+function getMechanics(snapshot, kind, label = null) {
+  return snapshot.mechanics.filter(
+    (mechanic) => mechanic.kind === kind && (label === null || mechanic.label === label),
+  );
 }
 
 function getThunderOffset(rect) {
@@ -369,6 +380,30 @@ test('大十字雷水 Buff 时长组在两轮之间保持对应关系', () => {
   });
 });
 
+test('水属性压缩假 Buff 使用叉形闪电的 8m 圆形效果', () => {
+  withMockedRandom(new Array(5000).fill(0.9), () => {
+    const simulation = createKefkaP4SimulationDirect();
+
+    advanceTo(simulation, 24_000);
+    let snapshot = simulation.getSnapshot();
+    assert.ok(
+      snapshot.actors.some((actor) =>
+        actor.statuses.some(
+          (status) => status.id === COMPRESSED_WATER_STATUS_ID && status.name.includes('（假）'),
+        ),
+      ),
+    );
+
+    advanceTo(simulation, 59_000);
+    snapshot = simulation.getSnapshot();
+    const waterCircleTelegraphs = getMechanics(snapshot, 'circleTelegraph', '水属性压缩');
+
+    assert.ok(waterCircleTelegraphs.length > 0);
+    assert.ok(waterCircleTelegraphs.every((mechanic) => mechanic.radius === 8));
+    assert.equal(getMechanics(snapshot, 'donutTelegraph', '水属性压缩').length, 0);
+  });
+});
+
 test('最终大十字赋予 15s 生死伤，并在每组分配 2 个领域和 2 个超越死亡', () => {
   const simulation = createKefkaP4Simulation(5);
 
@@ -437,4 +472,49 @@ test('生死伤吃到错误暗黑光时会立即消失', () => {
 
   const resolvedActor = getActorBySlot(snapshot, 'MT');
   assert.equal(getStatus(resolvedActor, wound.id), null);
+});
+
+test('后续机制按时间轴显示雷冰变体、究极预兆和隐藏玄乎乎魔法', () => {
+  const simulation = createKefkaP4Simulation(7);
+
+  advanceTo(simulation, 56_000 + 50);
+  let snapshot = simulation.getSnapshot();
+  assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔力储存'));
+
+  advanceTo(simulation, 56_000 + MANA_STORE_CAST_MS + 50);
+  snapshot = simulation.getSnapshot();
+  assert.ok(!snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔力储存'));
+
+  advanceTo(simulation, 63_000 + 50);
+  snapshot = simulation.getSnapshot();
+  assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '劈啪啪暴雷'));
+  assert.ok(getMechanics(snapshot, 'rectangleTelegraph', '玄乎乎魔法：雷').length > 0);
+  assert.equal(getMechanics(snapshot, 'fanTelegraph', '玄乎乎魔法：冰').length, 0);
+
+  advanceTo(simulation, 71_000 + MAGIC_CAST_MS - TELEGRAPH_MS);
+  snapshot = simulation.getSnapshot();
+  const ultimateTelegraph = getMechanics(snapshot, 'circleTelegraph', '扑腾腾究极')[0];
+  assert.ok(ultimateTelegraph);
+  assert.equal(ultimateTelegraph.radius, FLAPPING_ULTIMATE_RADIUS);
+
+  advanceTo(simulation, 80_000 + 50);
+  snapshot = simulation.getSnapshot();
+  assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '扩大大冰封'));
+  assert.ok(getMechanics(snapshot, 'fanTelegraph', '玄乎乎魔法：冰').length > 0);
+  assert.equal(getMechanics(snapshot, 'rectangleTelegraph', '玄乎乎魔法：雷').length, 0);
+
+  advanceTo(simulation, 89_000 + 50);
+  snapshot = simulation.getSnapshot();
+  assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔力释放'));
+  assert.ok(getMechanics(snapshot, 'ringIndicator', '玄乎乎魔法真假').length > 0);
+  assert.equal(getMechanics(snapshot, 'fanTelegraph', '玄乎乎魔法：冰').length, 0);
+  assert.equal(getMechanics(snapshot, 'rectangleTelegraph', '玄乎乎魔法：雷').length, 0);
+
+  advanceTo(simulation, 89_000 + MANA_RELEASE_CAST_MS + 50);
+  snapshot = simulation.getSnapshot();
+  assert.ok(!snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔力释放'));
+  assert.ok(!snapshot.hud.bossCastBars.some((cast) => cast.actionName === '玄乎乎魔法'));
+  assert.equal(getMechanics(snapshot, 'ringIndicator', '玄乎乎魔法真假').length, 0);
+  assert.ok(getMechanics(snapshot, 'fanTelegraph', '玄乎乎魔法：冰').length > 0);
+  assert.ok(getMechanics(snapshot, 'rectangleTelegraph', '玄乎乎魔法：雷').length > 0);
 });

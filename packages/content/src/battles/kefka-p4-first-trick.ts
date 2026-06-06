@@ -9,6 +9,7 @@ type DarkLightKind = 'living' | 'dead';
 type BigCrossPlanId = 'curse_accel' | 'accel' | 'lightning' | 'water';
 type ProtectionStatusId = typeof ALLAGAN_FIELD_STATUS_ID | typeof BEYOND_DEATH_STATUS_ID;
 type ChaosElementKind = 'fire' | 'water';
+type MagicComponent = 'ice' | 'thunder';
 
 interface RectSpec {
   center: Vector2;
@@ -58,9 +59,11 @@ const CENTER = { x: 0, y: 0 } as const satisfies Vector2;
 const OUTSIDE_BOSS_DISTANCE = ARENA_RADIUS + 5;
 const TELEGRAPH_MS = 500;
 const MAGIC_CAST_MS = 5_000;
+const MANA_STORE_CAST_MS = 3_000;
 const BIG_CROSS_CAST_MS = 8_000;
 const CHAOS_CAST_MS = 8_000;
 const VOID_FLOOD_CAST_MS = 5_000;
+const MANA_RELEASE_CAST_MS = 7_000;
 const INJURY_DURATION_MS = 3_000;
 const MECHANIC_DAMAGE = 1;
 const ACCELERATION_CHECK_MS = 2_000;
@@ -75,6 +78,7 @@ const THUNDER_NEAR_OFFSET = 5;
 const THUNDER_FAR_OFFSET = 15;
 const ICE_RADIUS = 20;
 const ICE_ANGLE = Math.PI / 2;
+const FLAPPING_ULTIMATE_RADIUS = 10;
 const LIGHTNING_RADIUS = 8;
 const WATER_SHARE_RADIUS = 8;
 const WATER_SHARE_REQUIRED_PLAYERS = 3;
@@ -625,57 +629,91 @@ function spawnMagicTelegraphs(
   ctx: BattleScriptContext,
   pattern: MagicPattern,
   resolveAfterMs: number,
+  components: readonly MagicComponent[] = ['ice', 'thunder'],
+  showTruthIndicator = true,
 ): void {
-  for (const fan of pattern.icePreview) {
-    ctx.spawn.fanTelegraph({
-      label: '玄乎乎魔法：冰',
-      center: fan.center,
-      direction: fan.direction,
-      angle: fan.angle,
-      radius: fan.radius,
-      resolveAfterMs,
-    });
+  if (components.includes('ice')) {
+    for (const fan of pattern.icePreview) {
+      ctx.spawn.fanTelegraph({
+        label: '玄乎乎魔法：冰',
+        center: fan.center,
+        direction: fan.direction,
+        angle: fan.angle,
+        radius: fan.radius,
+        resolveAfterMs,
+      });
+    }
   }
 
-  for (const rect of pattern.thunderPreview) {
-    ctx.spawn.rectangleTelegraph({
-      label: '玄乎乎魔法：雷',
-      center: rect.center,
-      direction: rect.direction,
-      length: rect.length,
-      width: rect.width,
-      color: '#a78bfa',
-      resolveAfterMs,
-    });
+  if (components.includes('thunder')) {
+    for (const rect of pattern.thunderPreview) {
+      ctx.spawn.rectangleTelegraph({
+        label: '玄乎乎魔法：雷',
+        center: rect.center,
+        direction: rect.direction,
+        length: rect.length,
+        width: rect.width,
+        color: '#a78bfa',
+        resolveAfterMs,
+      });
+    }
   }
 
+  if (!showTruthIndicator) {
+    return;
+  }
+
+  spawnMagicTruthIndicator(ctx, pattern, resolveAfterMs, components);
+}
+
+function spawnMagicTruthIndicator(
+  ctx: BattleScriptContext,
+  pattern: MagicPattern,
+  resolveAfterMs: number,
+  components: readonly MagicComponent[] = ['ice', 'thunder'],
+): void {
   ctx.spawn.ringIndicator({
     label: '玄乎乎魔法真假',
     center: CENTER,
     resolveAfterMs,
     rings: [
-      {
-        radius: 1.35,
-        color: '#ffffff',
-        markerAngle: pattern.iceMarkerAngle,
-        markerColor: isFake(pattern.iceTruth) ? '#ef4444' : '#38bdf8',
-        markerKind: isFake(pattern.iceTruth) ? 'question' : 'solid',
-      },
-      {
-        radius: 2.05,
-        color: '#a855f7',
-        markerAngle: pattern.thunderMarkerAngle,
-        markerColor: isFake(pattern.thunderTruth) ? '#ef4444' : '#38bdf8',
-        markerKind: isFake(pattern.thunderTruth) ? 'question' : 'solid',
-      },
+      ...(components.includes('ice')
+        ? [
+            {
+              radius: 1.35,
+              color: '#ffffff',
+              markerAngle: pattern.iceMarkerAngle,
+              markerColor: isFake(pattern.iceTruth) ? '#ef4444' : '#38bdf8',
+              markerKind: isFake(pattern.iceTruth) ? 'question' : 'solid',
+            } as const,
+          ]
+        : []),
+      ...(components.includes('thunder')
+        ? [
+            {
+              radius: 2.05,
+              color: '#a855f7',
+              markerAngle: pattern.thunderMarkerAngle,
+              markerColor: isFake(pattern.thunderTruth) ? '#ef4444' : '#38bdf8',
+              markerKind: isFake(pattern.thunderTruth) ? 'question' : 'solid',
+            } as const,
+          ]
+        : []),
     ],
   });
 }
 
-function resolveMagic(ctx: BattleScriptContext, pattern: MagicPattern): void {
+function resolveMagic(
+  ctx: BattleScriptContext,
+  pattern: MagicPattern,
+  components: readonly MagicComponent[] = ['ice', 'thunder'],
+): void {
   for (const actor of ctx.select.allPlayers()) {
-    const hitIce = pattern.iceResolve.some((fan) => isActorInsideFan(actor, fan));
-    const hitThunder = pattern.thunderResolve.some((rect) => isActorInsideRectangle(actor, rect));
+    const hitIce =
+      components.includes('ice') && pattern.iceResolve.some((fan) => isActorInsideFan(actor, fan));
+    const hitThunder =
+      components.includes('thunder') &&
+      pattern.thunderResolve.some((rect) => isActorInsideRectangle(actor, rect));
 
     if (hitIce) {
       applyP4Damage(ctx, actor, '玄乎乎魔法：冰');
@@ -687,19 +725,96 @@ function resolveMagic(ctx: BattleScriptContext, pattern: MagicPattern): void {
   }
 }
 
-function scheduleMagic(ctx: BattleScriptContext, startAt: number, index: number): void {
+function scheduleMagic(
+  ctx: BattleScriptContext,
+  startAt: number,
+  index: number,
+  options: {
+    actionId?: string;
+    actionName?: string;
+    components?: readonly MagicComponent[];
+    showCast?: boolean;
+  } = {},
+): void {
+  const components = options.components ?? (['ice', 'thunder'] as const);
+  const actionId = options.actionId ?? `kefka_p4_mysterious_magic_${index}`;
+  const actionName = options.actionName ?? '玄乎乎魔法';
+  const showCast = options.showCast ?? true;
+
   ctx.timeline.at(startAt, () => {
     const pattern = createMagicPattern();
 
-    ctx.boss.cast(`kefka_p4_mysterious_magic_${index}`, '玄乎乎魔法', MAGIC_CAST_MS);
+    if (showCast) {
+      ctx.boss.cast(actionId, actionName, MAGIC_CAST_MS);
+    }
     ctx.state.setValue(`kefkaP4:magic:${index}`, pattern);
-    spawnMagicTelegraphs(ctx, pattern, MAGIC_CAST_MS);
+    spawnMagicTelegraphs(ctx, pattern, MAGIC_CAST_MS, components);
   });
   ctx.timeline.at(startAt + MAGIC_CAST_MS, () => {
     const pattern = ctx.state.getValue<MagicPattern>(`kefkaP4:magic:${index}`);
 
     if (pattern !== undefined) {
+      resolveMagic(ctx, pattern, components);
+    }
+  });
+}
+
+function scheduleKefkaNoopCast(
+  ctx: BattleScriptContext,
+  startAt: number,
+  actionId: string,
+  actionName: string,
+  castMs: number,
+): void {
+  ctx.timeline.at(startAt, () => {
+    ctx.boss.cast(actionId, actionName, castMs);
+  });
+}
+
+function scheduleManaReleaseMagic(ctx: BattleScriptContext): void {
+  ctx.timeline.at(89_000, () => {
+    const pattern = createMagicPattern();
+
+    ctx.boss.cast('kefka_p4_mana_release', '魔力释放', MANA_RELEASE_CAST_MS);
+    ctx.state.setValue('kefkaP4:magic:6', pattern);
+    spawnMagicTruthIndicator(ctx, pattern, MANA_RELEASE_CAST_MS);
+  });
+  ctx.timeline.at(96_000, () => {
+    const pattern = ctx.state.getValue<MagicPattern>('kefkaP4:magic:6');
+
+    if (pattern !== undefined) {
+      spawnMagicTelegraphs(ctx, pattern, MAGIC_CAST_MS, ['ice', 'thunder'], false);
+    }
+  });
+  ctx.timeline.at(96_000 + MAGIC_CAST_MS, () => {
+    const pattern = ctx.state.getValue<MagicPattern>('kefkaP4:magic:6');
+
+    if (pattern !== undefined) {
       resolveMagic(ctx, pattern);
+    }
+  });
+}
+
+function scheduleFlappingUltimate(ctx: BattleScriptContext): void {
+  ctx.timeline.at(71_000, () => {
+    ctx.boss.cast('kefka_p4_flapping_ultimate', '扑腾腾究极', MAGIC_CAST_MS);
+  });
+  ctx.timeline.at(71_000 + MAGIC_CAST_MS - TELEGRAPH_MS, () => {
+    ctx.spawn.circleTelegraph({
+      label: '扑腾腾究极',
+      center: CENTER,
+      radius: FLAPPING_ULTIMATE_RADIUS,
+      color: '#f97316',
+      resolveAfterMs: TELEGRAPH_MS,
+    });
+  });
+  ctx.timeline.at(71_000 + MAGIC_CAST_MS, () => {
+    for (const actor of getActorsInsideCircle(
+      ctx.select.allPlayers(),
+      CENTER,
+      FLAPPING_ULTIMATE_RADIUS,
+    )) {
+      applyP4FatalDamage(ctx, actor, '扑腾腾究极');
     }
   });
 }
@@ -990,6 +1105,42 @@ function spawnCenteredCircleTelegraph(
   });
 }
 
+function resolveCenteredCircleDamage(
+  ctx: BattleScriptContext,
+  actor: BaseActorSnapshot,
+  label: string,
+): void {
+  spawnCenteredCircleTelegraph(ctx, label, actor.position, LIGHTNING_RADIUS);
+
+  for (const hit of getActorsInsideCircle(
+    ctx.select.allPlayers(),
+    actor.position,
+    LIGHTNING_RADIUS,
+  )) {
+    applyP4Damage(ctx, hit, label);
+  }
+}
+
+function resolveThreePlayerShare(
+  ctx: BattleScriptContext,
+  actor: BaseActorSnapshot,
+  label: string,
+): void {
+  spawnCenteredCircleTelegraph(ctx, label, actor.position, WATER_SHARE_RADIUS);
+  const hits = getActorsInsideCircle(ctx.select.allPlayers(), actor.position, WATER_SHARE_RADIUS);
+
+  if (hits.length < WATER_SHARE_REQUIRED_PLAYERS) {
+    for (const hit of hits) {
+      applyP4FatalDamage(ctx, hit, `${label}人数不足`);
+    }
+    return;
+  }
+
+  for (const hit of hits) {
+    applyP4Damage(ctx, hit, label);
+  }
+}
+
 function resolveForkedLightning(ctx: BattleScriptContext, actorId: string, fake: boolean): void {
   const actor = getFreshActor(ctx, actorId);
 
@@ -997,19 +1148,12 @@ function resolveForkedLightning(ctx: BattleScriptContext, actorId: string, fake:
     return;
   }
 
-  spawnCenteredCircleTelegraph(ctx, '叉形闪电', actor.position, LIGHTNING_RADIUS);
-  const hits = getActorsInsideCircle(ctx.select.allPlayers(), actor.position, LIGHTNING_RADIUS);
-
-  if (fake && hits.length < WATER_SHARE_REQUIRED_PLAYERS) {
-    for (const hit of hits) {
-      applyP4FatalDamage(ctx, hit, '叉形闪电人数不足');
-    }
+  if (fake) {
+    resolveThreePlayerShare(ctx, actor, '叉形闪电');
     return;
   }
 
-  for (const hit of hits) {
-    applyP4Damage(ctx, hit, '叉形闪电');
-  }
+  resolveCenteredCircleDamage(ctx, actor, '叉形闪电');
 }
 
 function resolveCompressedWater(ctx: BattleScriptContext, actorId: string, fake: boolean): void {
@@ -1020,39 +1164,11 @@ function resolveCompressedWater(ctx: BattleScriptContext, actorId: string, fake:
   }
 
   if (fake) {
-    ctx.spawn.donutTelegraph({
-      label: '水属性压缩',
-      center: actor.position,
-      innerRadius: WATER_SHARE_RADIUS,
-      outerRadius: CHAOS_DONUT_OUTER_RADIUS,
-      color: '#38bdf8',
-      resolveAfterMs: TELEGRAPH_MS,
-    });
-
-    for (const hit of getActorsInsideDonut(
-      ctx.select.allPlayers(),
-      actor.position,
-      WATER_SHARE_RADIUS,
-      CHAOS_DONUT_OUTER_RADIUS,
-    )) {
-      applyP4Damage(ctx, hit, '水属性压缩');
-    }
+    resolveCenteredCircleDamage(ctx, actor, '水属性压缩');
     return;
   }
 
-  spawnCenteredCircleTelegraph(ctx, '水属性压缩', actor.position, WATER_SHARE_RADIUS);
-  const hits = getActorsInsideCircle(ctx.select.allPlayers(), actor.position, WATER_SHARE_RADIUS);
-
-  if (hits.length < WATER_SHARE_REQUIRED_PLAYERS) {
-    for (const hit of hits) {
-      applyP4FatalDamage(ctx, hit, '水属性压缩人数不足');
-    }
-    return;
-  }
-
-  for (const hit of hits) {
-    applyP4Damage(ctx, hit, '水属性压缩');
-  }
+  resolveThreePlayerShare(ctx, actor, '水属性压缩');
 }
 
 function accelerationMovedKey(actorId: string, resolveAt: number): string {
@@ -1527,6 +1643,19 @@ function buildKefkaP4FirstScript(ctx: BattleScriptContext): void {
     reappearExdeath(ctx);
   });
   scheduleVoidFlood(ctx);
+  scheduleKefkaNoopCast(ctx, 56_000, 'kefka_p4_mana_store', '魔力储存', MANA_STORE_CAST_MS);
+  scheduleMagic(ctx, 63_000, 4, {
+    actionId: 'kefka_p4_crackling_thunder',
+    actionName: '劈啪啪暴雷',
+    components: ['thunder'],
+  });
+  scheduleFlappingUltimate(ctx);
+  scheduleMagic(ctx, 80_000, 5, {
+    actionId: 'kefka_p4_expanded_deep_freeze',
+    actionName: '扩大大冰封',
+    components: ['ice'],
+  });
+  scheduleManaReleaseMagic(ctx);
 
   ctx.timeline.at(COMPLETE_AT, () => {
     ctx.state.complete();
@@ -1560,10 +1689,13 @@ export const KEFKA_P4_FIRST_TRICK_BATTLE: BattleDefinition = {
 export const KEFKA_P4_FIRST_TRICK_TESTING = {
   COMPLETE_AT,
   MAGIC_CAST_MS,
+  MANA_STORE_CAST_MS,
   BIG_CROSS_CAST_MS,
   CHAOS_CAST_MS,
   CHAOS_ELEMENT_DELAY_MS,
   VOID_FLOOD_CAST_MS,
+  MANA_RELEASE_CAST_MS,
+  FLAPPING_ULTIMATE_RADIUS,
   TELEGRAPH_MS,
   CURSE_HOWL_STATUS_ID,
   FORKED_LIGHTNING_STATUS_ID,
