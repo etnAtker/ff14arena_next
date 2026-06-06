@@ -3,6 +3,7 @@ import type {
   ActorControlFrame,
   EncounterResult,
   PartySlot,
+  RealtimeEncoding,
   RoomPhase,
   RoomRuleOptions,
 } from '@ff14arena/shared';
@@ -56,6 +57,7 @@ export interface RoomRecord {
   snapshotBroadcastCounter: number;
   latestResult: EncounterResult | null;
   pendingControlByActorId: Map<string, ActorControlFrame>;
+  realtimeEncodingBySocketId: Map<string, RealtimeEncoding>;
   syncId: number;
   startCountdown: RoomStartCountdownRecord | null;
   startCountdownHandle: NodeJS.Timeout | null;

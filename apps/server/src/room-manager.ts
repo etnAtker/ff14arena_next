@@ -6,19 +6,29 @@ import type {
   ClientToServerEvents,
   ContinuousSimulationInputFrame,
   PartySlot,
+  RealtimeBinaryPayload,
   RoomJoinPayload,
   RoomStartPayload,
   RoomStateDto,
   RoomSummaryDto,
   RoomUpdateOptionsPayload,
   ServerToClientEvents,
+  SimEventsPayload,
   SimResyncRequestPayload,
+  SimSnapshotPayload,
+  SimStartPayload,
   SimulationEvent,
   SimulationSnapshot,
   UseKnockbackImmuneSimulationInput,
   UseSprintSimulationInput,
 } from '@ff14arena/shared';
-import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
+import {
+  decodeContinuousInputFrame,
+  encodeSimEventsPayload,
+  encodeSimSnapshotPayload,
+  encodeSimStartPayload,
+  PARTY_SLOT_ORDER,
+} from '@ff14arena/shared';
 import { ServerMetricsCollector, type RoomMetricDescriptor } from './metrics';
 import {
   buildPartyBlueprint,
@@ -46,6 +56,12 @@ const SNAPSHOT_BROADCAST_INTERVAL_TICKS = 20;
 const DEFAULT_ROOM_OPTIONS = {
   deadActorsInteract: true,
 };
+
+function isRealtimeBinaryPayload(
+  payload: ContinuousSimulationInputFrame | RealtimeBinaryPayload,
+): payload is RealtimeBinaryPayload {
+  return payload instanceof ArrayBuffer || ArrayBuffer.isView(payload);
+}
 
 export interface PendingRoomCreateResult {
   roomId: string;
@@ -169,6 +185,7 @@ export class RoomManager {
       snapshotBroadcastCounter: 0,
       latestResult: null,
       pendingControlByActorId: new Map(),
+      realtimeEncodingBySocketId: new Map(),
       syncId: 1,
       startCountdown: null,
       startCountdownHandle: null,
@@ -253,6 +270,75 @@ export class RoomManager {
     };
   }
 
+  private setRealtimeEncoding(
+    socket: TypedSocket,
+    room: RoomRecord,
+    payload: RoomJoinPayload,
+  ): void {
+    room.realtimeEncodingBySocketId.set(
+      socket.id,
+      payload.realtimeEncoding === 'protobuf' ? 'protobuf' : 'json',
+    );
+  }
+
+  private getRoomSockets(room: RoomRecord): TypedSocket[] {
+    const socketIds = new Set<string>();
+
+    for (const slot of PARTY_SLOT_ORDER) {
+      const occupant = room.slots[slot];
+
+      if (occupant.type === 'player' && occupant.socketId !== null && occupant.online) {
+        socketIds.add(occupant.socketId);
+      }
+    }
+
+    for (const spectator of room.spectators.values()) {
+      if (spectator.socketId !== null && spectator.online) {
+        socketIds.add(spectator.socketId);
+      }
+    }
+
+    return [...socketIds]
+      .map((socketId) => this.io.sockets.sockets.get(socketId))
+      .filter((socket): socket is TypedSocket => socket !== undefined);
+  }
+
+  private emitRealtimePayload(
+    room: RoomRecord,
+    eventName: 'sim:start' | 'sim:snapshot' | 'sim:events',
+    jsonPayload: SimStartPayload | SimSnapshotPayload | SimEventsPayload,
+    protobufPayload: Uint8Array,
+    options?: {
+      target?: TypedSocket;
+      volatile?: boolean;
+    },
+  ): void {
+    const targets = options?.target === undefined ? this.getRoomSockets(room) : [options.target];
+
+    for (const target of targets) {
+      const payload =
+        room.realtimeEncodingBySocketId.get(target.id) === 'protobuf'
+          ? protobufPayload
+          : jsonPayload;
+
+      switch (eventName) {
+        case 'sim:start':
+          target.emit('sim:start', payload as SimStartPayload | RealtimeBinaryPayload);
+          break;
+        case 'sim:snapshot':
+          target.emit('sim:snapshot', payload as SimSnapshotPayload | RealtimeBinaryPayload);
+          break;
+        case 'sim:events':
+          if (options?.volatile === true) {
+            target.volatile.emit('sim:events', payload as SimEventsPayload | RealtimeBinaryPayload);
+          } else {
+            target.emit('sim:events', payload as SimEventsPayload | RealtimeBinaryPayload);
+          }
+          break;
+      }
+    }
+  }
+
   private emitSimulationEvents(room: RoomRecord, events: SimulationEvent[]): void {
     if (events.length === 0) {
       return;
@@ -266,14 +352,10 @@ export class RoomManager {
       events,
     };
     const hasReliableEvent = events.some((event) => event.type !== 'actorMoved');
-    const target = this.io.to(room.roomId);
 
-    if (hasReliableEvent) {
-      target.emit('sim:events', payload);
-      return;
-    }
-
-    target.volatile.emit('sim:events', payload);
+    this.emitRealtimePayload(room, 'sim:events', payload, encodeSimEventsPayload(payload), {
+      volatile: !hasReliableEvent,
+    });
   }
 
   private tickRoom(room: RoomRecord): void {
@@ -383,6 +465,8 @@ export class RoomManager {
       this.joinPendingRoom(socket, pendingRoom!, payload, userName);
       return;
     }
+
+    this.setRealtimeEncoding(socket, room, payload);
 
     const currentSlot = this.findPlayerSlot(room, payload.userId);
 
@@ -497,6 +581,7 @@ export class RoomManager {
       return;
     }
 
+    room.realtimeEncodingBySocketId.delete(socket.id);
     const slot = this.findPlayerSlotBySocket(room, socket.id);
 
     if (slot === undefined) {
@@ -522,6 +607,7 @@ export class RoomManager {
         const spectator = this.getSpectatorBySocket(room, socketId);
 
         if (spectator !== undefined) {
+          room.realtimeEncodingBySocketId.delete(socketId);
           this.handleSpectatorDeparture(room, spectator, false);
           return;
         }
@@ -529,6 +615,7 @@ export class RoomManager {
         continue;
       }
 
+      room.realtimeEncodingBySocketId.delete(socketId);
       this.handlePlayerDeparture(room, slot, false);
       return;
     }
@@ -558,6 +645,7 @@ export class RoomManager {
     }
 
     const room = this.instantiatePendingRoom(pendingRoom);
+    this.setRealtimeEncoding(socket, room, payload);
     const targetSlot = payload.slot ?? this.findFirstAvailableSlot(room);
 
     if (targetSlot === undefined || room.slots[targetSlot].type === 'player') {
@@ -924,7 +1012,13 @@ export class RoomManager {
     });
   }
 
-  enqueueContinuousInput(socket: TypedSocket, inputFrame: ContinuousSimulationInputFrame): void {
+  enqueueContinuousInput(
+    socket: TypedSocket,
+    payload: ContinuousSimulationInputFrame | RealtimeBinaryPayload,
+  ): void {
+    const inputFrame = isRealtimeBinaryPayload(payload)
+      ? decodeContinuousInputFrame(payload)
+      : payload;
     const room = this.rooms.get(inputFrame.roomId);
 
     if (room === undefined) {
@@ -1132,12 +1226,13 @@ export class RoomManager {
     this.ensureSimulationLoop(room);
 
     const startSnapshot = simulation.getSnapshot();
-
-    this.io.to(room.roomId).emit('sim:start', {
+    const startPayload = {
       roomId: room.roomId,
       syncId: room.syncId,
       snapshot: this.createClientSnapshot(startSnapshot),
-    });
+    };
+
+    this.emitRealtimePayload(room, 'sim:start', startPayload, encodeSimStartPayload(startPayload));
     this.metrics?.recordSimStart();
     this.emitRoomState(room);
     this.emitRoomSlots(room);
@@ -1239,12 +1334,14 @@ export class RoomManager {
     };
 
     if (options.target !== undefined) {
-      options.target.emit('sim:snapshot', payload);
+      this.emitRealtimePayload(room, 'sim:snapshot', payload, encodeSimSnapshotPayload(payload), {
+        target: options.target,
+      });
       this.metrics?.recordSnapshot(room.roomId);
       return;
     }
 
-    this.io.to(room.roomId).emit('sim:snapshot', payload);
+    this.emitRealtimePayload(room, 'sim:snapshot', payload, encodeSimSnapshotPayload(payload));
     this.metrics?.recordSnapshot(room.roomId);
   }
 

@@ -122,6 +122,8 @@
 - `payload.facing`
 - `payload.moveDirection`
 
+客户端可在 `room:join` 中声明 `realtimeEncoding: "protobuf"`。声明后，`sim:start`、`sim:snapshot`、`sim:events` 和 `sim:input-frame` 使用 Protobuf 二进制承载；未声明时继续使用 JSON，供旧客户端和现有测试兼容。
+
 ### 当前下行事件
 
 - `room:state`

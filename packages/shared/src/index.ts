@@ -3,5 +3,6 @@ export * from './battle';
 export * from './events';
 export * from './metrics';
 export * from './protocol';
+export * from './realtime-codec';
 export * from './room';
 export * from './simulation';
