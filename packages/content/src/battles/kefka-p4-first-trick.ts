@@ -49,7 +49,7 @@ interface BigCrossPlan {
   statuses: Array<{
     statusId: StatusId;
     durationMs: number;
-    resolver: (ctx: BattleScriptContext, actorId: string, fake: boolean) => void;
+    resolver?: (ctx: BattleScriptContext, actorId: string, fake: boolean) => void;
   }>;
 }
 
@@ -66,19 +66,63 @@ const BOSS_TARGET_RING_RADIUS = 6;
 const CENTER = { x: 0, y: 0 } as const satisfies Vector2;
 const OUTSIDE_BOSS_DISTANCE = ARENA_RADIUS + 5;
 const TELEGRAPH_MS = 500;
-const MAGIC_CAST_MS = 5_000;
-const MANA_STORE_CAST_MS = 3_000;
-const BIG_CROSS_CAST_MS = 8_000;
-const CHAOS_CAST_MS = 8_000;
-const VOID_FLOOD_CAST_MS = 5_000;
-const MANA_RELEASE_CAST_MS = 7_000;
+const MAGIC_CAST_MS = 4_700;
+const MANA_STORE_CAST_MS = 2_700;
+const BIG_CROSS_CAST_MS = 8_700;
+const CHAOS_CAST_MS = 8_700;
+const VOID_FLOOD_CAST_MS = 4_700;
+const DARK_LIGHT_CAST_MS = 5_200;
+const MANA_RELEASE_CAST_MS = 6_700;
 const INJURY_DURATION_MS = 3_000;
 const MECHANIC_DAMAGE = 1;
-const ACCELERATION_CHECK_MS = 2_000;
+const ACCELERATION_SAMPLE_BEFORE_MS = 500;
 const CHAOS_ELEMENT_DELAY_MS = 5_000;
-const COMPLETE_AT = 109_000;
+const COMPLETE_AT = 113_852;
 const OUTSIDE_BOSS_MARKER_RADIUS = 1.275;
 const VOID_FLOOD_MARKER_SIDE_OFFSET = 5;
+
+const TIMELINE = {
+  magic1StartAt: 0,
+  bigCross1StartAt: 383,
+  chaos1StartAt: 5_475,
+  magic2StartAt: 14_923,
+  bigCross2StartAt: 15_297,
+  chaos2StartAt: 20_383,
+  magic3StartAt: 30_055,
+  finalBigCrossStartAt: 30_258,
+  chaosDespawnAt: 42_374,
+  exdeathDespawnAt: 42_374,
+  exdeathReappearAt: 43_374,
+  voidFloodStartAt: 46_374,
+  darkLightStartAt: 46_365,
+  manaStoreStartAt: 57_176,
+  thunderStartAt: 63_402,
+  flappingUltimateStartAt: 73_589,
+  iceStartAt: 81_453,
+  manaReleaseStartAt: 92_770,
+  finalMagicStartAt: 99_819,
+  punishingLightStartAt: 109_152,
+} as const;
+
+const TIMELINE_RESOLVE = {
+  magic1ResolveAt: TIMELINE.magic1StartAt + MAGIC_CAST_MS,
+  bigCross1ResolveAt: TIMELINE.bigCross1StartAt + BIG_CROSS_CAST_MS,
+  chaos1ResolveAt: TIMELINE.chaos1StartAt + CHAOS_CAST_MS,
+  magic2ResolveAt: TIMELINE.magic2StartAt + MAGIC_CAST_MS,
+  bigCross2ResolveAt: TIMELINE.bigCross2StartAt + BIG_CROSS_CAST_MS,
+  chaos2ResolveAt: TIMELINE.chaos2StartAt + CHAOS_CAST_MS,
+  magic3ResolveAt: TIMELINE.magic3StartAt + MAGIC_CAST_MS,
+  finalBigCrossResolveAt: TIMELINE.finalBigCrossStartAt + BIG_CROSS_CAST_MS,
+  voidFloodResolveAt: TIMELINE.voidFloodStartAt + VOID_FLOOD_CAST_MS,
+  darkLightResolveAt: TIMELINE.darkLightStartAt + DARK_LIGHT_CAST_MS,
+  manaStoreResolveAt: TIMELINE.manaStoreStartAt + MANA_STORE_CAST_MS,
+  thunderResolveAt: TIMELINE.thunderStartAt + MAGIC_CAST_MS,
+  flappingUltimateResolveAt: TIMELINE.flappingUltimateStartAt + MAGIC_CAST_MS,
+  iceResolveAt: TIMELINE.iceStartAt + MAGIC_CAST_MS,
+  manaReleaseResolveAt: TIMELINE.manaReleaseStartAt + MANA_RELEASE_CAST_MS,
+  finalMagicResolveAt: TIMELINE.finalMagicStartAt + MAGIC_CAST_MS,
+  punishingLightResolveAt: TIMELINE.punishingLightStartAt + MAGIC_CAST_MS,
+} as const;
 
 const THUNDER_LENGTH = 40;
 const THUNDER_WIDTH = 10;
@@ -795,21 +839,21 @@ function scheduleKefkaNoopCast(
 }
 
 function scheduleManaReleaseMagic(ctx: BattleScriptContext): void {
-  ctx.timeline.at(89_000, () => {
+  ctx.timeline.at(TIMELINE.manaReleaseStartAt, () => {
     const pattern = createMagicPattern();
 
-    ctx.boss.cast('kefka_p4_mana_release', '魔力释放', MANA_RELEASE_CAST_MS);
+    ctx.boss.cast('kefka_p4_mana_release', '魔法放出', MANA_RELEASE_CAST_MS);
     ctx.state.setValue('kefkaP4:magic:6', pattern);
     spawnMagicTruthIndicator(ctx, pattern, MANA_RELEASE_CAST_MS);
   });
-  ctx.timeline.at(96_000, () => {
+  ctx.timeline.at(TIMELINE.finalMagicStartAt, () => {
     const pattern = ctx.state.getValue<MagicPattern>('kefkaP4:magic:6');
 
     if (pattern !== undefined) {
       spawnMagicTelegraphs(ctx, pattern, MAGIC_CAST_MS, ['ice', 'thunder'], false);
     }
   });
-  ctx.timeline.at(96_000 + MAGIC_CAST_MS, () => {
+  ctx.timeline.at(TIMELINE_RESOLVE.finalMagicResolveAt, () => {
     const pattern = ctx.state.getValue<MagicPattern>('kefkaP4:magic:6');
     const thunderPattern = ctx.state.getValue<MagicPattern>('kefkaP4:magic:4');
     const icePattern = ctx.state.getValue<MagicPattern>('kefkaP4:magic:5');
@@ -824,7 +868,7 @@ function scheduleManaReleaseMagic(ctx: BattleScriptContext): void {
 }
 
 function scheduleFlappingUltimate(ctx: BattleScriptContext): void {
-  ctx.timeline.at(71_000, () => {
+  ctx.timeline.at(TIMELINE.flappingUltimateStartAt, () => {
     ctx.boss.cast('kefka_p4_flapping_ultimate', '扑腾腾究极', MAGIC_CAST_MS);
   });
 }
@@ -839,7 +883,6 @@ function getBigCrossPlans(round: 1 | 2): BigCrossPlan[] {
           {
             statusId: ACCELERATION_BOMB_STATUS_ID,
             durationMs: 51_000,
-            resolver: resolveAccelerationBomb,
           },
         ],
       },
@@ -849,7 +892,6 @@ function getBigCrossPlans(round: 1 | 2): BigCrossPlan[] {
           {
             statusId: ACCELERATION_BOMB_STATUS_ID,
             durationMs: 76_000,
-            resolver: resolveAccelerationBomb,
           },
         ],
       },
@@ -884,7 +926,6 @@ function getBigCrossPlans(round: 1 | 2): BigCrossPlan[] {
         {
           statusId: ACCELERATION_BOMB_STATUS_ID,
           durationMs: 61_000,
-          resolver: resolveAccelerationBomb,
         },
       ],
     },
@@ -894,7 +935,6 @@ function getBigCrossPlans(round: 1 | 2): BigCrossPlan[] {
         {
           statusId: ACCELERATION_BOMB_STATUS_ID,
           durationMs: 36_000,
-          resolver: resolveAccelerationBomb,
         },
       ],
     },
@@ -1000,9 +1040,19 @@ function scheduleStatusResolution(
   statusId: StatusId,
   durationMs: number,
   fake: boolean,
-  resolver: (ctx: BattleScriptContext, actorId: string, fake: boolean) => void,
+  resolver: ((ctx: BattleScriptContext, actorId: string, fake: boolean) => void) | undefined,
 ): void {
   applyStatus(ctx, actor, statusId, durationMs, fake);
+
+  if (statusId === ACCELERATION_BOMB_STATUS_ID) {
+    scheduleAccelerationBombResolution(ctx, actor.id, durationMs, fake);
+    return;
+  }
+
+  if (resolver === undefined) {
+    throw new Error(`missing resolver for Kefka P4 status ${statusId}`);
+  }
+
   ctx.timeline.after(durationMs, () => {
     resolver(ctx, actor.id, fake);
   });
@@ -1169,68 +1219,58 @@ function resolveCompressedWater(ctx: BattleScriptContext, actorId: string, fake:
   resolveThreePlayerShare(ctx, actor, '水属性压缩');
 }
 
-function accelerationMovedKey(actorId: string, resolveAt: number): string {
-  return `kefkaP4:accelerationMoved:${actorId}:${resolveAt}`;
+function accelerationMovingSnapshotKey(actorId: string, resolveAt: number): string {
+  return `kefkaP4:accelerationMoving:${actorId}:${resolveAt}`;
 }
 
-function resolveAccelerationBomb(ctx: BattleScriptContext, actorId: string, fake: boolean): void {
-  const resolveAt = ctx.state.getBattleTime();
-  const movedKey = accelerationMovedKey(actorId, resolveAt);
+function scheduleAccelerationBombResolution(
+  ctx: BattleScriptContext,
+  actorId: string,
+  durationMs: number,
+  fake: boolean,
+): void {
+  const resolveAt = ctx.state.getBattleTime() + durationMs;
+  const movingSnapshotKey = accelerationMovingSnapshotKey(actorId, resolveAt);
 
-  ctx.state.setValue(movedKey, false);
-  ctx.timeline.every(
-    100,
-    () => {
-      const actor = getFreshActor(ctx, actorId);
-
-      if (actor === null || !actor.mechanicActive) {
-        return;
-      }
-
-      if (!actor.moveState.moving) {
-        return;
-      }
-
-      if (!fake) {
-        applyP4FatalDamage(ctx, actor, '加速度炸弹');
-        return;
-      }
-
-      ctx.state.setValue(movedKey, true);
-    },
-    ACCELERATION_CHECK_MS,
-  );
-  ctx.timeline.after(ACCELERATION_CHECK_MS, () => {
+  ctx.timeline.after(Math.max(0, durationMs - ACCELERATION_SAMPLE_BEFORE_MS), () => {
     const actor = getFreshActor(ctx, actorId);
 
-    if (actor === null || !actor.mechanicActive || !fake) {
+    ctx.state.setValue(
+      movingSnapshotKey,
+      actor !== null && actor.mechanicActive && actor.moveState.moving,
+    );
+  });
+  ctx.timeline.after(durationMs, () => {
+    const actor = getFreshActor(ctx, actorId);
+
+    if (actor === null || !actor.mechanicActive) {
       return;
     }
 
-    if (ctx.state.getValue<boolean>(movedKey) !== true) {
+    const moving = ctx.state.getValue<boolean>(movingSnapshotKey) === true;
+
+    if ((!fake && moving) || (fake && !moving)) {
       applyP4FatalDamage(ctx, actor, '加速度炸弹');
     }
   });
 }
 
-function scheduleChaosElement(
+function startChaosElement(
   ctx: BattleScriptContext,
-  startAt: number,
   actionId: string,
   actionName: string,
   statusId: StatusId,
   durationMs: number,
   resolver: (ctx: BattleScriptContext, actorId: string, fake: boolean) => void,
 ): void {
-  ctx.timeline.at(startAt, () => {
-    const truth = randomTruth();
-    const chaosPosition = getChaosPosition(ctx);
+  const truth = randomTruth();
+  const chaosPosition = getChaosPosition(ctx);
 
-    ctx.boss.cast(actionId, actionName, CHAOS_CAST_MS);
-    spawnTruthRing(ctx, `${actionName}真假`, chaosPosition, truth, CHAOS_CAST_MS, '#a855f7');
-    ctx.state.setValue(`kefkaP4:${actionId}:truth`, truth);
-  });
-  ctx.timeline.at(startAt + CHAOS_CAST_MS, () => {
+  ctx.boss.cast(actionId, actionName, CHAOS_CAST_MS);
+  spawnTruthRing(ctx, `${actionName}真假`, chaosPosition, truth, CHAOS_CAST_MS, '#a855f7');
+  ctx.state.setValue(`kefkaP4:${actionId}:truth`, truth);
+
+  ctx.timeline.after(CHAOS_CAST_MS, () => {
     const truth = ctx.state.getValue<TrickTruth>(`kefkaP4:${actionId}:truth`) ?? 'real';
 
     for (const actor of ctx.select.allPlayers()) {
@@ -1346,85 +1386,54 @@ function resolveChaosWater(ctx: BattleScriptContext, actorId: string, fake: bool
 }
 
 function scheduleChaosElementPair(ctx: BattleScriptContext): void {
-  ctx.timeline.at(5_000, () => {
+  ctx.timeline.at(TIMELINE.chaos1StartAt, () => {
     const firstElement: ChaosElementKind = Math.random() < 0.5 ? 'water' : 'fire';
+
     ctx.state.setValue('kefkaP4:firstChaosElement', firstElement);
-  });
-
-  ctx.timeline.at(5_000, () => {
-    const firstElement =
-      ctx.state.getValue<ChaosElementKind>('kefkaP4:firstChaosElement') ?? 'water';
-
-    if (firstElement === 'water') {
-      return;
+    if (firstElement === 'fire') {
+      startChaosElement(
+        ctx,
+        'kefka_p4_blaze_first',
+        '烈焰',
+        CHAOS_FIRE_STATUS_ID,
+        60_000,
+        resolveChaosFire,
+      );
+    } else {
+      startChaosElement(
+        ctx,
+        'kefka_p4_tsunami_first',
+        '海啸',
+        CHAOS_WATER_STATUS_ID,
+        84_000,
+        resolveChaosWater,
+      );
     }
-
-    scheduleChaosElement(
-      ctx,
-      5_000,
-      'kefka_p4_blaze_first',
-      '烈焰',
-      CHAOS_FIRE_STATUS_ID,
-      60_000,
-      resolveChaosFire,
-    );
   });
 
-  ctx.timeline.at(21_000, () => {
-    const firstElement =
-      ctx.state.getValue<ChaosElementKind>('kefkaP4:firstChaosElement') ?? 'water';
-
-    if (firstElement === 'water') {
-      return;
-    }
-
-    scheduleChaosElement(
-      ctx,
-      21_000,
-      'kefka_p4_tsunami_second',
-      '海啸',
-      CHAOS_WATER_STATUS_ID,
-      66_000,
-      resolveChaosWater,
-    );
-  });
-
-  ctx.timeline.at(5_000, () => {
+  ctx.timeline.at(TIMELINE.chaos2StartAt, () => {
     const firstElement =
       ctx.state.getValue<ChaosElementKind>('kefkaP4:firstChaosElement') ?? 'water';
 
     if (firstElement === 'fire') {
-      return;
+      startChaosElement(
+        ctx,
+        'kefka_p4_tsunami_second',
+        '海啸',
+        CHAOS_WATER_STATUS_ID,
+        69_000,
+        resolveChaosWater,
+      );
+    } else {
+      startChaosElement(
+        ctx,
+        'kefka_p4_blaze_second',
+        '烈焰',
+        CHAOS_FIRE_STATUS_ID,
+        45_000,
+        resolveChaosFire,
+      );
     }
-
-    scheduleChaosElement(
-      ctx,
-      5_000,
-      'kefka_p4_tsunami_first',
-      '海啸',
-      CHAOS_WATER_STATUS_ID,
-      82_000,
-      resolveChaosWater,
-    );
-  });
-
-  ctx.timeline.at(21_000, () => {
-    const firstElement =
-      ctx.state.getValue<ChaosElementKind>('kefkaP4:firstChaosElement') ?? 'water';
-
-    if (firstElement === 'fire') {
-      return;
-    }
-
-    scheduleChaosElement(
-      ctx,
-      21_000,
-      'kefka_p4_blaze_second',
-      '烈焰',
-      CHAOS_FIRE_STATUS_ID,
-      44_000,
-      resolveChaosFire,
-    );
   });
 }
 
@@ -1459,14 +1468,14 @@ function assignFinalBigCross(ctx: BattleScriptContext, truth: TrickTruth): void 
 }
 
 function scheduleFinalBigCross(ctx: BattleScriptContext): void {
-  ctx.timeline.at(30_000, () => {
+  ctx.timeline.at(TIMELINE.finalBigCrossStartAt, () => {
     const truth = randomTruth();
 
     ctx.boss.cast('kefka_p4_big_cross_final', '大十字', BIG_CROSS_CAST_MS);
     spawnTruthRing(ctx, '大十字真假', getExdeathPosition(ctx), truth, BIG_CROSS_CAST_MS, '#ffffff');
     ctx.state.setValue('kefkaP4:finalBigCrossTruth', truth);
   });
-  ctx.timeline.at(38_000, () => {
+  ctx.timeline.at(TIMELINE_RESOLVE.finalBigCrossResolveAt, () => {
     const truth = ctx.state.getValue<TrickTruth>('kefkaP4:finalBigCrossTruth') ?? 'real';
     assignFinalBigCross(ctx, truth);
   });
@@ -1482,7 +1491,7 @@ function reappearExdeath(ctx: BattleScriptContext): void {
     '艾克斯迪斯',
     position,
     'kefka_p4_exdeath',
-    COMPLETE_AT - 44_000,
+    COMPLETE_AT - TIMELINE.exdeathReappearAt,
     '#f97316',
   );
 }
@@ -1554,7 +1563,7 @@ function isActorOnVoidSide(
 }
 
 function scheduleVoidFlood(ctx: BattleScriptContext): void {
-  ctx.timeline.at(47_000, () => {
+  ctx.timeline.at(TIMELINE.voidFloodStartAt, () => {
     const truth = randomTruth();
     const exdeathPosition = getExdeathPosition(ctx);
     const facing = createFacingTowards(exdeathPosition, CENTER);
@@ -1567,6 +1576,8 @@ function scheduleVoidFlood(ctx: BattleScriptContext): void {
 
     ctx.boss.cast('kefka_p4_void_flood', '无之泛滥', VOID_FLOOD_CAST_MS);
     spawnTruthRing(ctx, '无之泛滥真假', exdeathPosition, truth, VOID_FLOOD_CAST_MS, '#ffffff');
+    const darkLightResolveAfterMs = TIMELINE_RESOLVE.darkLightResolveAt - TIMELINE.voidFloodStartAt;
+
     ctx.spawn.fieldMarker({
       label: '生者暗黑光',
       center: {
@@ -1576,7 +1587,7 @@ function scheduleVoidFlood(ctx: BattleScriptContext): void {
       shape: 'diamond',
       radius: 0.9,
       color: '#a855f7',
-      resolveAfterMs: VOID_FLOOD_CAST_MS,
+      resolveAfterMs: darkLightResolveAfterMs,
     });
     ctx.spawn.fieldMarker({
       label: '死者暗黑光',
@@ -1587,11 +1598,11 @@ function scheduleVoidFlood(ctx: BattleScriptContext): void {
       shape: 'triangle',
       radius: 0.9,
       color: '#38bdf8',
-      resolveAfterMs: VOID_FLOOD_CAST_MS,
+      resolveAfterMs: darkLightResolveAfterMs,
     });
     ctx.state.setValue('kefkaP4:voidFlood', { truth, purpleSide, blueSide });
   });
-  ctx.timeline.at(52_000, () => {
+  ctx.timeline.at(TIMELINE_RESOLVE.darkLightResolveAt, () => {
     const state = ctx.state.getValue<{
       truth: TrickTruth;
       purpleSide: 'left' | 'right';
@@ -1622,38 +1633,65 @@ function buildKefkaP4FirstScript(ctx: BattleScriptContext): void {
 
     setChaosPosition(ctx, bosses.chaos);
     setExdeathPosition(ctx, bosses.exdeath);
-    spawnEnemyMarker(ctx, '卡奥斯', bosses.chaos, 'kefka_p4_chaos', 32_000, '#a855f7');
-    spawnEnemyMarker(ctx, '艾克斯迪斯', bosses.exdeath, 'kefka_p4_exdeath', 43_000, '#f97316');
+    spawnEnemyMarker(
+      ctx,
+      '卡奥斯',
+      bosses.chaos,
+      'kefka_p4_chaos',
+      TIMELINE.chaosDespawnAt,
+      '#a855f7',
+    );
+    spawnEnemyMarker(
+      ctx,
+      '艾克斯迪斯',
+      bosses.exdeath,
+      'kefka_p4_exdeath',
+      TIMELINE.exdeathDespawnAt,
+      '#f97316',
+    );
   });
 
-  scheduleMagic(ctx, 0, 1);
-  scheduleBigCross(ctx, 0, 1);
+  scheduleMagic(ctx, TIMELINE.magic1StartAt, 1);
+  scheduleBigCross(ctx, TIMELINE.bigCross1StartAt, 1);
   scheduleChaosElementPair(ctx);
-  scheduleMagic(ctx, 14_000, 2);
-  scheduleBigCross(ctx, 15_000, 2);
-  scheduleMagic(ctx, 29_000, 3);
+  scheduleMagic(ctx, TIMELINE.magic2StartAt, 2);
+  scheduleBigCross(ctx, TIMELINE.bigCross2StartAt, 2);
+  scheduleMagic(ctx, TIMELINE.magic3StartAt, 3);
   scheduleFinalBigCross(ctx);
 
-  ctx.timeline.at(43_000, () => {
+  ctx.timeline.at(TIMELINE.exdeathDespawnAt, () => {
     setExdeathPosition(ctx, CENTER);
   });
-  ctx.timeline.at(44_000, () => {
+  ctx.timeline.at(TIMELINE.exdeathReappearAt, () => {
     reappearExdeath(ctx);
   });
   scheduleVoidFlood(ctx);
-  scheduleKefkaNoopCast(ctx, 56_000, 'kefka_p4_mana_store', '魔力储存', MANA_STORE_CAST_MS);
-  scheduleMagic(ctx, 63_000, 4, {
+  scheduleKefkaNoopCast(
+    ctx,
+    TIMELINE.manaStoreStartAt,
+    'kefka_p4_mana_store',
+    '魔法储存',
+    MANA_STORE_CAST_MS,
+  );
+  scheduleMagic(ctx, TIMELINE.thunderStartAt, 4, {
     actionId: 'kefka_p4_crackling_thunder',
     actionName: '劈啪啪暴雷',
     components: ['thunder'],
   });
   scheduleFlappingUltimate(ctx);
-  scheduleMagic(ctx, 80_000, 5, {
+  scheduleMagic(ctx, TIMELINE.iceStartAt, 5, {
     actionId: 'kefka_p4_expanded_deep_freeze',
     actionName: '扩大大冰封',
     components: ['ice'],
   });
   scheduleManaReleaseMagic(ctx);
+  scheduleKefkaNoopCast(
+    ctx,
+    TIMELINE.punishingLightStartAt,
+    'kefka_p4_punishing_light',
+    '制裁之光',
+    MAGIC_CAST_MS,
+  );
 
   ctx.timeline.at(COMPLETE_AT, () => {
     ctx.state.complete();
@@ -1692,7 +1730,11 @@ export const KEFKA_P4_FIRST_TRICK_TESTING = {
   CHAOS_CAST_MS,
   CHAOS_ELEMENT_DELAY_MS,
   VOID_FLOOD_CAST_MS,
+  DARK_LIGHT_CAST_MS,
   MANA_RELEASE_CAST_MS,
+  ACCELERATION_SAMPLE_BEFORE_MS,
+  TIMELINE,
+  TIMELINE_RESOLVE,
   TELEGRAPH_MS,
   CURSE_HOWL_STATUS_ID,
   FORKED_LIGHTNING_STATUS_ID,

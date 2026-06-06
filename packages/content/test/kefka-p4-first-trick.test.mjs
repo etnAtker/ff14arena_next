@@ -6,12 +6,10 @@ import { getBattleDefinition } from '../src/index.ts';
 import { KEFKA_P4_FIRST_TRICK_TESTING } from '../src/battles/kefka-p4-first-trick.ts';
 
 const {
-  MAGIC_CAST_MS,
-  MANA_STORE_CAST_MS,
-  BIG_CROSS_CAST_MS,
-  CHAOS_CAST_MS,
   CHAOS_ELEMENT_DELAY_MS,
-  MANA_RELEASE_CAST_MS,
+  ACCELERATION_SAMPLE_BEFORE_MS,
+  TIMELINE,
+  TIMELINE_RESOLVE,
   TELEGRAPH_MS,
   FORKED_LIGHTNING_STATUS_ID,
   COMPRESSED_WATER_STATUS_ID,
@@ -30,6 +28,7 @@ const {
 
 const SUPPORT_SLOTS = ['MT', 'ST', 'H1', 'H2'];
 const DPS_SLOTS = ['D1', 'D2', 'D3', 'D4'];
+const SIMULATION_TICK_MS = 50;
 const BIG_CROSS_STATUS_IDS = [
   KEFKA_P4_FIRST_TRICK_TESTING.CURSE_HOWL_STATUS_ID,
   KEFKA_P4_FIRST_TRICK_TESTING.FORKED_LIGHTNING_STATUS_ID,
@@ -113,6 +112,10 @@ function advanceTo(simulation, timeMs) {
   }
 }
 
+function tickTime(timeMs) {
+  return Math.ceil(timeMs / SIMULATION_TICK_MS) * SIMULATION_TICK_MS;
+}
+
 function submitPose(simulation, actor, position, facing = actor.facing, moving = false) {
   simulation.submitActorControlFrame({
     actorId: actor.id,
@@ -141,6 +144,33 @@ function getStatus(actor, statusId) {
 
 function getBigCrossStatuses(actor) {
   return actor.statuses.filter((status) => BIG_CROSS_STATUS_IDS.includes(status.id));
+}
+
+function getAccelerationBomb(actor) {
+  return getStatus(actor, KEFKA_P4_FIRST_TRICK_TESTING.ACCELERATION_BOMB_STATUS_ID);
+}
+
+function createSimulationWithAccelerationBomb(fake) {
+  for (let seed = 1; seed <= 100; seed += 1) {
+    const simulation = createKefkaP4Simulation(seed);
+
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.bigCross1ResolveAt));
+    const snapshot = simulation.getSnapshot();
+    const actor = snapshot.actors.find((candidate) => {
+      const status = getAccelerationBomb(candidate);
+
+      return status !== null && status.name.includes('（假）') === fake;
+    });
+
+    if (actor !== undefined) {
+      const status = getAccelerationBomb(actor);
+      assert.ok(status);
+
+      return { simulation, actor, status };
+    }
+  }
+
+  assert.fail(`missing ${fake ? 'fake' : 'real'} acceleration bomb simulation`);
 }
 
 function getBigCrossPlanCategory(planId) {
@@ -290,7 +320,7 @@ test('玄乎乎魔法假雷使用 5m/15m 互补直线', () => {
 test('开场同时显示玄乎乎魔法和真假环机制', () => {
   const simulation = createKefkaP4Simulation(2);
 
-  advanceTo(simulation, 50);
+  advanceTo(simulation, tickTime(TIMELINE.bigCross1StartAt));
   const snapshot = simulation.getSnapshot();
 
   assert.ok(snapshot.mechanics.some((mechanic) => mechanic.kind === 'ringIndicator'));
@@ -323,8 +353,8 @@ test('开场卡奥斯固定左上且艾克斯迪斯固定右上', () => {
 test('两轮大十字按 A/B 组交替分配', () => {
   const simulation = createKefkaP4Simulation(3);
 
-  advanceTo(simulation, 8_000 + BIG_CROSS_CAST_MS);
-  advanceTo(simulation, 15_000 + BIG_CROSS_CAST_MS);
+  advanceTo(simulation, tickTime(TIMELINE_RESOLVE.bigCross1ResolveAt));
+  advanceTo(simulation, tickTime(TIMELINE_RESOLVE.bigCross2ResolveAt));
   const snapshot = simulation.getSnapshot();
   const firstPlans = snapshot.scriptState['kefkaP4:bigCrossPlans:1'];
   const secondPlans = snapshot.scriptState['kefkaP4:bigCrossPlans:2'];
@@ -364,8 +394,8 @@ test('大十字合法分配不依赖随机重试兜底', () => {
   withMockedRandom(new Array(5000).fill(0), () => {
     const simulation = createKefkaP4SimulationDirect();
 
-    advanceTo(simulation, 8_000 + BIG_CROSS_CAST_MS);
-    advanceTo(simulation, 15_000 + BIG_CROSS_CAST_MS);
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.bigCross1ResolveAt));
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.bigCross2ResolveAt));
     const snapshot = simulation.getSnapshot();
     const firstPlans = snapshot.scriptState['kefkaP4:bigCrossPlans:1'];
     const secondPlans = snapshot.scriptState['kefkaP4:bigCrossPlans:2'];
@@ -389,25 +419,79 @@ test('大十字合法分配不依赖随机重试兜底', () => {
   });
 });
 
+test('加速度炸弹在判定前0.5秒采样移动状态', () => {
+  {
+    const { simulation, actor: initialActor, status } = createSimulationWithAccelerationBomb(false);
+    let actor = initialActor;
+    advanceTo(simulation, status.expiresAt - ACCELERATION_SAMPLE_BEFORE_MS - 50);
+    let snapshot = simulation.getSnapshot();
+    actor = getActorBySlot(snapshot, actor.slot);
+    submitPose(simulation, actor, actor.position, actor.facing, true);
+    advanceTo(simulation, status.expiresAt - ACCELERATION_SAMPLE_BEFORE_MS);
+    snapshot = simulation.getSnapshot();
+    actor = getActorBySlot(snapshot, actor.slot);
+    assert.equal(
+      snapshot.scriptState[`kefkaP4:accelerationMoving:${actor.id}:${status.expiresAt}`],
+      true,
+    );
+    submitPose(simulation, actor, actor.position, actor.facing, false);
+    advanceTo(simulation, status.expiresAt);
+
+    assert.equal(getAccelerationBomb(getActorBySlot(simulation.getSnapshot(), actor.slot)), null);
+  }
+
+  {
+    const { simulation, actor: initialActor, status } = createSimulationWithAccelerationBomb(true);
+    let actor = initialActor;
+    advanceTo(simulation, status.expiresAt - ACCELERATION_SAMPLE_BEFORE_MS - 50);
+    let snapshot = simulation.getSnapshot();
+    actor = getActorBySlot(snapshot, actor.slot);
+    submitPose(simulation, actor, actor.position, actor.facing, false);
+    advanceTo(simulation, status.expiresAt - ACCELERATION_SAMPLE_BEFORE_MS);
+    snapshot = simulation.getSnapshot();
+    actor = getActorBySlot(snapshot, actor.slot);
+    assert.equal(
+      snapshot.scriptState[`kefkaP4:accelerationMoving:${actor.id}:${status.expiresAt}`],
+      false,
+    );
+    submitPose(simulation, actor, actor.position, actor.facing, true);
+    advanceTo(simulation, status.expiresAt);
+
+    assert.equal(getAccelerationBomb(getActorBySlot(simulation.getSnapshot(), actor.slot)), null);
+  }
+});
+
 test('海啸先出时混沌之水和混沌之炎仍按固定时间到期', () => {
   withMockedRandom(new Array(5000).fill(0.1), () => {
     const simulation = createKefkaP4SimulationDirect();
 
-    advanceTo(simulation, 5_000 + CHAOS_CAST_MS);
+    advanceTo(simulation, tickTime(TIMELINE.chaos1StartAt));
     let snapshot = simulation.getSnapshot();
-
     assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '海啸'));
+
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.chaos1ResolveAt));
+    snapshot = simulation.getSnapshot();
+
     for (const actor of snapshot.actors) {
-      assert.equal(getStatus(actor, CHAOS_WATER_STATUS_ID)?.expiresAt, 95_000);
+      assert.equal(
+        getStatus(actor, CHAOS_WATER_STATUS_ID)?.expiresAt,
+        tickTime(TIMELINE_RESOLVE.chaos1ResolveAt) + 84_000,
+      );
       assert.equal(getStatus(actor, CHAOS_FIRE_STATUS_ID), null);
     }
 
-    advanceTo(simulation, 21_000 + CHAOS_CAST_MS);
+    advanceTo(simulation, tickTime(TIMELINE.chaos2StartAt));
+    snapshot = simulation.getSnapshot();
+    assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '烈焰'));
+
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.chaos2ResolveAt));
     snapshot = simulation.getSnapshot();
 
-    assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '烈焰'));
     for (const actor of snapshot.actors) {
-      assert.equal(getStatus(actor, CHAOS_FIRE_STATUS_ID)?.expiresAt, 73_000);
+      assert.equal(
+        getStatus(actor, CHAOS_FIRE_STATUS_ID)?.expiresAt,
+        tickTime(TIMELINE_RESOLVE.chaos2ResolveAt) + 45_000,
+      );
     }
   });
 });
@@ -416,21 +500,33 @@ test('烈焰先出时混沌之炎和混沌之水仍按固定时间到期', () =>
   withMockedRandom(new Array(5000).fill(0.9), () => {
     const simulation = createKefkaP4SimulationDirect();
 
-    advanceTo(simulation, 5_000 + CHAOS_CAST_MS);
+    advanceTo(simulation, tickTime(TIMELINE.chaos1StartAt));
     let snapshot = simulation.getSnapshot();
-
     assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '烈焰'));
+
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.chaos1ResolveAt));
+    snapshot = simulation.getSnapshot();
+
     for (const actor of snapshot.actors) {
-      assert.equal(getStatus(actor, CHAOS_FIRE_STATUS_ID)?.expiresAt, 73_000);
+      assert.equal(
+        getStatus(actor, CHAOS_FIRE_STATUS_ID)?.expiresAt,
+        tickTime(TIMELINE_RESOLVE.chaos1ResolveAt) + 60_000,
+      );
       assert.equal(getStatus(actor, CHAOS_WATER_STATUS_ID), null);
     }
 
-    advanceTo(simulation, 21_000 + CHAOS_CAST_MS);
+    advanceTo(simulation, tickTime(TIMELINE.chaos2StartAt));
+    snapshot = simulation.getSnapshot();
+    assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '海啸'));
+
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.chaos2ResolveAt));
     snapshot = simulation.getSnapshot();
 
-    assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '海啸'));
     for (const actor of snapshot.actors) {
-      assert.equal(getStatus(actor, CHAOS_WATER_STATUS_ID)?.expiresAt, 95_000);
+      assert.equal(
+        getStatus(actor, CHAOS_WATER_STATUS_ID)?.expiresAt,
+        tickTime(TIMELINE_RESOLVE.chaos2ResolveAt) + 69_000,
+      );
     }
   });
 });
@@ -439,10 +535,12 @@ test('混沌之炎到期后延迟5秒并在到期时原地显示预兆', () => {
   withMockedRandom(new Array(5000).fill(0.9), () => {
     const simulation = createKefkaP4SimulationDirect();
 
-    advanceTo(simulation, 73_000);
+    const fireExpiresAt = tickTime(TIMELINE_RESOLVE.chaos1ResolveAt) + 60_000;
+
+    advanceTo(simulation, fireExpiresAt);
     const lockedPosition = { ...getActorBySlot(simulation.getSnapshot(), 'MT').position };
     submitPose(simulation, getActorBySlot(simulation.getSnapshot(), 'MT'), { x: 12, y: 12 });
-    advanceTo(simulation, 73_000 + CHAOS_ELEMENT_DELAY_MS - 500);
+    advanceTo(simulation, fireExpiresAt + CHAOS_ELEMENT_DELAY_MS - 500);
     const snapshot = simulation.getSnapshot();
     const fireTelegraphs = snapshot.mechanics.filter((mechanic) => mechanic.label === '混沌之炎');
 
@@ -460,7 +558,7 @@ test('大十字雷水 Buff 时长组在两轮之间保持对应关系', () => {
   withMockedRandom(new Array(5000).fill(0.1), () => {
     const simulation = createKefkaP4SimulationDirect();
 
-    advanceTo(simulation, 8_000);
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.bigCross1ResolveAt));
     let snapshot = simulation.getSnapshot();
     const firstPlans = snapshot.scriptState['kefkaP4:bigCrossPlans:1'];
     assert.ok(firstPlans);
@@ -476,9 +574,12 @@ test('大十字雷水 Buff 时长组在两轮之间保持对应关系', () => {
         getStatusExpiresAtBySlot(snapshot, waterSlot, COMPRESSED_WATER_STATUS_ID),
       );
     }
-    assert.deepEqual(firstElementalExpiresAts, [59_000, 59_000, 59_000, 59_000]);
+    assert.deepEqual(
+      firstElementalExpiresAts,
+      new Array(4).fill(tickTime(TIMELINE_RESOLVE.bigCross1ResolveAt) + 51_000),
+    );
 
-    advanceTo(simulation, 23_000);
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.bigCross2ResolveAt));
     snapshot = simulation.getSnapshot();
     const secondPlans = snapshot.scriptState['kefkaP4:bigCrossPlans:2'];
     assert.ok(secondPlans);
@@ -496,7 +597,10 @@ test('大十字雷水 Buff 时长组在两轮之间保持对应关系', () => {
         getStatusExpiresAtBySlot(snapshot, waterSlot, COMPRESSED_WATER_STATUS_ID),
       );
     }
-    assert.deepEqual(secondElementalExpiresAts, [84_000, 84_000, 84_000, 84_000]);
+    assert.deepEqual(
+      secondElementalExpiresAts,
+      new Array(4).fill(tickTime(TIMELINE_RESOLVE.bigCross2ResolveAt) + 61_000),
+    );
   });
 });
 
@@ -504,7 +608,7 @@ test('水属性压缩假 Buff 使用叉形闪电的 8m 圆形效果', () => {
   withMockedRandom(new Array(5000).fill(0.9), () => {
     const simulation = createKefkaP4SimulationDirect();
 
-    advanceTo(simulation, 24_000);
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.bigCross2ResolveAt));
     let snapshot = simulation.getSnapshot();
     assert.ok(
       snapshot.actors.some((actor) =>
@@ -514,7 +618,7 @@ test('水属性压缩假 Buff 使用叉形闪电的 8m 圆形效果', () => {
       ),
     );
 
-    advanceTo(simulation, 59_000);
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.bigCross2ResolveAt) + 36_000);
     snapshot = simulation.getSnapshot();
     const waterCircleTelegraphs = getMechanics(snapshot, 'circleTelegraph', '水属性压缩');
 
@@ -527,14 +631,14 @@ test('水属性压缩假 Buff 使用叉形闪电的 8m 圆形效果', () => {
 test('最终大十字赋予 15s 生死伤，并在每组分配 2 个领域和 2 个超越死亡', () => {
   const simulation = createKefkaP4Simulation(5);
 
-  advanceTo(simulation, 30_000 + BIG_CROSS_CAST_MS);
+  advanceTo(simulation, tickTime(TIMELINE_RESOLVE.finalBigCrossResolveAt));
   const snapshot = simulation.getSnapshot();
 
   for (const actor of snapshot.actors) {
     const wound =
       getStatus(actor, LIVING_WOUND_STATUS_ID) ?? getStatus(actor, DEAD_WOUND_STATUS_ID);
     assert.ok(wound, `missing wound for ${actor.slot}`);
-    assert.equal(wound.expiresAt, 53_000);
+    assert.equal(wound.expiresAt, tickTime(TIMELINE_RESOLVE.finalBigCrossResolveAt) + 15_000);
   }
 
   for (const slots of [SUPPORT_SLOTS, DPS_SLOTS]) {
@@ -550,11 +654,11 @@ test('最终大十字赋予 15s 生死伤，并在每组分配 2 个领域和 2 
     assert.equal(beyondDeathStatuses.length, 2);
     assert.deepEqual(
       allaganStatuses.map((status) => status.expiresAt),
-      [54_000, 54_000],
+      new Array(2).fill(tickTime(TIMELINE_RESOLVE.finalBigCrossResolveAt) + 16_000),
     );
     assert.deepEqual(
       beyondDeathStatuses.map((status) => status.expiresAt),
-      [53_000, 53_000],
+      new Array(2).fill(tickTime(TIMELINE_RESOLVE.finalBigCrossResolveAt) + 15_000),
     );
   }
 });
@@ -562,7 +666,7 @@ test('最终大十字赋予 15s 生死伤，并在每组分配 2 个领域和 2 
 test('生死伤吃到错误暗黑光时会立即消失', () => {
   const simulation = createKefkaP4Simulation(6);
 
-  advanceTo(simulation, 47_000);
+  advanceTo(simulation, tickTime(TIMELINE.voidFloodStartAt));
   let snapshot = simulation.getSnapshot();
   const actor = getActorBySlot(snapshot, 'MT');
   const wound = getStatus(actor, LIVING_WOUND_STATUS_ID) ?? getStatus(actor, DEAD_WOUND_STATUS_ID);
@@ -587,7 +691,7 @@ test('生死伤吃到错误暗黑光时会立即消失', () => {
   const wrongSide = purpleDarkKind === wrongDarkKind ? voidFlood.purpleSide : voidFlood.blueSide;
 
   submitPose(simulation, actor, createVoidFloodSidePosition(exdeathPosition, wrongSide));
-  advanceTo(simulation, 52_000);
+  advanceTo(simulation, tickTime(TIMELINE_RESOLVE.darkLightResolveAt));
   snapshot = simulation.getSnapshot();
 
   const resolvedActor = getActorBySlot(snapshot, 'MT');
@@ -597,46 +701,52 @@ test('生死伤吃到错误暗黑光时会立即消失', () => {
 test('后续机制按时间轴显示雷冰变体、究极读条和隐藏玄乎乎魔法', () => {
   const simulation = createKefkaP4Simulation(7);
 
-  advanceTo(simulation, 56_000 + 50);
+  advanceTo(simulation, tickTime(TIMELINE.manaStoreStartAt));
   let snapshot = simulation.getSnapshot();
-  assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔力储存'));
+  assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔法储存'));
 
-  advanceTo(simulation, 56_000 + MANA_STORE_CAST_MS + 50);
+  advanceTo(simulation, tickTime(TIMELINE_RESOLVE.manaStoreResolveAt) + 50);
   snapshot = simulation.getSnapshot();
-  assert.ok(!snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔力储存'));
+  assert.ok(!snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔法储存'));
 
-  advanceTo(simulation, 63_000 + 50);
+  advanceTo(simulation, tickTime(TIMELINE.thunderStartAt));
   snapshot = simulation.getSnapshot();
   assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '劈啪啪暴雷'));
   assert.ok(getMechanics(snapshot, 'rectangleTelegraph', '玄乎乎魔法：雷').length > 0);
   assert.equal(getMechanics(snapshot, 'fanTelegraph', '玄乎乎魔法：冰').length, 0);
 
-  advanceTo(simulation, 71_000 + 50);
+  advanceTo(simulation, tickTime(TIMELINE.flappingUltimateStartAt));
   snapshot = simulation.getSnapshot();
   assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '扑腾腾究极'));
 
-  advanceTo(simulation, 71_000 + MAGIC_CAST_MS - TELEGRAPH_MS);
+  advanceTo(simulation, tickTime(TIMELINE_RESOLVE.flappingUltimateResolveAt - TELEGRAPH_MS));
   snapshot = simulation.getSnapshot();
   assert.equal(getMechanics(snapshot, 'circleTelegraph', '扑腾腾究极').length, 0);
 
-  advanceTo(simulation, 80_000 + 50);
+  advanceTo(simulation, tickTime(TIMELINE.iceStartAt));
   snapshot = simulation.getSnapshot();
   assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '扩大大冰封'));
   assert.ok(getMechanics(snapshot, 'fanTelegraph', '玄乎乎魔法：冰').length > 0);
   assert.equal(getMechanics(snapshot, 'rectangleTelegraph', '玄乎乎魔法：雷').length, 0);
 
-  advanceTo(simulation, 89_000 + 50);
+  advanceTo(simulation, tickTime(TIMELINE.manaReleaseStartAt));
   snapshot = simulation.getSnapshot();
-  assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔力释放'));
+  assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔法放出'));
   assert.ok(getMechanics(snapshot, 'ringIndicator', '玄乎乎魔法真假').length > 0);
   assert.equal(getMechanics(snapshot, 'fanTelegraph', '玄乎乎魔法：冰').length, 0);
   assert.equal(getMechanics(snapshot, 'rectangleTelegraph', '玄乎乎魔法：雷').length, 0);
 
-  advanceTo(simulation, 89_000 + MANA_RELEASE_CAST_MS + 50);
+  advanceTo(simulation, tickTime(TIMELINE_RESOLVE.manaReleaseResolveAt) + 50);
   snapshot = simulation.getSnapshot();
-  assert.ok(!snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔力释放'));
+  assert.ok(!snapshot.hud.bossCastBars.some((cast) => cast.actionName === '魔法放出'));
   assert.ok(!snapshot.hud.bossCastBars.some((cast) => cast.actionName === '玄乎乎魔法'));
   assert.equal(getMechanics(snapshot, 'ringIndicator', '玄乎乎魔法真假').length, 0);
+  assert.equal(getMechanics(snapshot, 'fanTelegraph', '玄乎乎魔法：冰').length, 0);
+  assert.equal(getMechanics(snapshot, 'rectangleTelegraph', '玄乎乎魔法：雷').length, 0);
+
+  advanceTo(simulation, tickTime(TIMELINE.finalMagicStartAt));
+  snapshot = simulation.getSnapshot();
+  assert.ok(!snapshot.hud.bossCastBars.some((cast) => cast.actionName === '玄乎乎魔法'));
   assert.ok(getMechanics(snapshot, 'fanTelegraph', '玄乎乎魔法：冰').length > 0);
   assert.ok(getMechanics(snapshot, 'rectangleTelegraph', '玄乎乎魔法：雷').length > 0);
 });
@@ -645,7 +755,7 @@ test('最终玄乎乎魔法按前置雷冰真假额外反转判定', () => {
   withMockedRandom(new Array(5000).fill(0.6), () => {
     const simulation = createKefkaP4SimulationDirect();
 
-    advanceTo(simulation, 96_000 + 50);
+    advanceTo(simulation, tickTime(TIMELINE.finalMagicStartAt));
     let snapshot = simulation.getSnapshot();
     const thunderPattern = snapshot.scriptState['kefkaP4:magic:4'];
     const icePattern = snapshot.scriptState['kefkaP4:magic:5'];
@@ -679,7 +789,7 @@ test('最终玄乎乎魔法按前置雷冰真假额外反转判定', () => {
     submitPose(simulation, getActorBySlot(snapshot, 'MT'), thunderPoint);
     submitPose(simulation, getActorBySlot(snapshot, 'ST'), icePoint);
 
-    advanceTo(simulation, 96_000 + MAGIC_CAST_MS);
+    advanceTo(simulation, tickTime(TIMELINE_RESOLVE.finalMagicResolveAt));
     snapshot = simulation.getSnapshot();
 
     assert.equal(getActorBySlot(snapshot, 'MT').lastDamageSource, '玄乎乎魔法：雷');
