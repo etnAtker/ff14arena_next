@@ -19,7 +19,10 @@ const {
   START_LINE_POINT_GAP,
   STEP_DISTANCE,
   BISECTOR_LENGTH,
-  FIRE_BATCHES,
+  FIRE_PLAN_KEY,
+  LEFT_BATCH_START_OFFSETS_MS,
+  RIGHT_BATCH_START_OFFSETS_MS,
+  buildFireBatches,
   FIRE_DEATH_SOURCE,
   INITIAL_SOUTH_Y,
   INITIAL_LINE_SPACING,
@@ -29,6 +32,18 @@ const {
   getFireStartPosition,
   getFireHitPosition,
 } = KEFKA_P5_GROUND_FIRE_TESTING;
+
+function withMockedRandom(randomValues, fn) {
+  const originalRandom = Math.random;
+  let randomIndex = 0;
+  Math.random = () => randomValues[randomIndex++ % randomValues.length];
+
+  try {
+    return fn();
+  } finally {
+    Math.random = originalRandom;
+  }
+}
 
 function createKefkaP5GroundFireSimulation() {
   const battle = getBattleDefinition('kefka_p5_ground_fire');
@@ -184,54 +199,64 @@ test('凯夫卡P5地火：每条地火向场中方向步进7次，每次前进7m
   }
 });
 
-test('凯夫卡P5地火：T+3读条混沌末世，并按批次刷新地火预兆', () => {
-  const simulation = createKefkaP5GroundFireSimulation();
+test('凯夫卡P5地火：T+3读条混沌末世，并按左右随机批次刷新地火预兆', () => {
+  withMockedRandom([0, 0, 0.99, 0.99], () => {
+    const simulation = createKefkaP5GroundFireSimulation();
 
-  advanceTo(simulation, CAST_START_AT);
+    advanceTo(simulation, CAST_START_AT);
 
-  const castSnapshot = simulation.getSnapshot();
-  assert.equal(castSnapshot.boss.castBar?.actionName, '混沌末世');
-  assert.equal(castSnapshot.boss.castBar?.startedAt, CAST_START_AT);
-  assert.equal(castSnapshot.boss.castBar?.totalDurationMs, CHAOS_DOOMSDAY_CAST_MS);
-  assert.equal(CHAOS_DOOMSDAY_CAST_MS, 4_000);
+    const castSnapshot = simulation.getSnapshot();
+    const plan = castSnapshot.scriptState[FIRE_PLAN_KEY];
+    assert.deepEqual(plan, {
+      left: ['25', '36', '14'],
+      right: ['14', '25', '36'],
+    });
+    assert.deepEqual(
+      buildFireBatches(plan).map(
+        (batch) => `${batch.side}:${batch.numbers.join(',')}:${batch.startOffsetMs}`,
+      ),
+      [
+        'left:2,5:0',
+        'left:3,6:5000',
+        'left:1,4:10000',
+        'right:1,4:3000',
+        'right:2,5:8000',
+        'right:3,6:13000',
+      ],
+    );
+    assert.deepEqual([...LEFT_BATCH_START_OFFSETS_MS], [0, 5_000, 10_000]);
+    assert.deepEqual([...RIGHT_BATCH_START_OFFSETS_MS], [3_000, 8_000, 13_000]);
+    assert.equal(castSnapshot.boss.castBar?.actionName, '混沌末世');
+    assert.equal(castSnapshot.boss.castBar?.startedAt, CAST_START_AT);
+    assert.equal(castSnapshot.boss.castBar?.totalDurationMs, CHAOS_DOOMSDAY_CAST_MS);
+    assert.equal(CHAOS_DOOMSDAY_CAST_MS, 4_000);
 
-  const initialTelegraphs = castSnapshot.mechanics.filter(
-    (mechanic) => mechanic.kind === 'circleTelegraph',
-  );
-  assert.deepEqual(initialTelegraphs.map((mechanic) => mechanic.label).sort(), [
-    '左1号地火',
-    '左4号地火',
-  ]);
-  assert.ok(
-    initialTelegraphs.every(
+    const initialTelegraphs = castSnapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'circleTelegraph',
+    );
+    assert.deepEqual(initialTelegraphs.map((mechanic) => mechanic.label).sort(), [
+      '左2号地火',
+      '左5号地火',
+    ]);
+    assert.ok(
+      initialTelegraphs.every(
+        (mechanic) =>
+          mechanic.radius === AOE_RADIUS &&
+          mechanic.resolveAt === CAST_START_AT + INITIAL_TELEGRAPH_MS,
+      ),
+    );
+
+    advanceTo(simulation, CAST_START_AT + 3_000);
+
+    const rightFirstSnapshot = simulation.getSnapshot();
+    const rightFirstTelegraphs = rightFirstSnapshot.mechanics.filter(
       (mechanic) =>
-        mechanic.radius === AOE_RADIUS &&
-        mechanic.resolveAt === CAST_START_AT + INITIAL_TELEGRAPH_MS,
-    ),
-  );
-
-  advanceTo(simulation, CAST_START_AT + 3_000);
-
-  const rightFirstSnapshot = simulation.getSnapshot();
-  const rightFirstTelegraphs = rightFirstSnapshot.mechanics.filter(
-    (mechanic) =>
-      mechanic.kind === 'circleTelegraph' &&
-      ['右3号地火', '右6号地火'].includes(mechanic.label) &&
-      mechanic.resolveAt === CAST_START_AT + 3_000 + INITIAL_TELEGRAPH_MS,
-  );
-  assert.equal(rightFirstTelegraphs.length, 2);
-
-  assert.deepEqual(
-    FIRE_BATCHES.map((batch) => `${batch.side}:${batch.numbers.join(',')}:${batch.startOffsetMs}`),
-    [
-      'left:1,4:0',
-      'left:2,5:5000',
-      'left:3,6:10000',
-      'right:3,6:3000',
-      'right:2,5:8000',
-      'right:1,4:13000',
-    ],
-  );
+        mechanic.kind === 'circleTelegraph' &&
+        ['右1号地火', '右4号地火'].includes(mechanic.label) &&
+        mechanic.resolveAt === CAST_START_AT + 3_000 + INITIAL_TELEGRAPH_MS,
+    );
+    assert.equal(rightFirstTelegraphs.length, 2);
+  });
 });
 
 test('凯夫卡P5地火：地火半径6m，每次判定后显示0.3秒，命中即死', () => {

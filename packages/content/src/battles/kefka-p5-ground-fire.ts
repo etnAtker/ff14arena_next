@@ -17,6 +17,13 @@ interface FireBatch {
   startOffsetMs: number;
 }
 
+interface FirePlan {
+  left: readonly FireGroupId[];
+  right: readonly FireGroupId[];
+}
+
+type FireGroupId = '14' | '25' | '36';
+
 const CAST_START_AT = 3_000;
 const INITIAL_TELEGRAPH_MS = 4_000;
 const FIRST_HIT_DELAY_MS = 4_500;
@@ -47,20 +54,69 @@ const INITIAL_POSITIONS = Object.fromEntries(
   ]),
 ) as Record<(typeof PARTY_SLOT_ORDER)[number], Vector2>;
 
-const FIRE_BATCHES = [
-  { side: 'left', numbers: [1, 4], startOffsetMs: 0 },
-  { side: 'left', numbers: [2, 5], startOffsetMs: 5_000 },
-  { side: 'left', numbers: [3, 6], startOffsetMs: 10_000 },
-  { side: 'right', numbers: [3, 6], startOffsetMs: 3_000 },
-  { side: 'right', numbers: [2, 5], startOffsetMs: 8_000 },
-  { side: 'right', numbers: [1, 4], startOffsetMs: 13_000 },
-] as const satisfies readonly FireBatch[];
-
-const LAST_FIRE_START_OFFSET_MS = Math.max(...FIRE_BATCHES.map((batch) => batch.startOffsetMs));
+const FIRE_GROUPS = {
+  '14': [1, 4],
+  '25': [2, 5],
+  '36': [3, 6],
+} as const satisfies Record<FireGroupId, readonly FireNumber[]>;
+const FIRE_GROUP_IDS = ['14', '25', '36'] as const satisfies readonly FireGroupId[];
+const LEFT_BATCH_START_OFFSETS_MS = [0, 5_000, 10_000] as const;
+const RIGHT_BATCH_START_OFFSETS_MS = [3_000, 8_000, 13_000] as const;
+const FIRE_PLAN_KEY = 'kefkaP5GroundFire:plan';
+const LAST_FIRE_START_OFFSET_MS = Math.max(
+  ...LEFT_BATCH_START_OFFSETS_MS,
+  ...RIGHT_BATCH_START_OFFSETS_MS,
+);
 const LAST_HIT_OFFSET_MS =
   LAST_FIRE_START_OFFSET_MS + FIRST_HIT_DELAY_MS + HIT_INTERVAL_MS * (HIT_COUNT - 1);
 const LAST_HIT_AT = CAST_START_AT + LAST_HIT_OFFSET_MS;
 const COMPLETE_AT = LAST_HIT_AT + 1_000;
+
+function shuffle<T>(values: readonly T[]): T[] {
+  const shuffled = [...values];
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex]!, shuffled[index]!];
+  }
+
+  return shuffled;
+}
+
+function createFirePlan(): FirePlan {
+  return {
+    left: shuffle(FIRE_GROUP_IDS),
+    right: shuffle(FIRE_GROUP_IDS),
+  };
+}
+
+function getOrCreateFirePlan(ctx: BattleScriptContext): FirePlan {
+  const existingPlan = ctx.state.getValue<FirePlan>(FIRE_PLAN_KEY);
+
+  if (existingPlan !== undefined) {
+    return existingPlan;
+  }
+
+  const plan = createFirePlan();
+  ctx.state.setValue(FIRE_PLAN_KEY, plan);
+
+  return plan;
+}
+
+function buildFireBatches(plan: FirePlan): FireBatch[] {
+  return [
+    ...plan.left.map((groupId, index) => ({
+      side: 'left' as const,
+      numbers: FIRE_GROUPS[groupId],
+      startOffsetMs: LEFT_BATCH_START_OFFSETS_MS[index]!,
+    })),
+    ...plan.right.map((groupId, index) => ({
+      side: 'right' as const,
+      numbers: FIRE_GROUPS[groupId],
+      startOffsetMs: RIGHT_BATCH_START_OFFSETS_MS[index]!,
+    })),
+  ];
+}
 
 function addVector(left: Vector2, right: Vector2): Vector2 {
   return {
@@ -187,7 +243,7 @@ function buildKefkaP5GroundFireScript(ctx: BattleScriptContext): void {
     ctx.boss.cast('kefka_p5_chaos_doomsday', '混沌末世', CHAOS_DOOMSDAY_CAST_MS);
   });
 
-  for (const batch of FIRE_BATCHES) {
+  for (const batch of buildFireBatches(getOrCreateFirePlan(ctx))) {
     for (const number of batch.numbers) {
       scheduleFireSequence(ctx, batch.side, number, CAST_START_AT + batch.startOffsetMs);
     }
@@ -236,7 +292,11 @@ export const KEFKA_P5_GROUND_FIRE_TESTING = {
   START_LINE_POINT_GAP,
   STEP_DISTANCE,
   BISECTOR_LENGTH,
-  FIRE_BATCHES,
+  FIRE_GROUPS,
+  FIRE_GROUP_IDS,
+  FIRE_PLAN_KEY,
+  LEFT_BATCH_START_OFFSETS_MS,
+  RIGHT_BATCH_START_OFFSETS_MS,
   LAST_HIT_AT,
   COMPLETE_AT,
   FIRE_DEATH_SOURCE,
@@ -245,6 +305,7 @@ export const KEFKA_P5_GROUND_FIRE_TESTING = {
   INITIAL_NORTH_FACING,
   KEFKA_MAP_MARKERS,
   INITIAL_POSITIONS,
+  buildFireBatches,
   getFireStartPosition,
   getFireHitPosition,
 };
