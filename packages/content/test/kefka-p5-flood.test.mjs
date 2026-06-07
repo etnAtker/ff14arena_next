@@ -107,7 +107,13 @@ test('凯夫卡P5洪水：战斗登记、不登记Bot，且P5注册顺序正确'
   assert.equal(getBattleBotController('kefka_p5_flood'), undefined);
   assert.deepEqual(
     battleDefinitions.map((definition) => definition.id).filter((id) => id.startsWith('kefka_p5_')),
-    ['kefka_p5_flood', 'kefka_p5_mad_symphony', 'kefka_p5_three_stars', 'kefka_p5_ground_fire'],
+    [
+      'kefka_p5_flood',
+      'kefka_p5_mad_symphony',
+      'kefka_p5_three_stars',
+      'kefka_p5_ground_fire',
+      'kefka_p5_full',
+    ],
   );
 });
 
