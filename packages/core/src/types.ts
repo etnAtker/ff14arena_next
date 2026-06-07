@@ -110,6 +110,7 @@ export interface BattleScriptContext {
       resolveAfterMs?: number;
       sourceId?: string;
       color?: string;
+      filled?: boolean;
     }): MechanicSnapshot;
     circleTelegraph(options: {
       label: string;

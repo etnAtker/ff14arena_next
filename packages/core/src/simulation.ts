@@ -1039,6 +1039,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             center: cloneVector(options.center),
             radius: options.radius,
             ...(options.color === undefined ? {} : { color: options.color }),
+            ...(options.filled === undefined ? {} : { filled: options.filled }),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },

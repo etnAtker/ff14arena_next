@@ -140,6 +140,8 @@ export interface TowerMechanicSnapshot {
   sourceId: string;
   center: Vector2;
   radius: number;
+  color?: string;
+  filled?: boolean;
   resolveAt: number;
 }
 

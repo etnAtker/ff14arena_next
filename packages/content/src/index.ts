@@ -22,6 +22,10 @@ import {
   KEFKA_P5_MAD_SYMPHONY_BOT_CONTROLLER,
 } from './battles/kefka-p5-mad-symphony';
 import { KEFKA_P5_GROUND_FIRE_BATTLE } from './battles/kefka-p5-ground-fire';
+import {
+  KEFKA_P5_THREE_STARS_BATTLE,
+  KEFKA_P5_THREE_STARS_BOT_CONTROLLER,
+} from './battles/kefka-p5-three-stars';
 import type { BattleBotController } from './runtime/bot';
 import { getBattleStatusMetadata } from './status-metadata';
 
@@ -40,6 +44,7 @@ export const battleDefinitions: BattleDefinition[] = [
   KEFKA_P4_FIRST_TRICK_BATTLE,
   KEFKA_P5_MAD_SYMPHONY_BATTLE,
   KEFKA_P5_GROUND_FIRE_BATTLE,
+  KEFKA_P5_THREE_STARS_BATTLE,
 ];
 
 export const battleBotControllers = new Map<string, BattleBotController>([
@@ -47,6 +52,7 @@ export const battleBotControllers = new Map<string, BattleBotController>([
   [EDEN_P4_SPECIAL_BATTLE.id, EDEN_P4_SPECIAL_BOT_CONTROLLER],
   [KEFKA_P2_FIRST_FORSAKEN_BATTLE.id, KEFKA_P2_FIRST_FORSAKEN_BOT_CONTROLLER],
   [KEFKA_P5_MAD_SYMPHONY_BATTLE.id, KEFKA_P5_MAD_SYMPHONY_BOT_CONTROLLER],
+  [KEFKA_P5_THREE_STARS_BATTLE.id, KEFKA_P5_THREE_STARS_BOT_CONTROLLER],
 ]);
 
 export const battleCatalog: BattleSummary[] = battleDefinitions.map((battle) => ({

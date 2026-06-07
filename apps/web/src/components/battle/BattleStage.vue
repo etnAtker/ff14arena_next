@@ -1179,14 +1179,20 @@ function draw(now: number): void {
     }
 
     if (mechanic.kind === 'tower') {
-      graphics.circle(point.x, point.y, mechanic.radius * scale).fill({
-        color: 0xf4d35e,
-        alpha: 0.2,
-      });
+      const color = mechanic.color === undefined ? 0xf4d35e : parseHexColor(mechanic.color);
+      const filled = mechanic.filled ?? true;
+
+      if (filled) {
+        graphics.circle(point.x, point.y, mechanic.radius * scale).fill({
+          color,
+          alpha: 0.2,
+        });
+      }
+
       graphics.circle(point.x, point.y, mechanic.radius * scale).stroke({
-        width: 3,
-        color: 0xf4d35e,
-        alpha: 0.92,
+        width: filled ? 3 : 2,
+        color,
+        alpha: filled ? 0.92 : 0.68,
       });
       continue;
     }

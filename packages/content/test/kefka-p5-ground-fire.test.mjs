@@ -260,42 +260,44 @@ test('凯夫卡P5地火：T+3读条混沌末世，并按左右随机批次刷新
 });
 
 test('凯夫卡P5地火：地火半径6m，每次判定后显示0.3秒，命中即死', () => {
-  const simulation = createKefkaP5GroundFireSimulation();
-  const firstLeftHitAt = CAST_START_AT + FIRST_HIT_DELAY_MS;
+  withMockedRandom([0.99, 0.99, 0.99, 0.99], () => {
+    const simulation = createKefkaP5GroundFireSimulation();
+    const firstLeftHitAt = CAST_START_AT + FIRST_HIT_DELAY_MS;
 
-  advanceTo(simulation, firstLeftHitAt - 1);
+    advanceTo(simulation, firstLeftHitAt - 1);
 
-  const beforeHitSnapshot = simulation.getSnapshot();
-  const beforeHitTelegraphs = beforeHitSnapshot.mechanics.filter(
-    (mechanic) =>
-      mechanic.kind === 'circleTelegraph' &&
-      ['左1号地火', '左4号地火'].includes(mechanic.label) &&
-      mechanic.resolveAt === firstLeftHitAt + HIT_DISPLAY_MS,
-  );
+    const beforeHitSnapshot = simulation.getSnapshot();
+    const beforeHitTelegraphs = beforeHitSnapshot.mechanics.filter(
+      (mechanic) =>
+        mechanic.kind === 'circleTelegraph' &&
+        ['左1号地火', '左4号地火'].includes(mechanic.label) &&
+        mechanic.resolveAt === firstLeftHitAt + HIT_DISPLAY_MS,
+    );
 
-  assert.equal(beforeHitTelegraphs.length, 0);
+    assert.equal(beforeHitTelegraphs.length, 0);
 
-  const mt = getActorBySlot(beforeHitSnapshot, 'MT');
-  const hitIndex = 3;
-  const hitAt = CAST_START_AT + FIRST_HIT_DELAY_MS + HIT_INTERVAL_MS * hitIndex;
-  const hitPosition = getFireHitPosition('left', 1, hitIndex);
+    const mt = getActorBySlot(beforeHitSnapshot, 'MT');
+    const hitIndex = 3;
+    const hitAt = CAST_START_AT + FIRST_HIT_DELAY_MS + HIT_INTERVAL_MS * hitIndex;
+    const hitPosition = getFireHitPosition('left', 1, hitIndex);
 
-  submitPose(simulation, mt, hitPosition);
-  advanceTo(simulation, hitAt);
+    submitPose(simulation, mt, hitPosition);
+    advanceTo(simulation, hitAt);
 
-  const hitSnapshot = simulation.getSnapshot();
-  const hitTelegraphs = hitSnapshot.mechanics.filter(
-    (mechanic) =>
-      mechanic.kind === 'circleTelegraph' &&
-      ['左1号地火', '左4号地火'].includes(mechanic.label) &&
-      mechanic.resolveAt === hitAt + HIT_DISPLAY_MS,
-  );
-  const resolvedMt = getActorBySlot(hitSnapshot, 'MT');
+    const hitSnapshot = simulation.getSnapshot();
+    const hitTelegraphs = hitSnapshot.mechanics.filter(
+      (mechanic) =>
+        mechanic.kind === 'circleTelegraph' &&
+        ['左1号地火', '左4号地火'].includes(mechanic.label) &&
+        mechanic.resolveAt === hitAt + HIT_DISPLAY_MS,
+    );
+    const resolvedMt = getActorBySlot(hitSnapshot, 'MT');
 
-  assert.equal(hitTelegraphs.length, 2);
-  assert.equal(AOE_RADIUS, 6);
-  assert.ok(hitTelegraphs.every((mechanic) => mechanic.radius === 6));
-  assert.equal(FIRE_DEATH_SOURCE, '地火');
-  assert.equal(resolvedMt.alive, false);
-  assert.equal(resolvedMt.deathReason, FIRE_DEATH_SOURCE);
+    assert.equal(hitTelegraphs.length, 2);
+    assert.equal(AOE_RADIUS, 6);
+    assert.ok(hitTelegraphs.every((mechanic) => mechanic.radius === 6));
+    assert.equal(FIRE_DEATH_SOURCE, '地火');
+    assert.equal(resolvedMt.alive, false);
+    assert.equal(resolvedMt.deathReason, FIRE_DEATH_SOURCE);
+  });
 });
