@@ -31,12 +31,12 @@ const HIT_INTERVAL_MS = 500;
 const HIT_COUNT = 7;
 const HIT_DISPLAY_MS = 300;
 const AOE_RADIUS = 6;
-const START_LINE_LENGTH = 35;
+const FIRE_GRID_STEP = 5;
 const START_LINE_POINT_COUNT = 6;
-const START_LINE_POINT_GAP = START_LINE_LENGTH / (START_LINE_POINT_COUNT - 1);
-const STEP_DISTANCE = 7;
-const BISECTOR_LENGTH = 25;
-const SQRT_1_2 = Math.SQRT1_2;
+const START_LINE_POINT_GAP = FIRE_GRID_STEP * Math.SQRT2;
+const START_LINE_LENGTH = START_LINE_POINT_GAP * (START_LINE_POINT_COUNT - 1);
+const STEP_DISTANCE = START_LINE_POINT_GAP;
+const BISECTOR_LENGTH = FIRE_GRID_STEP * ((START_LINE_POINT_COUNT + 1) / 2) * Math.SQRT2;
 const FIRE_COLOR = '#f97316';
 const FIRE_DEATH_SOURCE = '地火';
 const CHAOS_DOOMSDAY_CAST_MS = 4_000;
@@ -118,56 +118,24 @@ function buildFireBatches(plan: FirePlan): FireBatch[] {
   ];
 }
 
-function addVector(left: Vector2, right: Vector2): Vector2 {
-  return {
-    x: left.x + right.x,
-    y: left.y + right.y,
-  };
-}
-
-function scaleVector(vector: Vector2, factor: number): Vector2 {
-  return {
-    x: vector.x * factor,
-    y: vector.y * factor,
-  };
-}
-
-function getFireLineMidpoint(side: FireSide): Vector2 {
-  const coordinate = BISECTOR_LENGTH * SQRT_1_2;
-
-  return {
-    x: side === 'left' ? -coordinate : coordinate,
-    y: -coordinate,
-  };
-}
-
-function getFireLineDirection(side: FireSide): Vector2 {
-  return {
-    x: side === 'left' ? -SQRT_1_2 : SQRT_1_2,
-    y: SQRT_1_2,
-  };
-}
-
-function getFireStepDirection(side: FireSide): Vector2 {
-  return {
-    x: side === 'left' ? SQRT_1_2 : -SQRT_1_2,
-    y: SQRT_1_2,
-  };
-}
-
 function getFireStartPosition(side: FireSide, number: FireNumber): Vector2 {
-  const midpoint = getFireLineMidpoint(side);
-  const lineDirection = getFireLineDirection(side);
-  const offset = (number - (START_LINE_POINT_COUNT + 1) / 2) * START_LINE_POINT_GAP;
+  const x = FIRE_GRID_STEP * number;
+  const y = -FIRE_GRID_STEP * (START_LINE_POINT_COUNT + 1 - number);
 
-  return addVector(midpoint, scaleVector(lineDirection, offset));
+  return {
+    x: side === 'left' ? -x : x,
+    y,
+  };
 }
 
 function getFireHitPosition(side: FireSide, number: FireNumber, hitIndex: number): Vector2 {
-  return addVector(
-    getFireStartPosition(side, number),
-    scaleVector(getFireStepDirection(side), STEP_DISTANCE * hitIndex),
-  );
+  const start = getFireStartPosition(side, number);
+  const offset = FIRE_GRID_STEP * hitIndex;
+
+  return {
+    x: side === 'left' ? start.x + offset : start.x - offset,
+    y: start.y + offset,
+  };
 }
 
 function getFireLabel(side: FireSide, number: FireNumber): string {
@@ -287,6 +255,7 @@ export const KEFKA_P5_GROUND_FIRE_TESTING = {
   HIT_COUNT,
   HIT_DISPLAY_MS,
   AOE_RADIUS,
+  FIRE_GRID_STEP,
   START_LINE_LENGTH,
   START_LINE_POINT_COUNT,
   START_LINE_POINT_GAP,
