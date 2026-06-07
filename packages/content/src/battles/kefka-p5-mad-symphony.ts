@@ -1,10 +1,21 @@
 import type { BattleDefinition, BattleScriptContext } from '@ff14arena/core';
 import { INJURY_UP_MULTIPLIER, createFacingTowards, distance } from '@ff14arena/core';
-import type { BaseActorSnapshot, MapMarker, PartySlot, StatusId, Vector2 } from '@ff14arena/shared';
+import type { BaseActorSnapshot, PartySlot, StatusId, Vector2 } from '@ff14arena/shared';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type { BattleBotController } from '../runtime/bot';
 import { createPoseTowards } from '../runtime/bot';
 import { getStatusDisplayName } from '../status-metadata';
+import {
+  KEFKA_P5_ARENA_RADIUS as ARENA_RADIUS,
+  KEFKA_P5_BOSS_TARGET_RING_RADIUS as BOSS_TARGET_RING_RADIUS,
+  KEFKA_P5_CENTER as CENTER,
+  KEFKA_P5_INITIAL_POSITIONS as INITIAL_POSITIONS,
+  KEFKA_P5_INITIAL_RADIUS as BOT_INITIAL_RADIUS,
+  KEFKA_P5_INITIAL_SLOT_ORDER as BOT_INITIAL_SLOT_ORDER,
+  KEFKA_P5_MAP_MARKERS as KEFKA_MAP_MARKERS,
+  KEFKA_P5_NORTH_ANGLE as NORTH_ANGLE,
+  pointOnRadius,
+} from './kefka-p5-common';
 
 interface P5Assignments {
   firstTankTargetIds: string[];
@@ -20,9 +31,6 @@ interface FollowupTargets {
   dpsTargetId: string;
 }
 
-const ARENA_RADIUS = 20;
-const BOSS_TARGET_RING_RADIUS = 8;
-const CENTER = { x: 0, y: 0 } as const satisfies Vector2;
 const CAST_MS = 5_000;
 const SPREAD_TELEGRAPH_MS = 500;
 const FIRST_HIT_AT = 5_700;
@@ -55,7 +63,6 @@ const NUCLEAR_STATUS_ID = 'kefka_p5_extra_nuclear_blast';
 const HOLY_STATUS_ID = 'kefka_p5_extra_holy';
 const ASSIGNMENTS_KEY = 'kefkaP5:assignments';
 const FOLLOWUP_TARGETS_KEY_PREFIX = 'kefkaP5:followupTargets';
-const BOT_INITIAL_RADIUS = BOSS_TARGET_RING_RADIUS + 1;
 const BOT_NUCLEAR_RADIUS = ARENA_RADIUS - 1;
 const BOT_SAFE_SEARCH_STEP = 0.5;
 const BOT_SAFE_SEARCH_ANGLE_COUNT = 144;
@@ -64,103 +71,11 @@ const BOT_SAFE_MARGIN = 0.05;
 const TANK_SLOTS = ['MT', 'ST'] as const satisfies readonly PartySlot[];
 const HEALER_SLOTS = ['H1', 'H2'] as const satisfies readonly PartySlot[];
 const DPS_SLOTS = ['D1', 'D2', 'D3', 'D4'] as const satisfies readonly PartySlot[];
-const BOT_INITIAL_SLOT_ORDER = [
-  'MT',
-  'ST',
-  'H2',
-  'D2',
-  'D4',
-  'D1',
-  'H1',
-  'D3',
-] as const satisfies readonly PartySlot[];
-const NORTH_ANGLE = -Math.PI / 2;
 const BOT_NUCLEAR_POINT = pointOnRadius(NORTH_ANGLE, BOT_NUCLEAR_RADIUS);
 const BOT_HOLY_SHARE_POINT = pointOnRadius(NORTH_ANGLE + Math.PI, BOSS_TARGET_RING_RADIUS);
 const BOT_FOLLOWUP_DPS_SHARE_POINT = pointOnRadius(Math.PI / 4, BOSS_TARGET_RING_RADIUS);
 const BOT_FOLLOWUP_HEALER_SHARE_POINT = pointOnRadius((Math.PI * 3) / 4, BOSS_TARGET_RING_RADIUS);
 const BOT_FOLLOWUP_TANK_SHARE_POINT = pointOnRadius(NORTH_ANGLE, BOSS_TARGET_RING_RADIUS);
-
-const MARKER_CORNER_DISTANCE = 12;
-const MARKER_COLORS = {
-  red: '#ef4444',
-  yellow: '#f4d35e',
-  cyan: '#7dd3fc',
-  purple: '#a78bfa',
-} as const;
-
-const KEFKA_MAP_MARKERS: MapMarker[] = [
-  {
-    label: 'A',
-    shape: 'circle',
-    color: MARKER_COLORS.red,
-    position: { x: 0, y: -MARKER_CORNER_DISTANCE },
-    radius: 1.25,
-  },
-  {
-    label: '2',
-    shape: 'square',
-    color: MARKER_COLORS.yellow,
-    position: { x: MARKER_CORNER_DISTANCE, y: -MARKER_CORNER_DISTANCE },
-    size: 2.2,
-  },
-  {
-    label: 'B',
-    shape: 'circle',
-    color: MARKER_COLORS.yellow,
-    position: { x: MARKER_CORNER_DISTANCE, y: 0 },
-    radius: 1.25,
-  },
-  {
-    label: '3',
-    shape: 'square',
-    color: MARKER_COLORS.cyan,
-    position: { x: MARKER_CORNER_DISTANCE, y: MARKER_CORNER_DISTANCE },
-    size: 2.2,
-  },
-  {
-    label: 'C',
-    shape: 'circle',
-    color: MARKER_COLORS.cyan,
-    position: { x: 0, y: MARKER_CORNER_DISTANCE },
-    radius: 1.25,
-  },
-  {
-    label: '4',
-    shape: 'square',
-    color: MARKER_COLORS.purple,
-    position: { x: -MARKER_CORNER_DISTANCE, y: MARKER_CORNER_DISTANCE },
-    size: 2.2,
-  },
-  {
-    label: 'D',
-    shape: 'circle',
-    color: MARKER_COLORS.purple,
-    position: { x: -MARKER_CORNER_DISTANCE, y: 0 },
-    radius: 1.25,
-  },
-  {
-    label: '1',
-    shape: 'square',
-    color: MARKER_COLORS.red,
-    position: { x: -MARKER_CORNER_DISTANCE, y: -MARKER_CORNER_DISTANCE },
-    size: 2.2,
-  },
-];
-
-const INITIAL_POSITIONS = Object.fromEntries(
-  BOT_INITIAL_SLOT_ORDER.map((slot, index) => [
-    slot,
-    pointOnRadius(NORTH_ANGLE + (Math.PI / 4) * index, BOT_INITIAL_RADIUS),
-  ]),
-) as Record<PartySlot, Vector2>;
-
-function pointOnRadius(angle: number, radius: number): Vector2 {
-  return {
-    x: Math.cos(angle) * radius,
-    y: Math.sin(angle) * radius,
-  };
-}
 
 function shuffle<T>(values: readonly T[]): T[] {
   const shuffled = [...values];
