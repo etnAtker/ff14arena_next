@@ -244,11 +244,8 @@ function spawnSpreadTelegraphs(
 function createAssignments(ctx: BattleScriptContext): P5Assignments {
   const tankTargets = TANK_SLOTS.map((slot) => getActorBySlot(ctx, slot));
   const firstDhTargets = shuffle(DH_SLOTS.map((slot) => getActorBySlot(ctx, slot))).slice(0, 3);
-  const [nuclearTarget, holyTarget] = shuffle(tankTargets);
-
-  if (nuclearTarget === undefined || holyTarget === undefined) {
-    throw new Error('missing first targets for Kefka P5 assignments');
-  }
+  const nuclearTarget = getActorBySlot(ctx, 'MT');
+  const holyTarget = getActorBySlot(ctx, 'ST');
 
   return {
     firstTankTargetIds: tankTargets.map((actor) => actor.id),
