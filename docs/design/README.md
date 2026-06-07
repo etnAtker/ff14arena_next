@@ -39,6 +39,7 @@
 18. [凯夫卡P3：一运](./09-content/kefka-p3-first-trick.md)
 19. [凯夫卡P3：二运](./09-content/kefka-p3-second-trick.md)
 20. [凯夫卡P4：一运](./09-content/kefka-p4-first-trick.md)
+21. [凯夫卡P5：癫狂交响曲](./09-content/kefka-p5-mad-symphony.md)
 
 文档术语：
 

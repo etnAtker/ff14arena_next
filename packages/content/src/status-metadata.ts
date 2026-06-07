@@ -201,6 +201,28 @@ const manualStatusMetadataById: Record<string, StatusMetadata> = {
     fallbackText: '水',
     partyListPriority: 225,
   },
+  kefka_p5_extra_nuclear_blast: {
+    id: 'kefka_p5_extra_nuclear_blast',
+    name: '顺手加个核爆',
+    description: '效果结束时以自身为中心发动大范围攻击',
+    xivapiStatusId: 5350,
+    iconId: 214408,
+    iconPath: 'ui/icon/214000/214408.tex',
+    iconUrl: '/status-icons/214408.png',
+    fallbackText: '核爆',
+    partyListPriority: 200,
+  },
+  kefka_p5_extra_holy: {
+    id: 'kefka_p5_extra_holy',
+    name: '顺手加个神圣',
+    description: '效果结束时需要至少4人分摊',
+    xivapiStatusId: 5351,
+    iconId: 214409,
+    iconPath: 'ui/icon/214000/214409.tex',
+    iconUrl: '/status-icons/214409.png',
+    fallbackText: '神圣',
+    partyListPriority: 200,
+  },
 };
 const statusMetadataById: Record<string, StatusMetadata> = {
   ...statusMetadataCatalog,

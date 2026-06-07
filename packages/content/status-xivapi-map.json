@@ -37,7 +37,8 @@
       "kefka_p4_dead_wound",
       "kefka_p4_chaos_fire",
       "kefka_p4_chaos_water"
-    ]
+    ],
+    "kefka_p5_mad_symphony": ["kefka_p5_extra_nuclear_blast", "kefka_p5_extra_holy"]
   },
   "statusXivapiIds": {
     "injury_up": 3366,
@@ -67,6 +68,8 @@
     "kefka_p4_living_wound": 4887,
     "kefka_p4_dead_wound": 4888,
     "kefka_p4_chaos_fire": 5547,
-    "kefka_p4_chaos_water": 5548
+    "kefka_p4_chaos_water": 5548,
+    "kefka_p5_extra_nuclear_blast": 5350,
+    "kefka_p5_extra_holy": 5351
   }
 }
