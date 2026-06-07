@@ -70,6 +70,7 @@ const BOT_NON_SHARE_SAFE_RADIUS = 12;
 const TANK_SLOTS = ['MT', 'ST'] as const satisfies readonly PartySlot[];
 const HEALER_SLOTS = ['H1', 'H2'] as const satisfies readonly PartySlot[];
 const DPS_SLOTS = ['D1', 'D2', 'D3', 'D4'] as const satisfies readonly PartySlot[];
+const DH_SLOTS = [...HEALER_SLOTS, ...DPS_SLOTS] as const satisfies readonly PartySlot[];
 const BOT_NUCLEAR_POINT = pointOnRadius(NORTH_ANGLE, BOT_NUCLEAR_RADIUS);
 const BOT_HOLY_SHARE_POINT = pointOnRadius(NORTH_ANGLE + Math.PI, BOSS_TARGET_RING_RADIUS);
 const BOT_NON_SHARE_RIGHT_POINT = pointOnRadius(Math.PI / 3, BOT_NON_SHARE_SAFE_RADIUS);
@@ -242,7 +243,7 @@ function spawnSpreadTelegraphs(
 
 function createAssignments(ctx: BattleScriptContext): P5Assignments {
   const tankTargets = TANK_SLOTS.map((slot) => getActorBySlot(ctx, slot));
-  const firstDhTargets = shuffle(DPS_SLOTS.map((slot) => getActorBySlot(ctx, slot))).slice(0, 3);
+  const firstDhTargets = shuffle(DH_SLOTS.map((slot) => getActorBySlot(ctx, slot))).slice(0, 3);
   const [nuclearTarget, holyTarget] = shuffle(tankTargets);
 
   if (nuclearTarget === undefined || holyTarget === undefined) {
