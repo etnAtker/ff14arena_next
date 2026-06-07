@@ -131,7 +131,6 @@ const FLOOD_PREVIEW_ATS = [17_828, 18_853, 19_832, 20_856] as const;
 const FLOOD_RESOLVE_ATS = [22_369, 23_396, 24_420, 25_445] as const;
 const FLOOD_TELEGRAPH_DISPLAY_MS = 1_300;
 const FLOOD_HIT_DISPLAY_MS = 300;
-const MAGIC_STRIKE_TELEGRAPH_MS = 500;
 const FLOOD_LENGTH = 40;
 const FLOOD_WIDTH = 10;
 const FLOOD_NEAR_OFFSET = 5;
@@ -601,32 +600,6 @@ function spawnMagicStrikeMarker(
     color,
     resolveAfterMs,
   });
-}
-
-function spawnMagicStrikeTelegraphs(ctx: BattleScriptContext, hitAt: number): void {
-  const targets = getOrCreateMagicStrikeTargets(ctx, hitAt);
-
-  spawnMagicStrikeMarker(
-    ctx,
-    '魔击T分摊预兆',
-    targets.tankTargetId,
-    '#ef4444',
-    MAGIC_STRIKE_TELEGRAPH_MS,
-  );
-  spawnMagicStrikeMarker(
-    ctx,
-    '魔击H分摊预兆',
-    targets.healerTargetId,
-    '#facc15',
-    MAGIC_STRIKE_TELEGRAPH_MS,
-  );
-  spawnMagicStrikeMarker(
-    ctx,
-    '魔击D分摊预兆',
-    targets.dpsTargetId,
-    '#38bdf8',
-    MAGIC_STRIKE_TELEGRAPH_MS,
-  );
 }
 
 function resolveMagicShare(
@@ -1379,9 +1352,6 @@ function scheduleContinuousUltimates(ctx: BattleScriptContext): void {
 
 function scheduleMagicStrikes(ctx: BattleScriptContext): void {
   for (const hitAt of MAGIC_STRIKE_HIT_ATS) {
-    ctx.timeline.at(hitAt - MAGIC_STRIKE_TELEGRAPH_MS, () => {
-      spawnMagicStrikeTelegraphs(ctx, hitAt);
-    });
     ctx.timeline.at(hitAt, () => {
       resolveMagicStrike(ctx, hitAt);
     });
@@ -1918,7 +1888,6 @@ export const KEFKA_P5_FULL_TESTING = {
   CONTINUOUS_ULTIMATE_CAST_ATS,
   CONTINUOUS_ULTIMATE_RESOLVE_ATS,
   MAGIC_STRIKE_HIT_ATS,
-  MAGIC_STRIKE_TELEGRAPH_MS,
   FLOOD_PREVIEW_ATS,
   FLOOD_RESOLVE_ATS,
   MAD_SYMPHONY_CAST_RESOLVE_ATS,

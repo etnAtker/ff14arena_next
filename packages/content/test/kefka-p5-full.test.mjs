@@ -9,7 +9,6 @@ const {
   CONTINUOUS_ULTIMATE_CAST_ATS,
   CONTINUOUS_ULTIMATE_RESOLVE_ATS,
   MAGIC_STRIKE_HIT_ATS,
-  MAGIC_STRIKE_TELEGRAPH_MS,
   FLOOD_PREVIEW_ATS,
   FLOOD_RESOLVE_ATS,
   MAD_SYMPHONY_CAST_RESOLVE_ATS,
@@ -153,8 +152,7 @@ test('凯夫卡P5整合：三星基础塔会在第三轮结束后消失', () => 
   );
 });
 
-test('凯夫卡P5整合：重复癫狂和魔击都会提前显示预兆', () => {
-  assert.equal(MAGIC_STRIKE_TELEGRAPH_MS, 500);
+test('凯夫卡P5整合：重复癫狂提前显示预兆，魔击只显示判定反馈', () => {
   assert.equal(MAD_TELEGRAPH_MS, 500);
   assert.deepEqual(MAD_FIRST_HIT_ATS, [35_338, 127_405]);
   assert.deepEqual(MAD_SECOND_HIT_ATS, [38_497, 130_569]);
@@ -162,11 +160,21 @@ test('凯夫卡P5整合：重复癫狂和魔击都会提前显示预兆', () => 
   const simulation = createKefkaP5FullSimulation('bot');
 
   advanceWithBotControls(simulation, MAGIC_STRIKE_HIT_ATS[7] - 400);
+  assert.equal(
+    simulation
+      .getSnapshot()
+      .mechanics.some(
+        (mechanic) => mechanic.kind === 'actorMarker' && mechanic.label.includes('魔击'),
+      ),
+    false,
+  );
+
+  advanceWithBotControls(simulation, MAGIC_STRIKE_HIT_ATS[7] + 100);
   assert.ok(
     simulation
       .getSnapshot()
       .mechanics.some(
-        (mechanic) => mechanic.kind === 'actorMarker' && mechanic.label === '魔击D分摊预兆',
+        (mechanic) => mechanic.kind === 'actorMarker' && mechanic.label === '魔击D分摊',
       ),
   );
 
