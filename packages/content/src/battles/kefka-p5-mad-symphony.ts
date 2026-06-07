@@ -63,16 +63,17 @@ const NUCLEAR_STATUS_ID = 'kefka_p5_extra_nuclear_blast';
 const HOLY_STATUS_ID = 'kefka_p5_extra_holy';
 const ASSIGNMENTS_KEY = 'kefkaP5:assignments';
 const FOLLOWUP_TARGETS_KEY_PREFIX = 'kefkaP5:followupTargets';
+const BOT_SECOND_BAIT_RADIUS = BOSS_TARGET_RING_RADIUS - 1;
 const BOT_NUCLEAR_RADIUS = ARENA_RADIUS - 1;
-const BOT_SAFE_SEARCH_STEP = 0.5;
-const BOT_SAFE_SEARCH_ANGLE_COUNT = 144;
-const BOT_SAFE_MARGIN = 0.05;
+const BOT_NON_SHARE_SAFE_RADIUS = 12;
 
 const TANK_SLOTS = ['MT', 'ST'] as const satisfies readonly PartySlot[];
 const HEALER_SLOTS = ['H1', 'H2'] as const satisfies readonly PartySlot[];
 const DPS_SLOTS = ['D1', 'D2', 'D3', 'D4'] as const satisfies readonly PartySlot[];
 const BOT_NUCLEAR_POINT = pointOnRadius(NORTH_ANGLE, BOT_NUCLEAR_RADIUS);
 const BOT_HOLY_SHARE_POINT = pointOnRadius(NORTH_ANGLE + Math.PI, BOSS_TARGET_RING_RADIUS);
+const BOT_NON_SHARE_RIGHT_POINT = pointOnRadius(Math.PI / 3, BOT_NON_SHARE_SAFE_RADIUS);
+const BOT_NON_SHARE_LEFT_POINT = pointOnRadius((Math.PI * 2) / 3, BOT_NON_SHARE_SAFE_RADIUS);
 const BOT_FOLLOWUP_DPS_SHARE_POINT = pointOnRadius(Math.PI / 4, BOSS_TARGET_RING_RADIUS);
 const BOT_FOLLOWUP_HEALER_SHARE_POINT = pointOnRadius((Math.PI * 3) / 4, BOSS_TARGET_RING_RADIUS);
 const BOT_FOLLOWUP_TANK_SHARE_POINT = pointOnRadius(NORTH_ANGLE, BOSS_TARGET_RING_RADIUS);
@@ -136,12 +137,9 @@ function sortByDistanceThenSlot(actors: BaseActorSnapshot[], center: Vector2): B
   });
 }
 
-function selectNearestNonTankTargets(
-  actors: BaseActorSnapshot[],
-  count: number,
-): BaseActorSnapshot[] {
+function selectNearestTargets(actors: BaseActorSnapshot[], count: number): BaseActorSnapshot[] {
   return sortByDistanceThenSlot(
-    actors.filter((actor) => actor.mechanicActive && !isTankSlot(actor.slot)),
+    actors.filter((actor) => actor.mechanicActive),
     CENTER,
   ).slice(0, count);
 }
@@ -281,9 +279,7 @@ function getOrCreateSecondDhTargetIds(
 
   const nextAssignments = {
     ...assignments,
-    secondDhTargetIds: selectNearestNonTankTargets(ctx.select.allPlayers(), 3).map(
-      (actor) => actor.id,
-    ),
+    secondDhTargetIds: selectNearestTargets(ctx.select.allPlayers(), 3).map((actor) => actor.id),
   };
 
   ctx.state.setValue(ASSIGNMENTS_KEY, nextAssignments);
@@ -611,44 +607,8 @@ function scaleVector(vector: Vector2, factor: number): Vector2 {
   };
 }
 
-function isBotSafePoint(point: Vector2, nuclearPoint: Vector2, sharePoint: Vector2): boolean {
-  return (
-    distance(point, CENTER) <= ARENA_RADIUS &&
-    distance(point, nuclearPoint) > NUCLEAR_RADIUS + BOT_SAFE_MARGIN &&
-    distance(point, sharePoint) > HOLY_SHARE_RADIUS + BOT_SAFE_MARGIN
-  );
-}
-
-function findNearestBotSafePoint(
-  start: Vector2,
-  nuclearPoint: Vector2,
-  sharePoint: Vector2,
-): Vector2 {
-  if (isBotSafePoint(start, nuclearPoint, sharePoint)) {
-    return start;
-  }
-
-  let nearest: { point: Vector2; distance: number } | null = null;
-
-  for (let radius = 0; radius <= ARENA_RADIUS; radius += BOT_SAFE_SEARCH_STEP) {
-    for (let index = 0; index < BOT_SAFE_SEARCH_ANGLE_COUNT; index += 1) {
-      const point = pointOnRadius((Math.PI * 2 * index) / BOT_SAFE_SEARCH_ANGLE_COUNT, radius);
-
-      if (!isBotSafePoint(point, nuclearPoint, sharePoint)) {
-        continue;
-      }
-
-      const pointDistance = distance(start, point);
-
-      if (nearest === null || pointDistance < nearest.distance) {
-        nearest = { point, distance: pointDistance };
-      }
-    }
-  }
-
-  return (
-    nearest?.point ?? scaleVector(normalizeDirection(sharePoint, { x: -1, y: 0 }), ARENA_RADIUS)
-  );
+function getBotNonSharePoint(slot: PartySlot): Vector2 {
+  return INITIAL_POSITIONS[slot].x < 0 ? BOT_NON_SHARE_LEFT_POINT : BOT_NON_SHARE_RIGHT_POINT;
 }
 
 function getKefkaP5BotTarget(
@@ -680,6 +640,13 @@ function getKefkaP5BotTarget(
       );
     }
 
+    if (!isTankSlot(slot)) {
+      return scaleVector(
+        normalizeDirection(INITIAL_POSITIONS[slot], INITIAL_POSITIONS[slot]),
+        BOT_SECOND_BAIT_RADIUS,
+      );
+    }
+
     return INITIAL_POSITIONS[slot];
   }
 
@@ -689,14 +656,14 @@ function getKefkaP5BotTarget(
     }
 
     if (assignments.secondDhTargetIds?.includes(actor.id)) {
-      return findNearestBotSafePoint(actor.position, BOT_NUCLEAR_POINT, BOT_HOLY_SHARE_POINT);
+      return getBotNonSharePoint(slot);
     }
 
     if (actor.id === assignments.holyTargetId || assignments.firstDhTargetIds.includes(actor.id)) {
       return BOT_HOLY_SHARE_POINT;
     }
 
-    return findNearestBotSafePoint(actor.position, BOT_NUCLEAR_POINT, BOT_HOLY_SHARE_POINT);
+    return getBotNonSharePoint(slot);
   }
 
   if (isTankSlot(slot)) {
@@ -820,15 +787,18 @@ export const KEFKA_P5_MAD_SYMPHONY_TESTING = {
   ASSIGNMENTS_KEY,
   FOLLOWUP_TARGETS_KEY_PREFIX,
   BOT_INITIAL_RADIUS,
+  BOT_SECOND_BAIT_RADIUS,
   BOT_NUCLEAR_RADIUS,
   BOT_NUCLEAR_POINT,
   BOT_HOLY_SHARE_POINT,
+  BOT_NON_SHARE_SAFE_RADIUS,
+  BOT_NON_SHARE_RIGHT_POINT,
+  BOT_NON_SHARE_LEFT_POINT,
   BOT_FOLLOWUP_DPS_SHARE_POINT,
   BOT_FOLLOWUP_HEALER_SHARE_POINT,
   BOT_FOLLOWUP_TANK_SHARE_POINT,
   BOT_INITIAL_SLOT_ORDER,
   KEFKA_MAP_MARKERS,
   INITIAL_POSITIONS,
-  findNearestBotSafePoint,
   getKefkaP5BotTarget,
 };

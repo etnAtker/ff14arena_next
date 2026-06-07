@@ -29,9 +29,13 @@ const {
   ASSIGNMENTS_KEY,
   FOLLOWUP_TARGETS_KEY_PREFIX,
   BOT_INITIAL_RADIUS,
+  BOT_SECOND_BAIT_RADIUS,
   BOT_NUCLEAR_RADIUS,
   BOT_NUCLEAR_POINT,
   BOT_HOLY_SHARE_POINT,
+  BOT_NON_SHARE_SAFE_RADIUS,
+  BOT_NON_SHARE_RIGHT_POINT,
+  BOT_NON_SHARE_LEFT_POINT,
   BOT_FOLLOWUP_DPS_SHARE_POINT,
   BOT_FOLLOWUP_HEALER_SHARE_POINT,
   BOT_FOLLOWUP_TANK_SHARE_POINT,
@@ -181,9 +185,9 @@ function getFirstTargetIds(assignments) {
   return [...assignments.firstTankTargetIds, ...assignments.firstDhTargetIds];
 }
 
-function getNearestNonTankActorIds(snapshot, count) {
+function getNearestActorIds(snapshot, count) {
   return snapshot.actors
-    .filter((actor) => actor.mechanicActive && actor.slot !== 'MT' && actor.slot !== 'ST')
+    .filter((actor) => actor.mechanicActive)
     .sort((left, right) => {
       const distanceDiff =
         pointDistance(left.position, { x: 0, y: 0 }) -
@@ -210,15 +214,25 @@ function assertNearPoint(actual, expected, label) {
   );
 }
 
+function getExpectedNonSharePoint(slot) {
+  return INITIAL_POSITIONS[slot].x < 0 ? BOT_NON_SHARE_LEFT_POINT : BOT_NON_SHARE_RIGHT_POINT;
+}
+
 function prepareBuffPhase(simulation) {
   advanceTo(simulation, FIRST_HIT_AT);
 
   const firstSnapshot = simulation.getSnapshot();
   const assignments = getAssignments(firstSnapshot);
   const firstDhTargetIds = assignments.firstDhTargetIds;
-  const secondDhTargetIds = getNearestNonTankActorIds(firstSnapshot, 6).filter(
-    (actorId) => !firstDhTargetIds.includes(actorId),
-  );
+  const secondDhTargetIds = firstSnapshot.actors
+    .filter(
+      (actor) =>
+        actor.mechanicActive &&
+        actor.slot !== 'MT' &&
+        actor.slot !== 'ST' &&
+        !firstDhTargetIds.includes(actor.id),
+    )
+    .map((actor) => actor.id);
   const mt = getActorBySlot(firstSnapshot, 'MT');
   const st = getActorBySlot(firstSnapshot, 'ST');
 
@@ -280,7 +294,7 @@ function runKefkaP5WithBots(randomValues) {
   });
 }
 
-test('凯夫卡P5癫狂交响曲：首轮蓝圈随机3名DPS，次轮蓝圈选择最近3名非T', () => {
+test('凯夫卡P5癫狂交响曲：首轮蓝圈随机3名DPS，次轮蓝圈选择最近3名玩家', () => {
   withMockedRandom(createSeededRandomValues(51, 100), () => {
     const simulation = createKefkaP5Simulation();
 
@@ -303,18 +317,24 @@ test('凯夫卡P5癫狂交响曲：首轮蓝圈随机3名DPS，次轮蓝圈选�
 
     const mt = getActorBySlot(firstSnapshot, 'MT');
     const st = getActorBySlot(firstSnapshot, 'ST');
-    const secondNearestNonTankIds = getNearestNonTankActorIds(firstSnapshot, 6).filter(
-      (actorId) => !firstDhTargetIds.includes(actorId),
-    );
+    const secondBaitIds = firstSnapshot.actors
+      .filter(
+        (actor) =>
+          actor.mechanicActive &&
+          actor.slot !== 'MT' &&
+          actor.slot !== 'ST' &&
+          !firstDhTargetIds.includes(actor.id),
+      )
+      .map((actor) => actor.id);
 
     submitPositions(simulation, firstSnapshot, {
       [st.id]: mt.position,
       [firstDhTargetIds[0]]: { x: -6, y: 18 },
       [firstDhTargetIds[1]]: { x: 0, y: 18 },
       [firstDhTargetIds[2]]: { x: 6, y: 18 },
-      [secondNearestNonTankIds[0]]: { x: 0, y: 6 },
-      [secondNearestNonTankIds[1]]: { x: 6, y: 0 },
-      [secondNearestNonTankIds[2]]: { x: -6, y: 0 },
+      [secondBaitIds[0]]: { x: 0, y: 6 },
+      [secondBaitIds[1]]: { x: 6, y: 0 },
+      [secondBaitIds[2]]: { x: -6, y: 0 },
     });
 
     advanceTo(simulation, SECOND_TELEGRAPH_AT);
@@ -326,7 +346,7 @@ test('凯夫卡P5癫狂交响曲：首轮蓝圈随机3名DPS，次轮蓝圈选�
     const secondDhTargetIds = secondBlueTelegraphs.map((mechanic) => {
       return getActorIdAtPosition(secondSnapshot, mechanic.center);
     });
-    const expectedSecondDhTargetIds = getNearestNonTankActorIds(secondSnapshot, 3);
+    const expectedSecondDhTargetIds = getNearestActorIds(secondSnapshot, 3);
     const secondRedTelegraphs = secondSnapshot.mechanics.filter(
       (mechanic) => mechanic.kind === 'circleTelegraph' && mechanic.color === '#ef4444',
     );
@@ -434,6 +454,31 @@ test('凯夫卡P5癫狂交响曲：Bot 第二轮ST去MT位置处理双T分摊', 
     assert.ok(frame.pose);
     assert.ok(assignments.firstDhTargetIds.length === 3);
     assertNearPoint(target, INITIAL_POSITIONS.MT, 'ST 第二轮双T分摊目标');
+
+    for (const actor of snapshot.actors) {
+      assert.ok(actor.slot);
+
+      if (
+        actor.slot === 'MT' ||
+        actor.slot === 'ST' ||
+        assignments.firstDhTargetIds.includes(actor.id)
+      ) {
+        continue;
+      }
+
+      const baitTarget = getKefkaP5BotTarget(
+        actor.slot,
+        actor,
+        snapshot.actors,
+        snapshot.timeMs,
+        snapshot.scriptState,
+      );
+
+      assert.ok(
+        Math.abs(pointDistance(baitTarget, { x: 0, y: 0 }) - BOT_SECOND_BAIT_RADIUS) <= 0.001,
+        `${actor.slot} 第一轮未点DH应主动内移引导第二轮蓝圈`,
+      );
+    }
   });
 });
 
@@ -462,13 +507,22 @@ test('凯夫卡P5癫狂交响曲：Bot 核爆T去A方向，神圣T和首轮蓝�
         assertNearPoint(target, BOT_NUCLEAR_POINT, `${actor.slot} 核爆目标点`);
         assert.ok(Math.abs(pointDistance(target, { x: 0, y: 0 }) - BOT_NUCLEAR_RADIUS) <= 0.001);
       } else if (assignments.secondDhTargetIds.includes(actor.id)) {
+        assertNearPoint(
+          target,
+          getExpectedNonSharePoint(actor.slot),
+          `${actor.slot} 第二轮蓝圈闲人固定点`,
+        );
         assert.ok(
           pointDistance(target, BOT_NUCLEAR_POINT) > NUCLEAR_RADIUS,
           `${actor.slot} 第二轮蓝圈应避开核爆`,
         );
         assert.ok(
           pointDistance(target, BOT_HOLY_SHARE_POINT) > HOLY_SHARE_RADIUS,
-          `${actor.slot} 第二轮蓝圈应避开神圣分摊`,
+          `${actor.slot} 第二轮蓝圈应远离神圣分摊`,
+        );
+        assert.ok(
+          Math.abs(pointDistance(target, { x: 0, y: 0 }) - BOT_NON_SHARE_SAFE_RADIUS) <= 0.001,
+          `${actor.slot} 第二轮蓝圈应站到12m闲人点`,
         );
       } else if (
         actor.id === assignments.holyTargetId ||
@@ -476,13 +530,18 @@ test('凯夫卡P5癫狂交响曲：Bot 核爆T去A方向，神圣T和首轮蓝�
       ) {
         assertNearPoint(target, BOT_HOLY_SHARE_POINT, `${actor.slot} 神圣分摊点`);
       } else {
+        assertNearPoint(target, getExpectedNonSharePoint(actor.slot), `${actor.slot} 闲人固定点`);
         assert.ok(
           pointDistance(target, BOT_NUCLEAR_POINT) > NUCLEAR_RADIUS,
           `${actor.slot} 应避开核爆`,
         );
         assert.ok(
           pointDistance(target, BOT_HOLY_SHARE_POINT) > HOLY_SHARE_RADIUS,
-          `${actor.slot} 应避开神圣分摊`,
+          `${actor.slot} 应远离神圣分摊`,
+        );
+        assert.ok(
+          Math.abs(pointDistance(target, { x: 0, y: 0 }) - BOT_NON_SHARE_SAFE_RADIUS) <= 0.001,
+          `${actor.slot} 应站到12m闲人点`,
         );
       }
     }
