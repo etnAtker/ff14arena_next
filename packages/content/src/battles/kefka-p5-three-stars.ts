@@ -484,9 +484,23 @@ function getAssignmentElement(plan: ThreeStarsPlan, actorId: string): Element | 
   return plan.assignments.find((assignment) => assignment.actorId === actorId)?.element ?? null;
 }
 
-function getNextElement(element: Element, offset: number): Element {
-  const index = ELEMENTS.indexOf(element);
-  return ELEMENTS[(index + offset) % ELEMENTS.length]!;
+function getPlanElementOrder(plan: ThreeStarsPlan): Element[] {
+  return [
+    plan.towers[TOWER_GROUP_INDEXES.bottom[0]!],
+    plan.towers[TOWER_GROUP_INDEXES.leftUpper[0]!],
+    plan.towers[TOWER_GROUP_INDEXES.rightUpper[0]!],
+  ].map((tower) => tower.element);
+}
+
+function getNextElement(plan: ThreeStarsPlan, element: Element, offset: number): Element {
+  const elementOrder = getPlanElementOrder(plan);
+  const index = elementOrder.indexOf(element);
+
+  if (index < 0) {
+    throw new Error(`三星塔颜色顺序缺少 ${element}`);
+  }
+
+  return elementOrder[(index + offset) % elementOrder.length]!;
 }
 
 function getRoundTargetElement(
@@ -500,7 +514,7 @@ function getRoundTargetElement(
     return null;
   }
 
-  return getNextElement(initialElement, roundIndex + 1);
+  return getNextElement(plan, initialElement, roundIndex + 1);
 }
 
 function sortTowersClockwise(towers: readonly ThreeStarsTower[]): ThreeStarsTower[] {

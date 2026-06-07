@@ -93,6 +93,27 @@ function assertNear(actual, expected, label) {
   assert.ok(Math.abs(actual - expected) <= 0.001, `${label}: expected ${expected}, got ${actual}`);
 }
 
+function createTestTowerPlan({ assignments, idleActorIds, groupElements, rounds }) {
+  const towers = Array.from({ length: TOWER_COUNT }, (_, index) => {
+    const group = index === 8 || index <= 1 ? 'bottom' : index <= 4 ? 'leftUpper' : 'rightUpper';
+
+    return {
+      index,
+      group,
+      element: groupElements[group],
+      position: getTowerPosition(index),
+    };
+  });
+
+  return {
+    assignments,
+    idleActorIds,
+    towers,
+    rounds,
+    disasters: [],
+  };
+}
+
 function getAssignmentElement(plan, actorId) {
   return plan.assignments.find((assignment) => assignment.actorId === actorId)?.element ?? null;
 }
@@ -442,19 +463,17 @@ test('凯夫卡P5三星：Bot 闲人处理 C 点附近重复塔时按 8-0-1 回�
   const simulation = createKefkaP5ThreeStarsSimulation('bot');
   const snapshot = simulation.getSnapshot();
   const idleActor = getActorById(snapshot, 'bot_D3');
-  const towers = Array.from({ length: TOWER_COUNT }, (_, index) => ({
-    index,
-    group: index === 8 || index <= 1 ? 'bottom' : index <= 4 ? 'leftUpper' : 'rightUpper',
-    element: index === 8 || index === 0 ? 'fire' : index === 2 ? 'ice' : 'lightning',
-    position: getTowerPosition(index),
-  }));
-  const plan = {
+  const plan = createTestTowerPlan({
     assignments: PARTY_SLOT_ORDER.slice(0, 6).map((slot, index) => ({
       actorId: `bot_${slot}`,
       element: ELEMENTS[Math.floor(index / 2)],
     })),
     idleActorIds: ['bot_D3', 'bot_D4'],
-    towers,
+    groupElements: {
+      bottom: 'fire',
+      leftUpper: 'ice',
+      rightUpper: 'lightning',
+    },
     rounds: [
       {
         index: 0,
@@ -464,14 +483,59 @@ test('凯夫卡P5三星：Bot 闲人处理 C 点附近重复塔时按 8-0-1 回�
         towerIndexes: [8, 0, 2, 3],
       },
     ],
-    disasters: [],
-  };
+  });
 
   const target = getKefkaP5ThreeStarsBotTarget(idleActor, FIRST_LIGHT_AT, {
     [PLAN_KEY]: plan,
   });
 
   assert.ok(pointDistance(target, getTowerPosition(0)) < 1);
+});
+
+test('凯夫卡P5三星：Bot 初始易伤按本局塔色顺时针顺序推格', () => {
+  const simulation = createKefkaP5ThreeStarsSimulation('bot');
+  const snapshot = simulation.getSnapshot();
+  const actor = getActorById(snapshot, 'bot_MT');
+  const plan = createTestTowerPlan({
+    assignments: [{ actorId: 'bot_MT', element: 'ice' }],
+    idleActorIds: [],
+    groupElements: {
+      bottom: 'ice',
+      leftUpper: 'fire',
+      rightUpper: 'lightning',
+    },
+    rounds: [
+      {
+        index: 0,
+        lightAt: FIRST_LIGHT_AT,
+        resolveAt: FIRST_RESOLVE_AT,
+        repeatElement: 'fire',
+        towerIndexes: [2, 3, 5, 8],
+      },
+      {
+        index: 1,
+        lightAt: FIRST_LIGHT_AT + 6_000,
+        resolveAt: FIRST_RESOLVE_AT + 6_000,
+        repeatElement: 'lightning',
+        towerIndexes: [0, 4, 5, 6],
+      },
+      {
+        index: 2,
+        lightAt: FIRST_LIGHT_AT + 12_000,
+        resolveAt: FIRST_RESOLVE_AT + 12_000,
+        repeatElement: 'ice',
+        towerIndexes: [1, 7, 8, 3],
+      },
+    ],
+  });
+
+  const targets = plan.rounds.map((round) =>
+    getKefkaP5ThreeStarsBotTarget(actor, round.lightAt, { [PLAN_KEY]: plan }),
+  );
+
+  assert.ok(pointDistance(targets[0], getTowerPosition(2)) < 1);
+  assert.ok(pointDistance(targets[1], getTowerPosition(5)) < 1);
+  assert.ok(pointDistance(targets[2], getTowerPosition(8)) < 1);
 });
 
 test('凯夫卡P5三星：第三轮判定时初始易伤已消失，且全 Bot 可完成随机跑法', () => {
