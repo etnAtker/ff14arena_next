@@ -92,8 +92,25 @@ test('凯夫卡P5整合：战斗、静态数据和Bot已登记', () => {
 
   assert.equal(battle.name, '凯夫卡P5：整合');
   assert.deepEqual(battle.mapMarkers, KEFKA_MAP_MARKERS);
-  assert.ok(getBattleStaticData('kefka_p5_full'));
   assert.ok(getBattleBotController('kefka_p5_full'));
+
+  const staticData = getBattleStaticData('kefka_p5_full');
+  assert.ok(staticData);
+  assert.deepEqual(
+    staticData.statusMetadata
+      .map((status) => status.id)
+      .filter(
+        (statusId) =>
+          statusId.startsWith('kefka_p5_three_stars_') || statusId.startsWith('kefka_p5_extra_'),
+      ),
+    [
+      'kefka_p5_extra_nuclear_blast',
+      'kefka_p5_extra_holy',
+      'kefka_p5_three_stars_ice_resistance_down',
+      'kefka_p5_three_stars_fire_resistance_down',
+      'kefka_p5_three_stars_lightning_resistance_down',
+    ],
+  );
 });
 
 test('凯夫卡P5整合：关键时间轴常量按日志换算', () => {

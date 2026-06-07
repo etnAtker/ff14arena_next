@@ -43,6 +43,13 @@
       "kefka_p5_three_stars_ice_resistance_down",
       "kefka_p5_three_stars_fire_resistance_down",
       "kefka_p5_three_stars_lightning_resistance_down"
+    ],
+    "kefka_p5_full": [
+      "kefka_p5_extra_nuclear_blast",
+      "kefka_p5_extra_holy",
+      "kefka_p5_three_stars_ice_resistance_down",
+      "kefka_p5_three_stars_fire_resistance_down",
+      "kefka_p5_three_stars_lightning_resistance_down"
     ]
   },
   "statusXivapiIds": {
