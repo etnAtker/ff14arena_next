@@ -21,6 +21,7 @@ import {
   KEFKA_P5_MAD_SYMPHONY_BATTLE,
   KEFKA_P5_MAD_SYMPHONY_BOT_CONTROLLER,
 } from './battles/kefka-p5-mad-symphony';
+import { KEFKA_P5_FLOOD_BATTLE } from './battles/kefka-p5-flood';
 import { KEFKA_P5_GROUND_FIRE_BATTLE } from './battles/kefka-p5-ground-fire';
 import {
   KEFKA_P5_THREE_STARS_BATTLE,
@@ -42,9 +43,10 @@ export const battleDefinitions: BattleDefinition[] = [
   KEFKA_P3_FIRST_TRICK_BATTLE,
   KEFKA_P3_SECOND_TRICK_BATTLE,
   KEFKA_P4_FIRST_TRICK_BATTLE,
+  KEFKA_P5_FLOOD_BATTLE,
   KEFKA_P5_MAD_SYMPHONY_BATTLE,
-  KEFKA_P5_GROUND_FIRE_BATTLE,
   KEFKA_P5_THREE_STARS_BATTLE,
+  KEFKA_P5_GROUND_FIRE_BATTLE,
 ];
 
 export const battleBotControllers = new Map<string, BattleBotController>([

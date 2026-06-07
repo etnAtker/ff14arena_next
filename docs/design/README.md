@@ -39,9 +39,10 @@
 18. [凯夫卡P3：一运](./09-content/kefka-p3-first-trick.md)
 19. [凯夫卡P3：二运](./09-content/kefka-p3-second-trick.md)
 20. [凯夫卡P4：一运](./09-content/kefka-p4-first-trick.md)
-21. [凯夫卡P5：癫狂交响曲](./09-content/kefka-p5-mad-symphony.md)
-22. [凯夫卡P5：地火](./09-content/kefka-p5-ground-fire.md)
+21. [凯夫卡P5：洪水](./09-content/kefka-p5-flood.md)
+22. [凯夫卡P5：癫狂交响曲](./09-content/kefka-p5-mad-symphony.md)
 23. [凯夫卡P5：三星](./09-content/kefka-p5-three-stars.md)
+24. [凯夫卡P5：地火](./09-content/kefka-p5-ground-fire.md)
 
 文档术语：
 

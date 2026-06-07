@@ -484,11 +484,21 @@ function getAssignmentElement(plan: ThreeStarsPlan, actorId: string): Element | 
   return plan.assignments.find((assignment) => assignment.actorId === actorId)?.element ?? null;
 }
 
+function getPlanTower(plan: ThreeStarsPlan, index: number): ThreeStarsTower {
+  const tower = plan.towers[index];
+
+  if (tower === undefined) {
+    throw new Error(`三星塔计划缺少 ${index} 号塔`);
+  }
+
+  return tower;
+}
+
 function getPlanElementOrder(plan: ThreeStarsPlan): Element[] {
   return [
-    plan.towers[TOWER_GROUP_INDEXES.bottom[0]!],
-    plan.towers[TOWER_GROUP_INDEXES.leftUpper[0]!],
-    plan.towers[TOWER_GROUP_INDEXES.rightUpper[0]!],
+    getPlanTower(plan, TOWER_GROUP_INDEXES.bottom[0]!),
+    getPlanTower(plan, TOWER_GROUP_INDEXES.leftUpper[0]!),
+    getPlanTower(plan, TOWER_GROUP_INDEXES.rightUpper[0]!),
   ].map((tower) => tower.element);
 }
 
