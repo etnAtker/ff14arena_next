@@ -158,9 +158,11 @@ const DISASTER_CAST_MS = 4_000;
 
 const FIRE_CAST_RESOLVE_ATS = [100_132, 102_674, 105_173, 107_669, 110_161, 112_658] as const;
 const FIRE_CAST_MS = 3_700;
+const FIRE_INITIAL_TELEGRAPH_MS = 4_000;
 const FIRE_FIRST_HIT_DELAY_MS = 625;
 const FIRE_HIT_INTERVAL_MS = 500;
 const FIRE_HIT_COUNT = 7;
+const FIRE_HIT_DISPLAY_MS = 300;
 const FIRE_SAFE_MARGIN = 1;
 const FIRE_BOT_LOOKAHEAD_MS = 1_200;
 
@@ -186,6 +188,8 @@ const TOWER_DISTANCE = 10;
 const TOWER_COUNT = 9;
 const FIRE_AOE_RADIUS = 6;
 const FIRE_GRID_STEP = 5;
+const LEFT_FIRE_DIRECTION = Math.PI / 4;
+const RIGHT_FIRE_DIRECTION = (Math.PI * 3) / 4;
 const FIRE_COLOR = '#f97316';
 const FLOOD_COLOR = '#38bdf8';
 
@@ -1284,16 +1288,22 @@ function getFireHitPosition(side: FireSide, number: FireNumber, hitIndex: number
   };
 }
 
+function getFireDirection(side: FireSide): number {
+  return side === 'left' ? LEFT_FIRE_DIRECTION : RIGHT_FIRE_DIRECTION;
+}
+
 function spawnFireTelegraph(
   ctx: BattleScriptContext,
   label: string,
   center: Vector2,
   resolveAfterMs: number,
+  direction?: number,
 ): void {
   ctx.spawn.circleTelegraph({
     label,
     center,
     radius: FIRE_AOE_RADIUS,
+    ...(direction === undefined ? {} : { direction }),
     color: FIRE_COLOR,
     resolveAfterMs,
   });
@@ -1315,7 +1325,7 @@ function resolveFireHit(
     );
   }
 
-  spawnFireTelegraph(ctx, '混沌末世', center, 300);
+  spawnFireTelegraph(ctx, '混沌末世', center, FIRE_HIT_DISPLAY_MS);
 }
 
 function resolveChaosVortex(ctx: BattleScriptContext): void {
@@ -1443,19 +1453,23 @@ function scheduleThreeStars(ctx: BattleScriptContext): void {
 
 function scheduleGroundFire(ctx: BattleScriptContext): void {
   const plan = getOrCreateFirePlan(ctx);
+  const firstBatch = plan.batches[0];
 
-  for (const batch of plan.batches) {
-    ctx.timeline.at(batch.castAt - FIRE_CAST_MS, () => {
+  if (firstBatch !== undefined) {
+    ctx.timeline.at(firstBatch.castAt - FIRE_CAST_MS, () => {
       ctx.boss.cast('kefka_p5_full_chaos_doomsday', '混沌末世', FIRE_CAST_MS);
     });
+  }
 
+  for (const batch of plan.batches) {
     for (const number of batch.numbers) {
-      ctx.timeline.at(batch.castAt, () => {
+      ctx.timeline.at(batch.firstHitAt - FIRE_INITIAL_TELEGRAPH_MS, () => {
         spawnFireTelegraph(
           ctx,
           '混沌末世预兆',
           getFireStartPosition(batch.side, number),
-          FIRE_FIRST_HIT_DELAY_MS,
+          FIRE_INITIAL_TELEGRAPH_MS,
+          getFireDirection(batch.side),
         );
       });
 
@@ -1901,6 +1915,13 @@ export const KEFKA_P5_FULL_TESTING = {
   DISASTER_CAST_RESOLVE_ATS,
   DISASTER_RANGE_RESOLVE_ATS,
   FIRE_CAST_RESOLVE_ATS,
+  FIRE_INITIAL_TELEGRAPH_MS,
+  FIRE_FIRST_HIT_DELAY_MS,
+  FIRE_HIT_INTERVAL_MS,
+  FIRE_HIT_COUNT,
+  FIRE_HIT_DISPLAY_MS,
+  LEFT_FIRE_DIRECTION,
+  RIGHT_FIRE_DIRECTION,
   CHAOS_VORTEX_CAST_START_AT,
   CHAOS_VORTEX_CAST_RESOLVE_AT,
   CHAOS_VORTEX_HIT_AT,

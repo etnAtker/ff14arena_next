@@ -116,6 +116,7 @@ export interface BattleScriptContext {
       label: string;
       center: Vector2;
       radius: number;
+      direction?: number;
       resolveAfterMs?: number;
       sourceId?: string;
       color?: string;

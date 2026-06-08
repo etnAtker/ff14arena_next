@@ -152,6 +152,7 @@ export interface CircleTelegraphMechanicSnapshot {
   sourceId: string;
   center: Vector2;
   radius: number;
+  direction?: number;
   color?: string;
   resolveAt: number;
 }

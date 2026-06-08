@@ -32,6 +32,8 @@ const HIT_COUNT = 7;
 const HIT_DISPLAY_MS = 300;
 const AOE_RADIUS = 6;
 const FIRE_GRID_STEP = 5;
+const LEFT_FIRE_DIRECTION = Math.PI / 4;
+const RIGHT_FIRE_DIRECTION = (Math.PI * 3) / 4;
 const START_LINE_POINT_COUNT = 6;
 const START_LINE_POINT_GAP = FIRE_GRID_STEP * Math.SQRT2;
 const START_LINE_LENGTH = START_LINE_POINT_GAP * (START_LINE_POINT_COUNT - 1);
@@ -142,6 +144,10 @@ function getFireLabel(side: FireSide, number: FireNumber): string {
   return `${side === 'left' ? '左' : '右'}${number}号地火`;
 }
 
+function getFireDirection(side: FireSide): number {
+  return side === 'left' ? LEFT_FIRE_DIRECTION : RIGHT_FIRE_DIRECTION;
+}
+
 function getActorsInsideCircle(
   actors: BaseActorSnapshot[],
   center: Vector2,
@@ -158,11 +164,13 @@ function spawnFireTelegraph(
   number: FireNumber,
   center: Vector2,
   resolveAfterMs: number,
+  direction?: number,
 ): void {
   ctx.spawn.circleTelegraph({
     label: getFireLabel(side, number),
     center,
     radius: AOE_RADIUS,
+    ...(direction === undefined ? {} : { direction }),
     color: FIRE_COLOR,
     resolveAfterMs,
   });
@@ -192,7 +200,14 @@ function scheduleFireSequence(
   startAt: number,
 ): void {
   ctx.timeline.at(startAt, () => {
-    spawnFireTelegraph(ctx, side, number, getFireStartPosition(side, number), INITIAL_TELEGRAPH_MS);
+    spawnFireTelegraph(
+      ctx,
+      side,
+      number,
+      getFireStartPosition(side, number),
+      INITIAL_TELEGRAPH_MS,
+      getFireDirection(side),
+    );
   });
 
   for (let hitIndex = 0; hitIndex < HIT_COUNT; hitIndex += 1) {
@@ -261,6 +276,8 @@ export const KEFKA_P5_GROUND_FIRE_TESTING = {
   START_LINE_POINT_GAP,
   STEP_DISTANCE,
   BISECTOR_LENGTH,
+  LEFT_FIRE_DIRECTION,
+  RIGHT_FIRE_DIRECTION,
   FIRE_GROUPS,
   FIRE_GROUP_IDS,
   FIRE_PLAN_KEY,

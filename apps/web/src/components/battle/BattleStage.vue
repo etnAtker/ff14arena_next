@@ -992,6 +992,61 @@ function drawActorFacingArrow(
   graphics.poly(points).stroke({ width: 1.2, color: 0xffffff, alpha: alpha * 0.88 });
 }
 
+function drawTelegraphDirectionArrow(
+  graphics: Graphics,
+  point: Vector2,
+  direction: number,
+  radius: number,
+  color: number,
+  alpha: number,
+): void {
+  const cameraYaw = props.operationMode === 'fixed' ? 0 : props.cameraYaw;
+  const screenDirection = direction - cameraYaw;
+  const forward = {
+    x: Math.cos(screenDirection),
+    y: Math.sin(screenDirection),
+  };
+  const tangent = {
+    x: -forward.y,
+    y: forward.x,
+  };
+  const shaftLength = radius * 0.72;
+  const shaftHalfWidth = Math.max(2, radius * 0.055);
+  const headHalfWidth = Math.max(5, radius * 0.16);
+  const tail = {
+    x: point.x - forward.x * shaftLength * 0.45,
+    y: point.y - forward.y * shaftLength * 0.45,
+  };
+  const neck = {
+    x: point.x + forward.x * shaftLength * 0.22,
+    y: point.y + forward.y * shaftLength * 0.22,
+  };
+  const tip = {
+    x: point.x + forward.x * shaftLength * 0.52,
+    y: point.y + forward.y * shaftLength * 0.52,
+  };
+  const points = [
+    tail.x + tangent.x * shaftHalfWidth,
+    tail.y + tangent.y * shaftHalfWidth,
+    neck.x + tangent.x * shaftHalfWidth,
+    neck.y + tangent.y * shaftHalfWidth,
+    neck.x + tangent.x * headHalfWidth,
+    neck.y + tangent.y * headHalfWidth,
+    tip.x,
+    tip.y,
+    neck.x - tangent.x * headHalfWidth,
+    neck.y - tangent.y * headHalfWidth,
+    neck.x - tangent.x * shaftHalfWidth,
+    neck.y - tangent.y * shaftHalfWidth,
+    tail.x - tangent.x * shaftHalfWidth,
+    tail.y - tangent.y * shaftHalfWidth,
+  ];
+
+  graphics.poly(points).stroke({ width: 4, color: 0x111827, alpha: alpha * 0.72 });
+  graphics.poly(points).fill({ color, alpha });
+  graphics.poly(points).stroke({ width: 1.2, color: 0xffffff, alpha: alpha * 0.82 });
+}
+
 function draw(now: number): void {
   if (stageRootRef.value === null || app === null || !isAppReady) {
     return;
@@ -1212,12 +1267,16 @@ function draw(now: number): void {
     if (mechanic.kind === 'circleTelegraph') {
       const color = mechanic.color === undefined ? 0xf47262 : parseHexColor(mechanic.color);
       const strokeColor = mechanic.color === undefined ? 0xffd1ca : color;
-      graphics.circle(point.x, point.y, mechanic.radius * scale).fill({ color, alpha: 0.14 });
-      graphics.circle(point.x, point.y, mechanic.radius * scale).stroke({
+      const radius = mechanic.radius * scale;
+      graphics.circle(point.x, point.y, radius).fill({ color, alpha: 0.14 });
+      graphics.circle(point.x, point.y, radius).stroke({
         width: 2,
         color: strokeColor,
         alpha: 0.9,
       });
+      if (mechanic.direction !== undefined) {
+        drawTelegraphDirectionArrow(graphics, point, mechanic.direction, radius, strokeColor, 0.88);
+      }
       continue;
     }
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSimulation } from '@ff14arena/core';
+import { FIXED_TICK_MS, createSimulation } from '@ff14arena/core';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import { getBattleBotController, getBattleDefinition, getBattleStaticData } from '../src/index.ts';
 import { KEFKA_P5_FULL_TESTING } from '../src/battles/kefka-p5-full.ts';
@@ -22,6 +22,13 @@ const {
   DISASTER_CAST_RESOLVE_ATS,
   DISASTER_RANGE_RESOLVE_ATS,
   FIRE_CAST_RESOLVE_ATS,
+  FIRE_INITIAL_TELEGRAPH_MS,
+  FIRE_FIRST_HIT_DELAY_MS,
+  FIRE_HIT_INTERVAL_MS,
+  FIRE_HIT_COUNT,
+  FIRE_HIT_DISPLAY_MS,
+  LEFT_FIRE_DIRECTION,
+  RIGHT_FIRE_DIRECTION,
   CHAOS_VORTEX_CAST_START_AT,
   CHAOS_VORTEX_CAST_RESOLVE_AT,
   CHAOS_VORTEX_HIT_AT,
@@ -86,6 +93,18 @@ function advanceWithBotControls(simulation, timeMs) {
   }
 }
 
+function advanceTo(simulation, timeMs) {
+  const currentTimeMs = simulation.getSnapshot().timeMs;
+
+  if (timeMs > currentTimeMs) {
+    simulation.tick(timeMs - currentTimeMs);
+  }
+}
+
+function alignToNextTick(timeMs) {
+  return Math.ceil(timeMs / FIXED_TICK_MS) * FIXED_TICK_MS;
+}
+
 test('凯夫卡P5整合：战斗、静态数据和Bot已登记', () => {
   const battle = getBattleDefinition('kefka_p5_full');
   assert.ok(battle);
@@ -130,10 +149,111 @@ test('凯夫卡P5整合：关键时间轴常量按日志换算', () => {
   assert.deepEqual(DISASTER_CAST_RESOLVE_ATS, [64_611, 76_778]);
   assert.deepEqual(DISASTER_RANGE_RESOLVE_ATS, [65_411, 77_583]);
   assert.deepEqual(FIRE_CAST_RESOLVE_ATS, [100_132, 102_674, 105_173, 107_669, 110_161, 112_658]);
+  assert.equal(FIRE_INITIAL_TELEGRAPH_MS, 4_000);
+  assert.equal(FIRE_FIRST_HIT_DELAY_MS, 625);
+  assert.equal(FIRE_HIT_INTERVAL_MS, 500);
+  assert.equal(FIRE_HIT_COUNT, 7);
+  assert.equal(FIRE_HIT_DISPLAY_MS, 300);
   assert.equal(CHAOS_VORTEX_CAST_START_AT, 112_636);
   assert.equal(CHAOS_VORTEX_CAST_RESOLVE_AT, 117_336);
   assert.equal(CHAOS_VORTEX_HIT_AT, 118_228);
   assert.equal(COMPLETE_AT, 145_923);
+});
+
+test('凯夫卡P5整合：混沌末世只读一次，每批初始地火按4秒预兆和斜向箭头显示', () => {
+  const simulation = createKefkaP5FullSimulation();
+  const firstBatchAt = FIRE_CAST_RESOLVE_ATS[0];
+  const secondBatchAt = FIRE_CAST_RESOLVE_ATS[1];
+  assert.ok(firstBatchAt);
+  assert.ok(secondBatchAt);
+  const firstPreviewAt = firstBatchAt + FIRE_FIRST_HIT_DELAY_MS - FIRE_INITIAL_TELEGRAPH_MS;
+  const secondPreviewAt = secondBatchAt + FIRE_FIRST_HIT_DELAY_MS - FIRE_INITIAL_TELEGRAPH_MS;
+
+  advanceTo(simulation, alignToNextTick(firstPreviewAt));
+
+  const firstBatchSnapshot = simulation.getSnapshot();
+  const firstBatchTelegraphs = firstBatchSnapshot.mechanics.filter(
+    (mechanic) =>
+      mechanic.kind === 'circleTelegraph' &&
+      mechanic.label === '混沌末世预兆' &&
+      mechanic.resolveAt === firstBatchSnapshot.timeMs + FIRE_INITIAL_TELEGRAPH_MS,
+  );
+
+  assert.equal(firstBatchSnapshot.boss.castBar?.actionName, '混沌末世');
+  assert.equal(firstBatchTelegraphs.length, 2);
+  assert.ok(firstBatchTelegraphs.every((mechanic) => mechanic.direction === LEFT_FIRE_DIRECTION));
+
+  advanceTo(simulation, alignToNextTick(secondPreviewAt));
+
+  const secondBatchSnapshot = simulation.getSnapshot();
+  const secondBatchTelegraphs = secondBatchSnapshot.mechanics.filter(
+    (mechanic) =>
+      mechanic.kind === 'circleTelegraph' &&
+      mechanic.label === '混沌末世预兆' &&
+      mechanic.resolveAt === secondBatchSnapshot.timeMs + FIRE_INITIAL_TELEGRAPH_MS,
+  );
+
+  assert.equal(secondBatchTelegraphs.length, 2);
+  assert.ok(secondBatchTelegraphs.every((mechanic) => mechanic.direction === RIGHT_FIRE_DIRECTION));
+
+  advanceTo(simulation, alignToNextTick(FIRE_CAST_RESOLVE_ATS.at(-1)));
+
+  const chaosDoomsdayCasts = simulation
+    .drainEvents()
+    .filter((event) => event.type === 'bossCastStarted' && event.payload.actionName === '混沌末世');
+
+  assert.equal(chaosDoomsdayCasts.length, 1);
+  assert.equal(chaosDoomsdayCasts[0]?.payload.startedAt, alignToNextTick(firstBatchAt - 3_700));
+  assert.equal(chaosDoomsdayCasts[0]?.payload.totalDurationMs, 3_700);
+});
+
+test('凯夫卡P5整合：地火首判定沿用日志时间，判定后显示0.3秒范围', () => {
+  const simulation = createKefkaP5FullSimulation();
+  const firstBatchAt = FIRE_CAST_RESOLVE_ATS[0];
+  assert.ok(firstBatchAt);
+
+  const firstHitAt = firstBatchAt + FIRE_FIRST_HIT_DELAY_MS;
+  const firstHitTickAt = alignToNextTick(firstHitAt);
+
+  advanceTo(simulation, firstHitAt - 1);
+
+  assert.equal(
+    simulation
+      .getSnapshot()
+      .mechanics.filter(
+        (mechanic) =>
+          mechanic.kind === 'circleTelegraph' &&
+          mechanic.label === '混沌末世' &&
+          mechanic.resolveAt === firstHitTickAt + FIRE_HIT_DISPLAY_MS,
+      ).length,
+    0,
+  );
+
+  advanceTo(simulation, firstHitTickAt);
+
+  const firstHitSnapshot = simulation.getSnapshot();
+  const hitTelegraphs = firstHitSnapshot.mechanics.filter(
+    (mechanic) =>
+      mechanic.kind === 'circleTelegraph' &&
+      mechanic.label === '混沌末世' &&
+      mechanic.resolveAt === firstHitSnapshot.timeMs + FIRE_HIT_DISPLAY_MS,
+  );
+
+  assert.equal(hitTelegraphs.length, 2);
+  assert.ok(hitTelegraphs.every((mechanic) => mechanic.direction === undefined));
+
+  const secondHitAt = firstHitAt + FIRE_HIT_INTERVAL_MS;
+  advanceTo(simulation, alignToNextTick(secondHitAt));
+
+  const secondHitSnapshot = simulation.getSnapshot();
+  const secondHitTelegraphs = secondHitSnapshot.mechanics.filter(
+    (mechanic) =>
+      mechanic.kind === 'circleTelegraph' &&
+      mechanic.label === '混沌末世' &&
+      mechanic.resolveAt === secondHitSnapshot.timeMs + FIRE_HIT_DISPLAY_MS,
+  );
+
+  assert.equal(secondHitTelegraphs.length, 2);
 });
 
 test('凯夫卡P5整合：初始化会生成随机计划供脚本和Bot读取', () => {

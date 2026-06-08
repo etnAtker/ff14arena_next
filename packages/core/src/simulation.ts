@@ -1052,6 +1052,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             sourceId: options.sourceId ?? currentState.boss.id,
             center: cloneVector(options.center),
             radius: options.radius,
+            ...(options.direction === undefined ? {} : { direction: options.direction }),
             ...(options.color === undefined ? {} : { color: options.color }),
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
