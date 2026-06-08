@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FIXED_TICK_MS, createSimulation } from '@ff14arena/core';
+import { FIXED_TICK_MS, createFacingTowards, createSimulation } from '@ff14arena/core';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import { getBattleBotController, getBattleDefinition, getBattleStaticData } from '../src/index.ts';
 import { KEFKA_P5_FULL_TESTING } from '../src/battles/kefka-p5-full.ts';
@@ -27,6 +27,7 @@ const {
   FIRE_HIT_INTERVAL_MS,
   FIRE_HIT_COUNT,
   FIRE_HIT_DISPLAY_MS,
+  START_TIME_OPTIONS,
   LEFT_FIRE_DIRECTION,
   RIGHT_FIRE_DIRECTION,
   CHAOS_VORTEX_CAST_START_AT,
@@ -41,7 +42,7 @@ const {
   getKefkaP5FullBotTarget,
 } = KEFKA_P5_FULL_TESTING;
 
-function createKefkaP5FullSimulation(kind = 'player') {
+function createKefkaP5FullSimulation(kind = 'player', options = {}) {
   const battle = getBattleDefinition('kefka_p5_full');
   assert.ok(battle);
 
@@ -55,6 +56,7 @@ function createKefkaP5FullSimulation(kind = 'player') {
       kind,
       actorId: `${kind}_${slot}`,
     })),
+    ...(options.startTimeMs === undefined ? {} : { startTimeMs: options.startTimeMs }),
   });
   simulation.start();
 
@@ -105,16 +107,54 @@ function alignToNextTick(timeMs) {
   return Math.ceil(timeMs / FIXED_TICK_MS) * FIXED_TICK_MS;
 }
 
+function assertNear(actual, expected, label, tolerance = 0.0001) {
+  assert.ok(
+    Math.abs(actual - expected) <= tolerance,
+    `${label}: expected ${expected}, got ${actual}`,
+  );
+}
+
+function pointOnRadius(angle, radius) {
+  return {
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius,
+  };
+}
+
+function addVector(left, right) {
+  return {
+    x: left.x + right.x,
+    y: left.y + right.y,
+  };
+}
+
+function getSlotOffset(slot, radius) {
+  const index = PARTY_SLOT_ORDER.indexOf(slot);
+  return pointOnRadius(-Math.PI / 2 + (Math.PI * 2 * index) / PARTY_SLOT_ORDER.length, radius);
+}
+
+function assertActorPose(actor, expectedPosition, label) {
+  assertNear(actor.position.x, expectedPosition.x, `${label} x`);
+  assertNear(actor.position.y, expectedPosition.y, `${label} y`);
+  assertNear(
+    actor.facing,
+    createFacingTowards(expectedPosition, { x: 0, y: 0 }),
+    `${label} facing`,
+  );
+}
+
 test('凯夫卡P5整合：战斗、静态数据和Bot已登记', () => {
   const battle = getBattleDefinition('kefka_p5_full');
   assert.ok(battle);
 
   assert.equal(battle.name, '凯夫卡P5：整合');
   assert.deepEqual(battle.mapMarkers, KEFKA_MAP_MARKERS);
+  assert.deepEqual(battle.startTimeOptions, START_TIME_OPTIONS);
   assert.ok(getBattleBotController('kefka_p5_full'));
 
   const staticData = getBattleStaticData('kefka_p5_full');
   assert.ok(staticData);
+  assert.deepEqual(staticData.startTimeOptions, START_TIME_OPTIONS);
   assert.deepEqual(
     staticData.statusMetadata
       .map((status) => status.id)
@@ -130,6 +170,43 @@ test('凯夫卡P5整合：战斗、静态数据和Bot已登记', () => {
       'kefka_p5_three_stars_lightning_resistance_down',
     ],
   );
+});
+
+test('凯夫卡P5整合：跳时预设只开放指定阶段并设置对应初始站位', () => {
+  assert.deepEqual(
+    START_TIME_OPTIONS.presets.map((preset) => preset.label),
+    ['从头', '洪水', '癫狂交响曲', '三星', '地火'],
+  );
+
+  for (const preset of START_TIME_OPTIONS.presets) {
+    const simulation = createKefkaP5FullSimulation('player', { startTimeMs: preset.timeMs });
+    const snapshot = simulation.getSnapshot();
+    const battle = getBattleDefinition('kefka_p5_full');
+    assert.ok(battle);
+    assert.equal(snapshot.timeMs, preset.timeMs);
+
+    const floodPlan = snapshot.scriptState[FLOOD_PLAN_KEY];
+    assert.ok(floodPlan);
+
+    for (const actor of snapshot.actors) {
+      assert.ok(actor.slot);
+
+      let expectedPosition = battle.initialPartyPositions[actor.slot].position;
+
+      if (preset.label === '洪水') {
+        expectedPosition = addVector(floodPlan.botRoute[0], getSlotOffset(actor.slot, 0.25));
+      } else if (preset.label === '地火') {
+        expectedPosition = getKefkaP5FullBotTarget(
+          actor.slot,
+          actor,
+          preset.timeMs,
+          snapshot.scriptState,
+        );
+      }
+
+      assertActorPose(actor, expectedPosition, `${preset.label} ${actor.slot}`);
+    }
+  }
 });
 
 test('凯夫卡P5整合：关键时间轴常量按日志换算', () => {

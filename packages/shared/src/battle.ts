@@ -6,6 +6,12 @@ export interface BattleStartTimeOptions {
   maxMs: number;
   stepMs: number;
   defaultMs: number;
+  presets?: BattleStartTimePreset[];
+}
+
+export interface BattleStartTimePreset {
+  label: string;
+  timeMs: number;
 }
 
 export interface BattleSummary {

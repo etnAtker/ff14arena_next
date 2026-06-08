@@ -1363,6 +1363,12 @@ export class RoomManager {
       return roundedMs === 0 ? 0 : null;
     }
 
+    if (startTimeOptions.presets !== undefined && startTimeOptions.presets.length > 0) {
+      return startTimeOptions.presets.some((preset) => preset.timeMs === roundedMs)
+        ? roundedMs
+        : null;
+    }
+
     if (roundedMs < startTimeOptions.minMs || roundedMs > startTimeOptions.maxMs) {
       return null;
     }

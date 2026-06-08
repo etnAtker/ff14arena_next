@@ -331,6 +331,17 @@ watch(
     const minSeconds = options.minMs / 1_000;
     const maxSeconds = options.maxMs / 1_000;
     const defaultSeconds = options.defaultMs / 1_000;
+    const presetTimes = options.presets?.map((preset) => preset.timeMs) ?? [];
+
+    if (presetTimes.length > 0) {
+      const currentTimeMs = Math.round(startTimeSeconds.value * 1_000);
+
+      if (!presetTimes.includes(currentTimeMs)) {
+        startTimeSeconds.value = defaultSeconds;
+      }
+
+      return;
+    }
 
     if (startTimeSeconds.value < minSeconds || startTimeSeconds.value > maxSeconds) {
       startTimeSeconds.value = defaultSeconds;

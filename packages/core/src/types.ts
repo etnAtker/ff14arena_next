@@ -67,6 +67,9 @@ export interface BattleScriptContext {
     nearestTo(actorId: string, count?: number): BaseActorSnapshot[];
     farthestFrom(actorId: string, count?: number): BaseActorSnapshot[];
   };
+  readonly actor: {
+    setPose(actorId: string, position: Vector2, facing: number): void;
+  };
   readonly spawn: {
     circleAoe(options: {
       label: string;

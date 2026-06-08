@@ -729,6 +729,58 @@ test('不支持跳时的战斗传入非零开始时间会被拒绝', async () =>
   }
 });
 
+test('带预设跳时的战斗会拒绝预设外开始时间', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '预设跳时校验测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'kefka_p5_full',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+
+    const errorPromise = waitForPayload(
+      owner,
+      'server:error',
+      (payload) => payload.code === 'invalid_start_time',
+      4000,
+    );
+    owner.emit('room:start', {
+      roomId,
+      countdownMs: 1000,
+      startTimeMs: 95_300,
+    });
+    await errorPromise;
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
 test('房主离开后立即销毁房间并通知其他玩家', async () => {
   const server = await startServer({
     host: '127.0.0.1',

@@ -229,6 +229,13 @@ const countdownBannerText = computed(() => {
 });
 const isStartCountdownActive = computed(() => props.room?.startCountdown != null);
 const supportsStartTime = computed(() => props.startTimeOptions !== null);
+const startTimePresetOptions = computed<SelectOption[]>(() =>
+  (props.startTimeOptions?.presets ?? []).map((preset) => ({
+    label: preset.label,
+    value: preset.timeMs,
+  })),
+);
+const usesStartTimePresets = computed(() => startTimePresetOptions.value.length > 0);
 const deadActorsInteractEnabled = computed(() => props.room?.options.deadActorsInteract ?? true);
 const isPartyListDefaultOrder = computed(() =>
   partyListOrder.value.every((slot, index) => slot === PARTY_SLOT_ORDER[index]),
@@ -569,6 +576,14 @@ function handleStartTimeSecondsInput(value: number | null): void {
   emit('startTimeSecondsChange', Math.min(Math.max(value, minSeconds), maxSeconds));
 }
 
+function handleStartTimePresetChange(value: SelectValue): void {
+  if (typeof value !== 'number' || props.startTimeOptions === null) {
+    return;
+  }
+
+  emit('startTimeSecondsChange', value / 1_000);
+}
+
 function tickHudClock(): void {
   hudNowMs.value = performance.now();
 }
@@ -747,9 +762,19 @@ onBeforeUnmount(() => {
                 class="countdown-control"
               >
                 <span class="countdown-label">开始时间</span>
-                <n-input-number
+                <n-select
+                  v-if="usesStartTimePresets"
                   size="small"
-                  class="countdown-input"
+                  class="countdown-input start-time-input"
+                  :options="startTimePresetOptions"
+                  :disabled="isStartCountdownActive"
+                  :value="Math.round(props.startTimeSeconds * 1_000)"
+                  @update:value="handleStartTimePresetChange"
+                />
+                <n-input-number
+                  v-else
+                  size="small"
+                  class="countdown-input start-time-input"
                   :min="(props.startTimeOptions?.minMs ?? 0) / 1_000"
                   :max="(props.startTimeOptions?.maxMs ?? 0) / 1_000"
                   :step="START_TIME_STEP_SECONDS"
@@ -1402,6 +1427,10 @@ onBeforeUnmount(() => {
 
 .countdown-input {
   width: 86px;
+}
+
+.start-time-input {
+  width: 132px;
 }
 
 .eyebrow {

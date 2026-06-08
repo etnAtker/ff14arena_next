@@ -192,6 +192,24 @@ const LEFT_FIRE_DIRECTION = Math.PI / 4;
 const RIGHT_FIRE_DIRECTION = (Math.PI * 3) / 4;
 const FIRE_COLOR = '#f97316';
 const FLOOD_COLOR = '#38bdf8';
+const FLOOD_START_TIME_MS = 16_550;
+const MAD_SYMPHONY_START_TIME_MS = 28_750;
+const THREE_STARS_START_TIME_MS = 50_450;
+const GROUND_FIRE_START_TIME_MS = 95_350;
+
+const START_TIME_OPTIONS = {
+  minMs: 0,
+  maxMs: GROUND_FIRE_START_TIME_MS,
+  stepMs: 50,
+  defaultMs: 0,
+  presets: [
+    { label: '从头', timeMs: 0 },
+    { label: '洪水', timeMs: FLOOD_START_TIME_MS },
+    { label: '癫狂交响曲', timeMs: MAD_SYMPHONY_START_TIME_MS },
+    { label: '三星', timeMs: THREE_STARS_START_TIME_MS },
+    { label: '地火', timeMs: GROUND_FIRE_START_TIME_MS },
+  ],
+} as const satisfies NonNullable<BattleDefinition['startTimeOptions']>;
 
 const NUCLEAR_STATUS_ID = 'kefka_p5_extra_nuclear_blast';
 const HOLY_STATUS_ID = 'kefka_p5_extra_holy';
@@ -1505,6 +1523,37 @@ function buildKefkaP5FullScript(ctx: BattleScriptContext): void {
   });
 }
 
+function getJumpStartPosition(
+  ctx: BattleScriptContext,
+  actor: BaseActorSnapshot,
+  startTimeMs: number,
+): Vector2 {
+  if (actor.slot === null) {
+    return CENTER;
+  }
+
+  if (startTimeMs === FLOOD_START_TIME_MS) {
+    return getFloodBotTarget(actor.slot, startTimeMs, getOrCreateFloodPlan(ctx));
+  }
+
+  if (startTimeMs === GROUND_FIRE_START_TIME_MS) {
+    return getFireBotTarget(actor, startTimeMs, getOrCreateFirePlan(ctx));
+  }
+
+  return INITIAL_POSITIONS[actor.slot];
+}
+
+function initializeKefkaP5FullAt(ctx: BattleScriptContext, startTimeMs: number): void {
+  for (const actor of ctx.select.allPlayers()) {
+    if (actor.slot === null) {
+      continue;
+    }
+
+    const position = getJumpStartPosition(ctx, actor, startTimeMs);
+    ctx.actor.setPose(actor.id, position, createFacingTowards(position, CENTER));
+  }
+}
+
 function getMagicStrikeBotTarget(slot: PartySlot): Vector2 {
   if (isTankSlot(slot)) {
     return offsetPointForSlot(BOT_MAGIC_TANK_POINT, slot);
@@ -1841,6 +1890,11 @@ function getKefkaP5FullBotTarget(
       : getThreeStarsBotTarget(actor, timeMs, plan);
   }
 
+  if (timeMs >= GROUND_FIRE_START_TIME_MS && timeMs < CHAOS_VORTEX_CAST_START_AT) {
+    const plan = scriptState[FIRE_PLAN_KEY] as FirePlan | undefined;
+    return plan === undefined ? CENTER : getFireBotTarget(actor, timeMs, plan);
+  }
+
   if (timeMs < MAGIC_STRIKE_HIT_ATS[6]! + 1_000) {
     if (timeMs >= CONTINUOUS_ULTIMATE_RESOLVE_ATS[1]) {
       return getMagicStrikeBotTarget(slot);
@@ -1882,7 +1936,9 @@ export const KEFKA_P5_FULL_BATTLE: BattleDefinition = {
     ]),
   ) as BattleDefinition['initialPartyPositions'],
   mapMarkers: KEFKA_MAP_MARKERS,
+  startTimeOptions: START_TIME_OPTIONS,
   buildScript: buildKefkaP5FullScript,
+  initializeAt: initializeKefkaP5FullAt,
   failureTexts: {
     outOfBounds: (actorName) => `${actorName} 越过场地边界`,
     mechanicDeath: (actorName, sourceLabel) => `${actorName} 因 ${sourceLabel} 死亡`,
@@ -1920,6 +1976,7 @@ export const KEFKA_P5_FULL_TESTING = {
   FIRE_HIT_INTERVAL_MS,
   FIRE_HIT_COUNT,
   FIRE_HIT_DISPLAY_MS,
+  START_TIME_OPTIONS,
   LEFT_FIRE_DIRECTION,
   RIGHT_FIRE_DIRECTION,
   CHAOS_VORTEX_CAST_START_AT,

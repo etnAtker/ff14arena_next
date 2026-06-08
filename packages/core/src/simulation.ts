@@ -965,6 +965,25 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             .map((candidate) => structuredClone(candidate));
         },
       },
+      actor: {
+        setPose(actorId, position, facing) {
+          const currentState = assertState(state);
+          const actor = currentState.actors.get(actorId);
+
+          if (actor === undefined) {
+            return;
+          }
+
+          actor.position = cloneVector(position);
+          actor.facing = facing;
+          actor.moveState = {
+            direction: { x: 0, y: 0 },
+            moving: false,
+          };
+          resetMovementRuntime(actor, currentState.timeMs);
+          emitActorMoved(actor);
+        },
+      },
       spawn: {
         circleAoe(options) {
           const currentState = assertState(state);
