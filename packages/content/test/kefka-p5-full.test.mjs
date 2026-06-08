@@ -34,6 +34,7 @@ const {
   CHAOS_VORTEX_CAST_RESOLVE_AT,
   CHAOS_VORTEX_HIT_AT,
   CHAOS_VORTEX_RADIUS,
+  CHAOS_VORTEX_BOT_SPREAD_START_AT,
   FORSAKEN_DOOMSDAY_CAST_START_AT,
   FORSAKEN_DOOMSDAY_CAST_MS,
   FORSAKEN_DOOMSDAY_PREVIEW_ATS,
@@ -284,6 +285,12 @@ test('凯夫卡P5整合：关键时间轴常量按日志换算', () => {
   assert.equal(CHAOS_VORTEX_CAST_START_AT, 112_636);
   assert.equal(CHAOS_VORTEX_CAST_RESOLVE_AT, 117_336);
   assert.equal(CHAOS_VORTEX_HIT_AT, 118_228);
+  assert.equal(
+    CHAOS_VORTEX_BOT_SPREAD_START_AT,
+    FIRE_CAST_RESOLVE_ATS.at(-1) +
+      FIRE_FIRST_HIT_DELAY_MS +
+      FIRE_HIT_INTERVAL_MS * (FIRE_HIT_COUNT - 1),
+  );
   assert.equal(FORSAKEN_DOOMSDAY_CAST_START_AT, 146_250);
   assert.equal(FORSAKEN_DOOMSDAY_CAST_MS, 9_700);
   assert.deepEqual(FORSAKEN_DOOMSDAY_PREVIEW_ATS, [156_234, 164_417, 172_567, 180_701]);
@@ -481,7 +488,23 @@ test('凯夫卡P5整合：Bot 共享站位会错开显示', () => {
   );
 });
 
-test('凯夫卡P5整合：混沌涡旋Bot使用8个5m分散目标', () => {
+test('凯夫卡P5整合：混沌涡旋读条开始时Bot不提前离开地火跑法', () => {
+  const simulation = createKefkaP5FullSimulation();
+  const snapshot = simulation.getSnapshot();
+  const targets = snapshot.actors.map((actor) => {
+    assert.ok(actor.slot);
+    return getKefkaP5FullBotTarget(
+      actor.slot,
+      actor,
+      CHAOS_VORTEX_CAST_START_AT + 100,
+      snapshot.scriptState,
+    );
+  });
+
+  assert.ok(targets.every((target) => Math.hypot(target.x, target.y) > 10));
+});
+
+test('凯夫卡P5整合：混沌涡旋Bot使用8m就近分散目标', () => {
   const simulation = createKefkaP5FullSimulation();
   const snapshot = simulation.getSnapshot();
   const targets = snapshot.actors.map((actor) => {
@@ -498,7 +521,7 @@ test('凯夫卡P5整合：混沌涡旋Bot使用8个5m分散目标', () => {
     new Set(targets.map((target) => `${target.x.toFixed(3)},${target.y.toFixed(3)}`)).size,
     8,
   );
-  assert.ok(targets.every((target) => Math.abs(Math.hypot(target.x, target.y) - 13) <= 0.001));
+  assert.ok(targets.every((target) => Math.abs(Math.hypot(target.x, target.y) - 8) <= 0.001));
   assert.equal(CHAOS_VORTEX_RADIUS, 5);
 });
 

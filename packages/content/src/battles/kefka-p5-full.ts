@@ -185,6 +185,11 @@ const FIRE_HIT_COUNT = 7;
 const FIRE_HIT_DISPLAY_MS = 300;
 const FIRE_SAFE_MARGIN = 1;
 const FIRE_BOT_LOOKAHEAD_MS = 1_200;
+const LAST_FIRE_HIT_AT =
+  FIRE_CAST_RESOLVE_ATS.at(-1)! +
+  FIRE_FIRST_HIT_DELAY_MS +
+  FIRE_HIT_INTERVAL_MS * (FIRE_HIT_COUNT - 1);
+const CHAOS_VORTEX_BOT_SPREAD_START_AT = LAST_FIRE_HIT_AT;
 
 const CHAOS_VORTEX_CAST_START_AT = 112_636;
 const CHAOS_VORTEX_CAST_RESOLVE_AT = 117_336;
@@ -303,7 +308,7 @@ const BOT_NUCLEAR_POINT = pointOnRadius(NORTH_ANGLE, ARENA_RADIUS);
 const BOT_HOLY_SHARE_POINT = pointOnRadius(NORTH_ANGLE + Math.PI, 6);
 const BOT_NON_SHARE_RIGHT_POINT = pointOnRadius(Math.PI / 3, 12);
 const BOT_NON_SHARE_LEFT_POINT = pointOnRadius((Math.PI * 2) / 3, 12);
-const BOT_CHAOS_VORTEX_RADIUS = 13;
+const BOT_CHAOS_VORTEX_RADIUS = 8;
 const BOT_STACK_OFFSET = 0.45;
 const BOT_DOOMSDAY_STACK_POINT = { x: 0, y: 0 } as const satisfies Vector2;
 
@@ -2433,7 +2438,7 @@ function getKefkaP5FullBotTarget(
       : getThreeStarsBotTarget(actor, timeMs, plan);
   }
 
-  if (timeMs >= GROUND_FIRE_START_TIME_MS && timeMs < CHAOS_VORTEX_CAST_START_AT) {
+  if (timeMs >= GROUND_FIRE_START_TIME_MS && timeMs < CHAOS_VORTEX_BOT_SPREAD_START_AT) {
     const plan = scriptState[FIRE_PLAN_KEY] as FirePlan | undefined;
     return plan === undefined ? CENTER : getFireBotTarget(actor, timeMs, plan);
   }
@@ -2444,11 +2449,6 @@ function getKefkaP5FullBotTarget(
     }
 
     return INITIAL_POSITIONS[slot];
-  }
-
-  if (timeMs < CHAOS_VORTEX_CAST_START_AT) {
-    const plan = scriptState[FIRE_PLAN_KEY] as FirePlan | undefined;
-    return plan === undefined ? CENTER : getFireBotTarget(actor, timeMs, plan);
   }
 
   if (timeMs < CHAOS_VORTEX_HIT_AT + 800) {
@@ -2533,6 +2533,7 @@ export const KEFKA_P5_FULL_TESTING = {
   CHAOS_VORTEX_CAST_RESOLVE_AT,
   CHAOS_VORTEX_HIT_AT,
   CHAOS_VORTEX_RADIUS,
+  CHAOS_VORTEX_BOT_SPREAD_START_AT,
   FORSAKEN_DOOMSDAY_CAST_START_AT,
   FORSAKEN_DOOMSDAY_CAST_MS,
   FORSAKEN_DOOMSDAY_PREVIEW_ATS,
