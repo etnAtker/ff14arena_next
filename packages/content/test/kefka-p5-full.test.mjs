@@ -34,11 +34,22 @@ const {
   CHAOS_VORTEX_CAST_RESOLVE_AT,
   CHAOS_VORTEX_HIT_AT,
   CHAOS_VORTEX_RADIUS,
+  FORSAKEN_DOOMSDAY_CAST_START_AT,
+  FORSAKEN_DOOMSDAY_CAST_MS,
+  FORSAKEN_DOOMSDAY_PREVIEW_ATS,
+  FORSAKEN_DOOMSDAY_RESOLVE_ATS,
+  FORSAKEN_DOOMSDAY_PURPLE_RADIUS,
+  FORSAKEN_DOOMSDAY_YELLOW_RADIUS,
+  FORSAKEN_DOOMSDAY_SHARE_RADIUS,
   COMPLETE_AT,
   FLOOD_PLAN_KEY,
   THREE_STARS_PLAN_KEY,
   FIRE_PLAN_KEY,
+  FORSAKEN_DOOMSDAY_PLAN_KEY,
+  FORSAKEN_DOOMSDAY_ACTIVE_PURPLES_KEY,
+  FORSAKEN_DOOMSDAY_WAIT_POINTS,
   KEFKA_MAP_MARKERS,
+  createForsakenDoomsdayBotWaitPointIndexes,
   getKefkaP5FullBotTarget,
 } = KEFKA_P5_FULL_TESTING;
 
@@ -114,23 +125,30 @@ function assertNear(actual, expected, label, tolerance = 0.0001) {
   );
 }
 
-function pointOnRadius(angle, radius) {
-  return {
-    x: Math.cos(angle) * radius,
-    y: Math.sin(angle) * radius,
-  };
+function submitActorPose(simulation, actorId, position) {
+  simulation.submitActorControlFrame({
+    actorId,
+    issuedAt: simulation.getSnapshot().timeMs,
+    pose: {
+      position,
+      facing: createFacingTowards(position, { x: 0, y: 0 }),
+      moveState: {
+        direction: { x: 0, y: 0 },
+        moving: false,
+      },
+    },
+  });
 }
 
-function addVector(left, right) {
-  return {
-    x: left.x + right.x,
-    y: left.y + right.y,
-  };
-}
+function setPartyPositionsOnNextTick(simulation, getPosition) {
+  const snapshot = simulation.getSnapshot();
 
-function getSlotOffset(slot, radius) {
-  const index = PARTY_SLOT_ORDER.indexOf(slot);
-  return pointOnRadius(-Math.PI / 2 + (Math.PI * 2 * index) / PARTY_SLOT_ORDER.length, radius);
+  for (const actor of snapshot.actors) {
+    assert.ok(actor.slot);
+    submitActorPose(simulation, actor.id, getPosition(actor));
+  }
+
+  simulation.tick(FIXED_TICK_MS);
 }
 
 function assertActorPose(actor, expectedPosition, label) {
@@ -172,10 +190,10 @@ test('凯夫卡P5整合：战斗、静态数据和Bot已登记', () => {
   );
 });
 
-test('凯夫卡P5整合：跳时预设只开放指定阶段并设置对应初始站位', () => {
+test('凯夫卡P5整合：跳时预设只开放指定阶段且不重设站位', () => {
   assert.deepEqual(
     START_TIME_OPTIONS.presets.map((preset) => preset.label),
-    ['从头', '洪水', '癫狂交响曲', '三星', '地火'],
+    ['从头', '洪水', '癫狂交响曲', '三星', '地火', '遗弃末世'],
   );
 
   for (const preset of START_TIME_OPTIONS.presets) {
@@ -185,27 +203,59 @@ test('凯夫卡P5整合：跳时预设只开放指定阶段并设置对应初始
     assert.ok(battle);
     assert.equal(snapshot.timeMs, preset.timeMs);
 
-    const floodPlan = snapshot.scriptState[FLOOD_PLAN_KEY];
-    assert.ok(floodPlan);
-
     for (const actor of snapshot.actors) {
       assert.ok(actor.slot);
-
-      let expectedPosition = battle.initialPartyPositions[actor.slot].position;
-
-      if (preset.label === '洪水') {
-        expectedPosition = addVector(floodPlan.botRoute[0], getSlotOffset(actor.slot, 0.25));
-      } else if (preset.label === '地火') {
-        expectedPosition = getKefkaP5FullBotTarget(
-          actor.slot,
-          actor,
-          preset.timeMs,
-          snapshot.scriptState,
-        );
-      }
-
-      assertActorPose(actor, expectedPosition, `${preset.label} ${actor.slot}`);
+      assertActorPose(
+        actor,
+        battle.initialPartyPositions[actor.slot].position,
+        `${preset.label} ${actor.slot}`,
+      );
     }
+
+    if (preset.label === '遗弃末世') {
+      assert.equal(snapshot.boss.castBar?.actionName, '遗弃末世');
+      assert.equal(snapshot.boss.castBar?.totalDurationMs, FORSAKEN_DOOMSDAY_CAST_MS);
+    }
+  }
+});
+
+test('凯夫卡P5整合：跳时会保留倒计时结束时的位置', () => {
+  const battle = getBattleDefinition('kefka_p5_full');
+  assert.ok(battle);
+  const waitingSimulation = createKefkaP5FullSimulation('player');
+
+  setPartyPositionsOnNextTick(waitingSimulation, (actor) => ({
+    x: PARTY_SLOT_ORDER.indexOf(actor.slot) - 3.5,
+    y: 12 - PARTY_SLOT_ORDER.indexOf(actor.slot) * 0.5,
+  }));
+
+  const sourceSnapshot = waitingSimulation.getSnapshot();
+  const jumpSimulation = createSimulation();
+  jumpSimulation.loadBattle({
+    battle,
+    roomId: 'kefka-p5-full-jump-preserve-test-room',
+    party: PARTY_SLOT_ORDER.map((slot) => ({
+      slot,
+      name: slot,
+      kind: 'player',
+      actorId: `player_${slot}`,
+    })),
+    sourceSnapshot,
+    resetAllActors: true,
+    preserveActorPose: true,
+    keepTimeMs: false,
+    startTimeMs: FORSAKEN_DOOMSDAY_CAST_START_AT,
+  });
+
+  const snapshot = jumpSimulation.getSnapshot();
+  assert.equal(snapshot.timeMs, FORSAKEN_DOOMSDAY_CAST_START_AT);
+  assert.equal(snapshot.boss.castBar?.actionName, '遗弃末世');
+
+  for (const actor of snapshot.actors) {
+    assert.ok(actor.slot);
+    const sourceActor = sourceSnapshot.actors.find((candidate) => candidate.id === actor.id);
+    assert.ok(sourceActor);
+    assertActorPose(actor, sourceActor.position, actor.slot);
   }
 });
 
@@ -234,7 +284,11 @@ test('凯夫卡P5整合：关键时间轴常量按日志换算', () => {
   assert.equal(CHAOS_VORTEX_CAST_START_AT, 112_636);
   assert.equal(CHAOS_VORTEX_CAST_RESOLVE_AT, 117_336);
   assert.equal(CHAOS_VORTEX_HIT_AT, 118_228);
-  assert.equal(COMPLETE_AT, 145_923);
+  assert.equal(FORSAKEN_DOOMSDAY_CAST_START_AT, 146_250);
+  assert.equal(FORSAKEN_DOOMSDAY_CAST_MS, 9_700);
+  assert.deepEqual(FORSAKEN_DOOMSDAY_PREVIEW_ATS, [156_234, 164_417, 172_567, 180_701]);
+  assert.deepEqual(FORSAKEN_DOOMSDAY_RESOLVE_ATS, [161_349, 169_495, 177_638, 185_767]);
+  assert.equal(COMPLETE_AT, 186_767);
 });
 
 test('凯夫卡P5整合：混沌末世只读一次，每批初始地火按4秒预兆和斜向箭头显示', () => {
@@ -340,6 +394,7 @@ test('凯夫卡P5整合：初始化会生成随机计划供脚本和Bot读取', 
   assert.ok(snapshot.scriptState[FLOOD_PLAN_KEY]);
   assert.ok(snapshot.scriptState[THREE_STARS_PLAN_KEY]);
   assert.ok(snapshot.scriptState[FIRE_PLAN_KEY]);
+  assert.ok(snapshot.scriptState[FORSAKEN_DOOMSDAY_PLAN_KEY]);
 });
 
 test('凯夫卡P5整合：三星基础塔会在第三轮结束后消失', () => {
@@ -445,4 +500,208 @@ test('凯夫卡P5整合：混沌涡旋Bot使用8个5m分散目标', () => {
   );
   assert.ok(targets.every((target) => Math.abs(Math.hypot(target.x, target.y) - 13) <= 0.001));
   assert.equal(CHAOS_VORTEX_RADIUS, 5);
+});
+
+test('凯夫卡P5整合：遗弃末世紫圈按四轮规则刷新且不重复', () => {
+  const simulation = createKefkaP5FullSimulation();
+  const plan = simulation.getSnapshot().scriptState[FORSAKEN_DOOMSDAY_PLAN_KEY];
+  assert.ok(plan);
+
+  const rounds = plan.rounds;
+  assert.equal(rounds.length, 4);
+  assert.deepEqual(
+    rounds.map((round) => round.purplePoints.length),
+    [2, 2, 2, 2],
+  );
+  assert.deepEqual(
+    rounds.map((round) => round.purplePoints.map((point) => point.kind).sort()),
+    [
+      ['center', 'diagonal'],
+      ['diagonal', 'diagonal'],
+      ['cardinal', 'diagonal'],
+      ['cardinal', 'cardinal'],
+    ],
+  );
+
+  const purplePointIds = rounds.flatMap((round) => round.purplePoints.map((point) => point.id));
+  assert.equal(new Set(purplePointIds).size, purplePointIds.length);
+});
+
+test('凯夫卡P5整合：遗弃末世预兆一起出现，判定后紫圈残留', () => {
+  const simulation = createKefkaP5FullSimulation('bot', {
+    startTimeMs: FORSAKEN_DOOMSDAY_CAST_START_AT,
+  });
+
+  advanceWithBotControls(simulation, alignToNextTick(FORSAKEN_DOOMSDAY_PREVIEW_ATS[0]));
+
+  const previewSnapshot = simulation.getSnapshot();
+  assert.equal(
+    previewSnapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'circleTelegraph' && mechanic.label === '遗弃末世紫圈预兆',
+    ).length,
+    2,
+  );
+  assert.equal(
+    previewSnapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'circleTelegraph' && mechanic.label === '遗弃末世黄圈预兆',
+    ).length,
+    1,
+  );
+  assert.equal(
+    previewSnapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'actorMarker' && mechanic.label === '遗弃末世分摊',
+    ).length,
+    1,
+  );
+
+  advanceWithBotControls(simulation, alignToNextTick(FORSAKEN_DOOMSDAY_RESOLVE_ATS[0]));
+
+  const resolveSnapshot = simulation.getSnapshot();
+  assert.equal(resolveSnapshot.scriptState[FORSAKEN_DOOMSDAY_ACTIVE_PURPLES_KEY].length, 2);
+  assert.equal(
+    resolveSnapshot.mechanics.filter(
+      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '遗弃末世紫圈',
+    ).length,
+    2,
+  );
+});
+
+test('凯夫卡P5整合：遗弃末世分摊少于8人时判失败', () => {
+  const simulation = createKefkaP5FullSimulation('player', {
+    startTimeMs: FORSAKEN_DOOMSDAY_CAST_START_AT,
+  });
+  const previewAt = alignToNextTick(FORSAKEN_DOOMSDAY_PREVIEW_ATS[0]);
+  const resolveAt = alignToNextTick(FORSAKEN_DOOMSDAY_RESOLVE_ATS[0]);
+
+  advanceTo(simulation, previewAt);
+
+  const plan = simulation.getSnapshot().scriptState[FORSAKEN_DOOMSDAY_PLAN_KEY];
+  assert.ok(plan);
+  const shareTargetId = plan.rounds[0].shareTargetId;
+  assert.ok(shareTargetId);
+
+  advanceTo(simulation, resolveAt - FIXED_TICK_MS);
+  setPartyPositionsOnNextTick(simulation, (actor) =>
+    actor.id === shareTargetId ? { x: 0, y: 18 } : { x: 0, y: -18 },
+  );
+
+  assert.ok(simulation.getSnapshot().failureReasons.includes('遗弃末世分摊人数不足'));
+});
+
+test('凯夫卡P5整合：遗弃末世Bot使用4个固定等待点', () => {
+  const simulation = createKefkaP5FullSimulation('bot', {
+    startTimeMs: FORSAKEN_DOOMSDAY_CAST_START_AT,
+  });
+  const snapshot = simulation.getSnapshot();
+  const plan = snapshot.scriptState[FORSAKEN_DOOMSDAY_PLAN_KEY];
+  assert.ok(plan);
+
+  assert.equal(plan.botWaitPointIndexes.length, 4);
+  assert.equal(plan.botWaitPointIndexes[1], (plan.botWaitPointIndexes[0] + 1) % 4);
+  assert.equal(plan.botWaitPointIndexes[3], plan.botWaitPointIndexes[1]);
+  assert.ok(
+    plan.botWaitPointIndexes.every(
+      (waitPointIndex) => FORSAKEN_DOOMSDAY_WAIT_POINTS[waitPointIndex] !== undefined,
+    ),
+  );
+
+  const firstPreviewTargets = snapshot.actors.map((actor) => {
+    assert.ok(actor.slot);
+    return getKefkaP5FullBotTarget(
+      actor.slot,
+      actor,
+      FORSAKEN_DOOMSDAY_PREVIEW_ATS[0],
+      snapshot.scriptState,
+    );
+  });
+  const firstWaitPoint = FORSAKEN_DOOMSDAY_WAIT_POINTS[plan.botWaitPointIndexes[0]];
+  assert.ok(firstWaitPoint);
+  assert.ok(
+    firstPreviewTargets.every(
+      (target) =>
+        Math.abs(target.x - firstWaitPoint.x) <= 0.25 &&
+        Math.abs(target.y - firstWaitPoint.y) <= 0.25,
+    ),
+  );
+
+  assert.equal(FORSAKEN_DOOMSDAY_PURPLE_RADIUS, 8);
+  assert.equal(FORSAKEN_DOOMSDAY_YELLOW_RADIUS, 8);
+  assert.equal(FORSAKEN_DOOMSDAY_SHARE_RADIUS, 8);
+});
+
+test('凯夫卡P5整合：Bot 不会在遗弃末世开场自动疾跑', () => {
+  const simulation = createKefkaP5FullSimulation('bot', {
+    startTimeMs: FORSAKEN_DOOMSDAY_CAST_START_AT,
+  });
+  const controller = getBattleBotController('kefka_p5_full');
+  assert.ok(controller);
+  const snapshot = simulation.getSnapshot();
+
+  for (const actor of snapshot.actors) {
+    assert.ok(actor.slot);
+    const frame = controller({
+      snapshot,
+      slot: actor.slot,
+      actor,
+    });
+
+    assert.deepEqual(frame.commands ?? [], []);
+  }
+});
+
+test('凯夫卡P5整合：遗弃末世Bot第三轮只按本轮顺时针路径判断反跑', () => {
+  const northEast = {
+    id: 'north_east',
+    kind: 'diagonal',
+    position: { x: 13.5, y: -13.5 },
+  };
+  const southWest = {
+    id: 'south_west',
+    kind: 'diagonal',
+    position: { x: -13.5, y: 13.5 },
+  };
+
+  assert.deepEqual(
+    createForsakenDoomsdayBotWaitPointIndexes([
+      { index: 0, previewAt: 0, resolveAt: 0, purplePoints: [northEast] },
+      { index: 1, previewAt: 0, resolveAt: 0, purplePoints: [] },
+      {
+        index: 2,
+        previewAt: 0,
+        resolveAt: 0,
+        purplePoints: [southWest, { id: 'south', kind: 'cardinal', position: { x: 0, y: 13.5 } }],
+      },
+      { index: 3, previewAt: 0, resolveAt: 0, purplePoints: [] },
+    ]),
+    [0, 1, 0, 1],
+  );
+
+  assert.deepEqual(
+    createForsakenDoomsdayBotWaitPointIndexes([
+      { index: 0, previewAt: 0, resolveAt: 0, purplePoints: [northEast] },
+      { index: 1, previewAt: 0, resolveAt: 0, purplePoints: [] },
+      {
+        index: 2,
+        previewAt: 0,
+        resolveAt: 0,
+        purplePoints: [southWest, { id: 'west', kind: 'cardinal', position: { x: -13.5, y: 0 } }],
+      },
+      { index: 3, previewAt: 0, resolveAt: 0, purplePoints: [] },
+    ]),
+    [0, 1, 2, 1],
+  );
+});
+
+test('凯夫卡P5整合：遗弃末世Bot按固定圆弧路线完成随机样本', () => {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const simulation = createKefkaP5FullSimulation('bot', {
+      startTimeMs: FORSAKEN_DOOMSDAY_CAST_START_AT,
+    });
+
+    advanceWithBotControls(simulation, COMPLETE_AT + 100);
+
+    const snapshot = simulation.getSnapshot();
+    assert.equal(snapshot.latestResult?.outcome, 'success');
+    assert.equal(snapshot.failureReasons.length, 0);
+  }
 });

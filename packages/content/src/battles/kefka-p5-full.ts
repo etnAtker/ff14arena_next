@@ -26,6 +26,7 @@ type FloodVariantId =
 type FireSide = 'left' | 'right';
 type FireNumber = 1 | 2 | 3 | 4 | 5 | 6;
 type FireGroupId = '14' | '25' | '36';
+type DoomsdayPointKind = 'center' | 'diagonal' | 'cardinal';
 
 interface RectSpec {
   center: Vector2;
@@ -117,13 +118,32 @@ interface FirePlan {
   batches: FireBatch[];
 }
 
+interface DoomsdayPoint {
+  id: string;
+  kind: DoomsdayPointKind;
+  position: Vector2;
+}
+
+interface ForsakenDoomsdayRound {
+  index: number;
+  previewAt: number;
+  resolveAt: number;
+  purplePoints: DoomsdayPoint[];
+  yellowPoint?: DoomsdayPoint;
+  shareTargetId?: string;
+}
+
+interface ForsakenDoomsdayPlan {
+  rounds: ForsakenDoomsdayRound[];
+  botWaitPointIndexes: number[];
+}
+
 const CONTINUOUS_ULTIMATE_CAST_MS = 3_700;
 const CONTINUOUS_ULTIMATE_CAST_ATS = [0, 81_906] as const;
 const CONTINUOUS_ULTIMATE_RESOLVE_ATS = [3_700, 85_606] as const;
 const MAGIC_STRIKE_HIT_ATS = [
   9_672, 12_834, 15_953, 46_608, 49_731, 91_577, 94_738, 138_682, 141_803, 144_923,
 ] as const;
-const COMPLETE_AT = 145_923;
 
 const FLOOD_CAST_START_AT = 16_556;
 const FLOOD_CAST_MS = 4_700;
@@ -171,6 +191,24 @@ const CHAOS_VORTEX_CAST_RESOLVE_AT = 117_336;
 const CHAOS_VORTEX_CAST_MS = 4_700;
 const CHAOS_VORTEX_HIT_AT = 118_228;
 
+const FORSAKEN_DOOMSDAY_CAST_START_AT = 146_250;
+const FORSAKEN_DOOMSDAY_CAST_MS = 9_700;
+const FORSAKEN_DOOMSDAY_PREVIEW_ATS = [156_234, 164_417, 172_567, 180_701] as const;
+const FORSAKEN_DOOMSDAY_RESOLVE_ATS = [161_349, 169_495, 177_638, 185_767] as const;
+const FORSAKEN_DOOMSDAY_TELEGRAPH_COLOR = '#a855f7';
+const FORSAKEN_DOOMSDAY_PURPLE_COLOR = '#7e22ce';
+const FORSAKEN_DOOMSDAY_YELLOW_COLOR = '#facc15';
+const FORSAKEN_DOOMSDAY_PURPLE_RADIUS = 8;
+const FORSAKEN_DOOMSDAY_YELLOW_RADIUS = 8;
+const FORSAKEN_DOOMSDAY_SHARE_RADIUS = 8;
+const FORSAKEN_DOOMSDAY_PERSIST_CHECK_INTERVAL_MS = 50;
+const DOOMSDAY_GRID_DISTANCE = 13.5;
+const DOOMSDAY_WAIT_DISTANCE = DOOMSDAY_GRID_DISTANCE / 2;
+const DOOMSDAY_BOT_ROUTE_RADIUS = 10;
+const DOOMSDAY_BOT_ARC_STEP = Math.PI / 45;
+const FORSAKEN_DOOMSDAY_START_TIME_MS = FORSAKEN_DOOMSDAY_CAST_START_AT;
+const COMPLETE_AT = FORSAKEN_DOOMSDAY_RESOLVE_ATS.at(-1)! + 1_000;
+
 const MAGIC_STRIKE_INJURY_MS = 960;
 const MAD_TANK_INJURY_MS = 960;
 const MAD_DH_INJURY_MS = 3_960;
@@ -199,7 +237,7 @@ const GROUND_FIRE_START_TIME_MS = 95_350;
 
 const START_TIME_OPTIONS = {
   minMs: 0,
-  maxMs: GROUND_FIRE_START_TIME_MS,
+  maxMs: FORSAKEN_DOOMSDAY_START_TIME_MS,
   stepMs: 50,
   defaultMs: 0,
   presets: [
@@ -208,6 +246,7 @@ const START_TIME_OPTIONS = {
     { label: '癫狂交响曲', timeMs: MAD_SYMPHONY_START_TIME_MS },
     { label: '三星', timeMs: THREE_STARS_START_TIME_MS },
     { label: '地火', timeMs: GROUND_FIRE_START_TIME_MS },
+    { label: '遗弃末世', timeMs: FORSAKEN_DOOMSDAY_START_TIME_MS },
   ],
 } as const satisfies NonNullable<BattleDefinition['startTimeOptions']>;
 
@@ -218,6 +257,8 @@ const MAGIC_STRIKE_TARGETS_KEY_PREFIX = 'kefkaP5Full:magicStrikeTargets';
 const MAD_ASSIGNMENTS_KEY_PREFIX = 'kefkaP5Full:madAssignments';
 const THREE_STARS_PLAN_KEY = 'kefkaP5Full:threeStarsPlan';
 const FIRE_PLAN_KEY = 'kefkaP5Full:firePlan';
+const FORSAKEN_DOOMSDAY_PLAN_KEY = 'kefkaP5Full:forsakenDoomsdayPlan';
+const FORSAKEN_DOOMSDAY_ACTIVE_PURPLES_KEY = 'kefkaP5Full:forsakenDoomsdayActivePurples';
 
 const TANK_SLOTS = ['MT', 'ST'] as const satisfies readonly PartySlot[];
 const HEALER_SLOTS = ['H1', 'H2'] as const satisfies readonly PartySlot[];
@@ -264,6 +305,7 @@ const BOT_NON_SHARE_RIGHT_POINT = pointOnRadius(Math.PI / 3, 12);
 const BOT_NON_SHARE_LEFT_POINT = pointOnRadius((Math.PI * 2) / 3, 12);
 const BOT_CHAOS_VORTEX_RADIUS = 13;
 const BOT_STACK_OFFSET = 0.45;
+const BOT_DOOMSDAY_STACK_POINT = { x: 0, y: 0 } as const satisfies Vector2;
 
 const FLOOD_VARIANTS = [
   {
@@ -291,6 +333,72 @@ const FLOOD_VARIANTS = [
     side: -1,
   },
 ] as const satisfies readonly FloodVariant[];
+
+const FORSAKEN_DOOMSDAY_PURPLE_POINTS = [
+  { id: 'center', kind: 'center', position: { x: 0, y: 0 } },
+  {
+    id: 'north_east',
+    kind: 'diagonal',
+    position: { x: DOOMSDAY_GRID_DISTANCE, y: -DOOMSDAY_GRID_DISTANCE },
+  },
+  {
+    id: 'south_east',
+    kind: 'diagonal',
+    position: { x: DOOMSDAY_GRID_DISTANCE, y: DOOMSDAY_GRID_DISTANCE },
+  },
+  {
+    id: 'south_west',
+    kind: 'diagonal',
+    position: { x: -DOOMSDAY_GRID_DISTANCE, y: DOOMSDAY_GRID_DISTANCE },
+  },
+  {
+    id: 'north_west',
+    kind: 'diagonal',
+    position: { x: -DOOMSDAY_GRID_DISTANCE, y: -DOOMSDAY_GRID_DISTANCE },
+  },
+  { id: 'east', kind: 'cardinal', position: { x: DOOMSDAY_GRID_DISTANCE, y: 0 } },
+  { id: 'south', kind: 'cardinal', position: { x: 0, y: DOOMSDAY_GRID_DISTANCE } },
+  { id: 'west', kind: 'cardinal', position: { x: -DOOMSDAY_GRID_DISTANCE, y: 0 } },
+  { id: 'north', kind: 'cardinal', position: { x: 0, y: -DOOMSDAY_GRID_DISTANCE } },
+] as const satisfies readonly DoomsdayPoint[];
+
+const FORSAKEN_DOOMSDAY_YELLOW_POINTS = [
+  { id: 'east', kind: 'cardinal', position: { x: DOOMSDAY_GRID_DISTANCE, y: 0 } },
+  { id: 'south', kind: 'cardinal', position: { x: 0, y: DOOMSDAY_GRID_DISTANCE } },
+  { id: 'west', kind: 'cardinal', position: { x: -DOOMSDAY_GRID_DISTANCE, y: 0 } },
+  { id: 'north', kind: 'cardinal', position: { x: 0, y: -DOOMSDAY_GRID_DISTANCE } },
+  {
+    id: 'north_east',
+    kind: 'diagonal',
+    position: { x: DOOMSDAY_WAIT_DISTANCE, y: -DOOMSDAY_WAIT_DISTANCE },
+  },
+  {
+    id: 'south_east',
+    kind: 'diagonal',
+    position: { x: DOOMSDAY_WAIT_DISTANCE, y: DOOMSDAY_WAIT_DISTANCE },
+  },
+  {
+    id: 'south_west',
+    kind: 'diagonal',
+    position: { x: -DOOMSDAY_WAIT_DISTANCE, y: DOOMSDAY_WAIT_DISTANCE },
+  },
+  {
+    id: 'north_west',
+    kind: 'diagonal',
+    position: { x: -DOOMSDAY_WAIT_DISTANCE, y: -DOOMSDAY_WAIT_DISTANCE },
+  },
+] as const satisfies readonly DoomsdayPoint[];
+
+const FORSAKEN_DOOMSDAY_WAIT_ANGLES = [
+  -Math.PI / 4,
+  Math.PI / 4,
+  (Math.PI * 3) / 4,
+  (-Math.PI * 3) / 4,
+] as const;
+
+const FORSAKEN_DOOMSDAY_WAIT_POINTS = FORSAKEN_DOOMSDAY_WAIT_ANGLES.map((angle) =>
+  pointOnRadius(angle, DOOMSDAY_BOT_ROUTE_RADIUS),
+) as readonly Vector2[];
 
 function shuffle<T>(values: readonly T[]): T[] {
   const shuffled = [...values];
@@ -1370,6 +1478,332 @@ function resolveChaosVortex(ctx: BattleScriptContext): void {
   }
 }
 
+function getDoomsdayPoint(pointId: string): DoomsdayPoint {
+  const point = FORSAKEN_DOOMSDAY_PURPLE_POINTS.find((candidate) => candidate.id === pointId);
+
+  if (point === undefined) {
+    throw new Error(`遗弃末世缺少点位 ${pointId}`);
+  }
+
+  return point;
+}
+
+function getDoomsdayPurplePoints(kind: DoomsdayPointKind): DoomsdayPoint[] {
+  return FORSAKEN_DOOMSDAY_PURPLE_POINTS.filter((point) => point.kind === kind);
+}
+
+function getDoomsdayWaitPointIndex(point: DoomsdayPoint): number {
+  if (point.position.x > 0 && point.position.y < 0) {
+    return 0;
+  }
+
+  if (point.position.x > 0 && point.position.y > 0) {
+    return 1;
+  }
+
+  if (point.position.x < 0 && point.position.y > 0) {
+    return 2;
+  }
+
+  if (point.position.x < 0 && point.position.y < 0) {
+    return 3;
+  }
+
+  throw new Error(`遗弃末世点位 ${point.id} 不是斜点`);
+}
+
+function getDoomsdayClockwiseCardinalPoint(waitPointIndex: number): DoomsdayPoint {
+  return getDoomsdayPoint(['east', 'south', 'west', 'north'][waitPointIndex]!);
+}
+
+function getDoomsdayCounterClockwiseWaitPointIndex(waitPointIndex: number): number {
+  return (
+    (waitPointIndex + FORSAKEN_DOOMSDAY_WAIT_POINTS.length - 1) %
+    FORSAKEN_DOOMSDAY_WAIT_POINTS.length
+  );
+}
+
+function getDoomsdayClockwiseWaitPointIndex(waitPointIndex: number): number {
+  return (waitPointIndex + 1) % FORSAKEN_DOOMSDAY_WAIT_POINTS.length;
+}
+
+function createForsakenDoomsdayBotWaitPointIndexes(
+  rounds: readonly ForsakenDoomsdayRound[],
+): number[] {
+  const firstDiagonal = rounds[0]?.purplePoints.find((point) => point.kind === 'diagonal');
+
+  if (firstDiagonal === undefined) {
+    throw new Error('遗弃末世第一轮缺少斜点紫圈');
+  }
+
+  const firstIndex = getDoomsdayWaitPointIndex(firstDiagonal);
+  const secondIndex = getDoomsdayClockwiseWaitPointIndex(firstIndex);
+  const thirdClockwiseIndex = getDoomsdayClockwiseWaitPointIndex(secondIndex);
+  const thirdCounterClockwiseIndex = getDoomsdayCounterClockwiseWaitPointIndex(secondIndex);
+  const thirdCardinal = rounds[2]?.purplePoints.find((point) => point.kind === 'cardinal');
+  const thirdClockwiseBlocked =
+    thirdCardinal?.id === getDoomsdayClockwiseCardinalPoint(secondIndex).id;
+  const thirdIndex = thirdClockwiseBlocked ? thirdCounterClockwiseIndex : thirdClockwiseIndex;
+  const fourthIndex = secondIndex;
+
+  return [firstIndex, secondIndex, thirdIndex, fourthIndex];
+}
+
+function createForsakenDoomsdayPlan(): ForsakenDoomsdayPlan {
+  const center = getDoomsdayPoint('center');
+  const diagonalPoints = shuffle(getDoomsdayPurplePoints('diagonal'));
+  const cardinalPoints = shuffle(getDoomsdayPurplePoints('cardinal'));
+  const firstDiagonal = diagonalPoints[0]!;
+  const secondRoundDiagonals = diagonalPoints.slice(1, 3);
+  const thirdDiagonal = diagonalPoints[3]!;
+  const thirdCardinal = cardinalPoints[0]!;
+  const fourthCardinals = cardinalPoints.slice(1, 3);
+  const rounds: ForsakenDoomsdayRound[] = [
+    {
+      index: 0,
+      previewAt: FORSAKEN_DOOMSDAY_PREVIEW_ATS[0]!,
+      resolveAt: FORSAKEN_DOOMSDAY_RESOLVE_ATS[0]!,
+      purplePoints: [center, firstDiagonal],
+    },
+    {
+      index: 1,
+      previewAt: FORSAKEN_DOOMSDAY_PREVIEW_ATS[1]!,
+      resolveAt: FORSAKEN_DOOMSDAY_RESOLVE_ATS[1]!,
+      purplePoints: secondRoundDiagonals,
+    },
+    {
+      index: 2,
+      previewAt: FORSAKEN_DOOMSDAY_PREVIEW_ATS[2]!,
+      resolveAt: FORSAKEN_DOOMSDAY_RESOLVE_ATS[2]!,
+      purplePoints: [thirdDiagonal, thirdCardinal],
+    },
+    {
+      index: 3,
+      previewAt: FORSAKEN_DOOMSDAY_PREVIEW_ATS[3]!,
+      resolveAt: FORSAKEN_DOOMSDAY_RESOLVE_ATS[3]!,
+      purplePoints: fourthCardinals,
+    },
+  ];
+
+  return {
+    rounds,
+    botWaitPointIndexes: createForsakenDoomsdayBotWaitPointIndexes(rounds),
+  };
+}
+
+function getOrCreateForsakenDoomsdayPlan(ctx: BattleScriptContext): ForsakenDoomsdayPlan {
+  const existingPlan = ctx.state.getValue<ForsakenDoomsdayPlan>(FORSAKEN_DOOMSDAY_PLAN_KEY);
+
+  if (existingPlan !== undefined) {
+    return existingPlan;
+  }
+
+  const plan = createForsakenDoomsdayPlan();
+  ctx.state.setValue(FORSAKEN_DOOMSDAY_PLAN_KEY, plan);
+  return plan;
+}
+
+function getDoomsdayActivePurpleCenters(ctx: BattleScriptContext): Vector2[] {
+  return ctx.state.getValue<Vector2[]>(FORSAKEN_DOOMSDAY_ACTIVE_PURPLES_KEY) ?? [];
+}
+
+function setDoomsdayActivePurpleCenters(
+  ctx: BattleScriptContext,
+  centers: readonly Vector2[],
+): void {
+  ctx.state.setValue(
+    FORSAKEN_DOOMSDAY_ACTIVE_PURPLES_KEY,
+    centers.map((center) => ({ ...center })),
+  );
+}
+
+function chooseForsakenDoomsdayYellowPoint(ctx: BattleScriptContext): DoomsdayPoint {
+  const nearestPointIds = new Set<string>();
+
+  for (const actor of ctx.select.allPlayers().filter((candidate) => candidate.mechanicActive)) {
+    const nearestPoint = [...FORSAKEN_DOOMSDAY_YELLOW_POINTS].sort(
+      (left, right) =>
+        distance(actor.position, left.position) - distance(actor.position, right.position),
+    )[0];
+
+    if (nearestPoint !== undefined) {
+      nearestPointIds.add(nearestPoint.id);
+    }
+  }
+
+  const candidates = FORSAKEN_DOOMSDAY_YELLOW_POINTS.filter((point) =>
+    nearestPointIds.has(point.id),
+  );
+
+  return shuffle(candidates.length > 0 ? candidates : FORSAKEN_DOOMSDAY_YELLOW_POINTS)[0]!;
+}
+
+function spawnForsakenDoomsdayPreview(
+  ctx: BattleScriptContext,
+  round: ForsakenDoomsdayRound,
+): void {
+  const plan = getOrCreateForsakenDoomsdayPlan(ctx);
+  const currentRound = plan.rounds[round.index] ?? round;
+  const yellowPoint = chooseForsakenDoomsdayYellowPoint(ctx);
+  const shareTarget = ctx.select.randomPlayers(1, (actor) => actor.mechanicActive)[0];
+  const nextRound: ForsakenDoomsdayRound = {
+    ...currentRound,
+    yellowPoint,
+    ...(shareTarget === undefined ? {} : { shareTargetId: shareTarget.id }),
+  };
+
+  plan.rounds[round.index] = nextRound;
+  ctx.state.setValue(FORSAKEN_DOOMSDAY_PLAN_KEY, plan);
+
+  for (const point of nextRound.purplePoints) {
+    ctx.spawn.circleTelegraph({
+      label: '遗弃末世紫圈预兆',
+      center: point.position,
+      radius: FORSAKEN_DOOMSDAY_PURPLE_RADIUS,
+      color: FORSAKEN_DOOMSDAY_TELEGRAPH_COLOR,
+      resolveAfterMs: nextRound.resolveAt - nextRound.previewAt,
+    });
+  }
+
+  ctx.spawn.circleTelegraph({
+    label: '遗弃末世黄圈预兆',
+    center: yellowPoint.position,
+    radius: FORSAKEN_DOOMSDAY_YELLOW_RADIUS,
+    color: FORSAKEN_DOOMSDAY_YELLOW_COLOR,
+    resolveAfterMs: nextRound.resolveAt - nextRound.previewAt,
+  });
+
+  if (shareTarget !== undefined) {
+    ctx.spawn.actorMarker({
+      label: '遗弃末世分摊',
+      target: shareTarget,
+      markerShape: 'stackCircle',
+      radius: FORSAKEN_DOOMSDAY_SHARE_RADIUS,
+      color: FORSAKEN_DOOMSDAY_YELLOW_COLOR,
+      resolveAfterMs: nextRound.resolveAt - nextRound.previewAt,
+    });
+  }
+}
+
+function resolveForsakenDoomsdayPurple(
+  ctx: BattleScriptContext,
+  round: ForsakenDoomsdayRound,
+): void {
+  const activeCenters = [
+    ...getDoomsdayActivePurpleCenters(ctx),
+    ...round.purplePoints.map((point) => point.position),
+  ];
+
+  setDoomsdayActivePurpleCenters(ctx, activeCenters);
+
+  for (const point of round.purplePoints) {
+    ctx.spawn.fieldMarker({
+      label: '遗弃末世紫圈',
+      center: point.position,
+      shape: 'circle',
+      radius: FORSAKEN_DOOMSDAY_PURPLE_RADIUS,
+      color: FORSAKEN_DOOMSDAY_PURPLE_COLOR,
+      showLabel: false,
+      stableId: `kefka_p5_forsaken_doomsday_purple_${round.index}_${point.id}`,
+      resolveAfterMs: Math.max(COMPLETE_AT - round.resolveAt, 50),
+    });
+  }
+
+  killActorsInsideForsakenDoomsdayPurples(ctx, activeCenters);
+  ctx.timeline.every(
+    FORSAKEN_DOOMSDAY_PERSIST_CHECK_INTERVAL_MS,
+    () => {
+      killActorsInsideForsakenDoomsdayPurples(ctx, getDoomsdayActivePurpleCenters(ctx));
+    },
+    Math.max(COMPLETE_AT - round.resolveAt, 0),
+  );
+}
+
+function killActorsInsideForsakenDoomsdayPurples(
+  ctx: BattleScriptContext,
+  centers: readonly Vector2[],
+): void {
+  const hits = ctx.select
+    .allPlayers()
+    .filter((actor) =>
+      centers.some(
+        (center) =>
+          actor.mechanicActive &&
+          distance(actor.position, center) <= FORSAKEN_DOOMSDAY_PURPLE_RADIUS,
+      ),
+    );
+
+  if (hits.length > 0) {
+    ctx.damage.kill(
+      hits.map((actor) => actor.id),
+      '遗弃末世紫圈',
+    );
+  }
+}
+
+function resolveForsakenDoomsdayYellow(
+  ctx: BattleScriptContext,
+  round: ForsakenDoomsdayRound,
+): void {
+  if (round.yellowPoint === undefined) {
+    return;
+  }
+
+  const hits = getActorsInsideCircle(
+    ctx.select.allPlayers(),
+    round.yellowPoint.position,
+    FORSAKEN_DOOMSDAY_YELLOW_RADIUS,
+  );
+
+  if (hits.length > 0) {
+    ctx.damage.kill(
+      hits.map((actor) => actor.id),
+      '遗弃末世黄圈',
+    );
+  }
+}
+
+function resolveForsakenDoomsdayShare(
+  ctx: BattleScriptContext,
+  round: ForsakenDoomsdayRound,
+): void {
+  if (round.shareTargetId === undefined) {
+    return;
+  }
+
+  const target = getActorById(ctx.select.allPlayers(), round.shareTargetId);
+
+  if (target === null) {
+    return;
+  }
+
+  const hits = getActorsInsideCircle(
+    ctx.select.allPlayers(),
+    target.position,
+    FORSAKEN_DOOMSDAY_SHARE_RADIUS,
+  );
+
+  if (hits.length < PARTY_SLOT_ORDER.length) {
+    ctx.state.fail('遗弃末世分摊人数不足');
+    for (const hit of hits) {
+      ctx.damage.kill([hit.id], '遗弃末世分摊');
+    }
+  }
+}
+
+function resolveForsakenDoomsdayRound(ctx: BattleScriptContext, roundIndex: number): void {
+  const plan = getOrCreateForsakenDoomsdayPlan(ctx);
+  const round = plan.rounds[roundIndex];
+
+  if (round === undefined) {
+    return;
+  }
+
+  resolveForsakenDoomsdayPurple(ctx, round);
+  resolveForsakenDoomsdayYellow(ctx, round);
+  resolveForsakenDoomsdayShare(ctx, round);
+}
+
 function scheduleContinuousUltimates(ctx: BattleScriptContext): void {
   for (const castAt of CONTINUOUS_ULTIMATE_CAST_ATS) {
     ctx.timeline.at(castAt, () => {
@@ -1509,6 +1943,23 @@ function scheduleChaosVortex(ctx: BattleScriptContext): void {
   });
 }
 
+function scheduleForsakenDoomsday(ctx: BattleScriptContext): void {
+  const plan = getOrCreateForsakenDoomsdayPlan(ctx);
+
+  ctx.timeline.at(FORSAKEN_DOOMSDAY_CAST_START_AT, () => {
+    ctx.boss.cast('kefka_p5_full_forsaken_doomsday', '遗弃末世', FORSAKEN_DOOMSDAY_CAST_MS);
+  });
+
+  for (const round of plan.rounds) {
+    ctx.timeline.at(round.previewAt, () => {
+      spawnForsakenDoomsdayPreview(ctx, round);
+    });
+    ctx.timeline.at(round.resolveAt, () => {
+      resolveForsakenDoomsdayRound(ctx, round.index);
+    });
+  }
+}
+
 function buildKefkaP5FullScript(ctx: BattleScriptContext): void {
   scheduleContinuousUltimates(ctx);
   scheduleMagicStrikes(ctx);
@@ -1517,41 +1968,29 @@ function buildKefkaP5FullScript(ctx: BattleScriptContext): void {
   scheduleThreeStars(ctx);
   scheduleGroundFire(ctx);
   scheduleChaosVortex(ctx);
+  scheduleForsakenDoomsday(ctx);
 
   ctx.timeline.at(COMPLETE_AT, () => {
     ctx.state.complete();
   });
 }
 
-function getJumpStartPosition(
-  ctx: BattleScriptContext,
-  actor: BaseActorSnapshot,
-  startTimeMs: number,
-): Vector2 {
-  if (actor.slot === null) {
-    return CENTER;
+function restoreKefkaP5FullCastAt(ctx: BattleScriptContext, startTimeMs: number): void {
+  if (
+    startTimeMs >= FORSAKEN_DOOMSDAY_CAST_START_AT &&
+    startTimeMs < FORSAKEN_DOOMSDAY_CAST_START_AT + FORSAKEN_DOOMSDAY_CAST_MS
+  ) {
+    ctx.boss.restoreCast(
+      'kefka_p5_full_forsaken_doomsday',
+      '遗弃末世',
+      FORSAKEN_DOOMSDAY_CAST_START_AT,
+      FORSAKEN_DOOMSDAY_CAST_MS,
+    );
   }
-
-  if (startTimeMs === FLOOD_START_TIME_MS) {
-    return getFloodBotTarget(actor.slot, startTimeMs, getOrCreateFloodPlan(ctx));
-  }
-
-  if (startTimeMs === GROUND_FIRE_START_TIME_MS) {
-    return getFireBotTarget(actor, startTimeMs, getOrCreateFirePlan(ctx));
-  }
-
-  return INITIAL_POSITIONS[actor.slot];
 }
 
 function initializeKefkaP5FullAt(ctx: BattleScriptContext, startTimeMs: number): void {
-  for (const actor of ctx.select.allPlayers()) {
-    if (actor.slot === null) {
-      continue;
-    }
-
-    const position = getJumpStartPosition(ctx, actor, startTimeMs);
-    ctx.actor.setPose(actor.id, position, createFacingTowards(position, CENTER));
-  }
+  restoreKefkaP5FullCastAt(ctx, startTimeMs);
 }
 
 function getMagicStrikeBotTarget(slot: PartySlot): Vector2 {
@@ -1849,6 +2288,110 @@ function getChaosVortexBotTarget(slot: PartySlot): Vector2 {
   );
 }
 
+function normalizeAngle(angle: number): number {
+  let normalized = angle;
+
+  while (normalized <= -Math.PI) {
+    normalized += Math.PI * 2;
+  }
+
+  while (normalized > Math.PI) {
+    normalized -= Math.PI * 2;
+  }
+
+  return normalized;
+}
+
+function getClockwiseAngleDistance(fromAngle: number, toAngle: number): number {
+  return (toAngle - fromAngle + Math.PI * 2) % (Math.PI * 2);
+}
+
+function getCounterClockwiseAngleDistance(fromAngle: number, toAngle: number): number {
+  return (fromAngle - toAngle + Math.PI * 2) % (Math.PI * 2);
+}
+
+function getDoomsdayArcTarget(
+  actor: BaseActorSnapshot,
+  targetWaitPointIndex: number,
+  direction: 1 | -1,
+): Vector2 {
+  const currentAngle = Math.atan2(actor.position.y, actor.position.x);
+  const targetAngle = FORSAKEN_DOOMSDAY_WAIT_ANGLES[targetWaitPointIndex]!;
+  const remaining =
+    direction === 1
+      ? getClockwiseAngleDistance(currentAngle, targetAngle)
+      : getCounterClockwiseAngleDistance(currentAngle, targetAngle);
+
+  if (remaining <= DOOMSDAY_BOT_ARC_STEP) {
+    return FORSAKEN_DOOMSDAY_WAIT_POINTS[targetWaitPointIndex]!;
+  }
+
+  return pointOnRadius(
+    normalizeAngle(currentAngle + direction * DOOMSDAY_BOT_ARC_STEP),
+    DOOMSDAY_BOT_ROUTE_RADIUS,
+  );
+}
+
+function isForsakenDoomsdayFirstYellowOnWaitPoint(plan: ForsakenDoomsdayPlan): boolean {
+  const firstRound = plan.rounds[0];
+  const firstWaitPointIndex = plan.botWaitPointIndexes[0];
+
+  if (firstRound?.yellowPoint === undefined || firstWaitPointIndex === undefined) {
+    return false;
+  }
+
+  return (
+    distance(
+      firstRound.yellowPoint.position,
+      FORSAKEN_DOOMSDAY_WAIT_POINTS[firstWaitPointIndex]!,
+    ) <= FORSAKEN_DOOMSDAY_YELLOW_RADIUS
+  );
+}
+
+function getForsakenDoomsdayBotTarget(
+  actor: BaseActorSnapshot,
+  timeMs: number,
+  plan: ForsakenDoomsdayPlan,
+): Vector2 {
+  const firstIndex = plan.botWaitPointIndexes[0];
+
+  if (firstIndex === undefined || timeMs < FORSAKEN_DOOMSDAY_PREVIEW_ATS[0]) {
+    return BOT_DOOMSDAY_STACK_POINT;
+  }
+
+  const firstDodgeIndex = getDoomsdayClockwiseWaitPointIndex(firstIndex);
+
+  if (timeMs < FORSAKEN_DOOMSDAY_RESOLVE_ATS[0]) {
+    return isForsakenDoomsdayFirstYellowOnWaitPoint(plan)
+      ? FORSAKEN_DOOMSDAY_WAIT_POINTS[firstDodgeIndex]!
+      : FORSAKEN_DOOMSDAY_WAIT_POINTS[firstIndex]!;
+  }
+
+  if (timeMs < FORSAKEN_DOOMSDAY_PREVIEW_ATS[1]) {
+    return isForsakenDoomsdayFirstYellowOnWaitPoint(plan)
+      ? getDoomsdayArcTarget(actor, firstIndex, -1)
+      : FORSAKEN_DOOMSDAY_WAIT_POINTS[firstIndex]!;
+  }
+
+  if (timeMs < FORSAKEN_DOOMSDAY_PREVIEW_ATS[2]) {
+    const secondIndex = plan.botWaitPointIndexes[1] ?? firstIndex;
+    return getDoomsdayArcTarget(actor, secondIndex, 1);
+  }
+
+  if (timeMs < FORSAKEN_DOOMSDAY_PREVIEW_ATS[3]) {
+    const secondIndex = plan.botWaitPointIndexes[1] ?? firstIndex;
+    const thirdIndex = plan.botWaitPointIndexes[2] ?? secondIndex;
+    const direction = thirdIndex === getDoomsdayClockwiseWaitPointIndex(secondIndex) ? 1 : -1;
+    return getDoomsdayArcTarget(actor, thirdIndex, direction);
+  }
+
+  const secondIndex = plan.botWaitPointIndexes[1] ?? firstIndex;
+  const thirdIndex = plan.botWaitPointIndexes[2] ?? secondIndex;
+  const fourthIndex = plan.botWaitPointIndexes[3] ?? secondIndex;
+  const thirdDirection = thirdIndex === getDoomsdayClockwiseWaitPointIndex(secondIndex) ? 1 : -1;
+  return getDoomsdayArcTarget(actor, fourthIndex, thirdDirection === 1 ? -1 : 1);
+}
+
 function getKefkaP5FullBotTarget(
   slot: PartySlot,
   actor: BaseActorSnapshot,
@@ -1914,6 +2457,13 @@ function getKefkaP5FullBotTarget(
 
   if (timeMs < MAGIC_STRIKE_HIT_ATS[7]! - 1_600) {
     return getMadBotTarget(slot, actor, timeMs, scriptState, 1);
+  }
+
+  if (timeMs >= FORSAKEN_DOOMSDAY_CAST_START_AT - 1_000) {
+    const plan = scriptState[FORSAKEN_DOOMSDAY_PLAN_KEY] as ForsakenDoomsdayPlan | undefined;
+    return plan === undefined
+      ? BOT_DOOMSDAY_STACK_POINT
+      : getForsakenDoomsdayBotTarget(actor, timeMs, plan);
   }
 
   return getMagicStrikeBotTarget(slot);
@@ -1983,11 +2533,22 @@ export const KEFKA_P5_FULL_TESTING = {
   CHAOS_VORTEX_CAST_RESOLVE_AT,
   CHAOS_VORTEX_HIT_AT,
   CHAOS_VORTEX_RADIUS,
+  FORSAKEN_DOOMSDAY_CAST_START_AT,
+  FORSAKEN_DOOMSDAY_CAST_MS,
+  FORSAKEN_DOOMSDAY_PREVIEW_ATS,
+  FORSAKEN_DOOMSDAY_RESOLVE_ATS,
+  FORSAKEN_DOOMSDAY_PURPLE_RADIUS,
+  FORSAKEN_DOOMSDAY_YELLOW_RADIUS,
+  FORSAKEN_DOOMSDAY_SHARE_RADIUS,
   COMPLETE_AT,
   FLOOD_PLAN_KEY,
   THREE_STARS_PLAN_KEY,
   FIRE_PLAN_KEY,
+  FORSAKEN_DOOMSDAY_PLAN_KEY,
+  FORSAKEN_DOOMSDAY_ACTIVE_PURPLES_KEY,
+  FORSAKEN_DOOMSDAY_WAIT_POINTS,
   KEFKA_MAP_MARKERS,
+  createForsakenDoomsdayBotWaitPointIndexes,
   getFloodRoundRects,
   getFireHitPosition,
   getKefkaP5FullBotTarget,
