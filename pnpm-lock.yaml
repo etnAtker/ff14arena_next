@@ -166,6 +166,10 @@ importers:
         version: 5.9.3
 
   packages/shared:
+    dependencies:
+      protobufjs:
+        specifier: ^8.6.0
+        version: 8.6.0
     devDependencies:
       tsup:
         specifier: ^8.5.0
@@ -2608,6 +2612,12 @@ packages:
       }
     engines: { node: '>=18' }
 
+  long@5.3.2:
+    resolution:
+      {
+        integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==,
+      }
+
   lru-cache@11.3.5:
     resolution:
       {
@@ -2996,6 +3006,13 @@ packages:
       {
         integrity: sha512-a39t9ApHNx2L4+HBnQKqxxHNs1r7KF+Intd8Q/g1bUh6q0WIp9voPXJ/x0j+ZL45KF1pJd9+q2jLIRMfvEshkA==,
       }
+
+  protobufjs@8.6.0:
+    resolution:
+      {
+        integrity: sha512-PIOO89BMGMXGz2333TVv/OqPNVWm7w30ll/4FtLbtLBaonzJMYwTbAZSSlobjIy9MoUgIAxSVUpK7aP7EpTtkg==,
+      }
+    engines: { node: '>=12.0.0' }
 
   punycode@2.3.1:
     resolution:
@@ -5076,6 +5093,8 @@ snapshots:
       strip-ansi: 7.2.0
       wrap-ansi: 9.0.2
 
+  long@5.3.2: {}
+
   lru-cache@11.3.5: {}
 
   magic-string@0.30.21:
@@ -5299,6 +5318,10 @@ snapshots:
   process-warning@4.0.1: {}
 
   process-warning@5.0.0: {}
+
+  protobufjs@8.6.0:
+    dependencies:
+      long: 5.3.2
 
   punycode@2.3.1: {}
 

@@ -16,6 +16,7 @@ import type {
   BattleStaticData,
   BattleSummary,
   PartySlot,
+  RealtimeBinaryPayload,
   RoomStatePayload,
   RoomStateDto,
   RoomSpectatorState,
@@ -24,6 +25,12 @@ import type {
   SimulationInput,
   SimulationSnapshot,
   Vector2,
+} from '@ff14arena/shared';
+import {
+  decodeSimEventsPayload,
+  decodeSimSnapshotPayload,
+  decodeSimStartPayload,
+  encodeContinuousInputFrame,
 } from '@ff14arena/shared';
 import { normalizeAngleDifference } from '../utils/angle';
 import { loadProfile, saveProfile, type LocalProfile } from './profile';
@@ -40,6 +47,10 @@ const CONTINUOUS_INPUT_INTERVAL_MS = 50;
 const TRANSPORT_PROBE_INTERVAL_MS = 1_500;
 const ROOM_PASSWORD_STORAGE_KEY = 'ff14arena.roomPassword';
 const ROOM_INVALIDATING_ERROR_CODES = new Set(['not_in_room', 'room_not_found', 'room_expired']);
+
+function isRealtimeBinaryPayload(payload: unknown): payload is RealtimeBinaryPayload {
+  return payload instanceof ArrayBuffer || ArrayBuffer.isView(payload);
+}
 
 class HttpError extends Error {
   constructor(
@@ -601,6 +612,7 @@ export const useAppStore = defineStore('app', () => {
       roomId: action.roomId,
       userId: profile.value.userId,
       userName: profile.value.userName,
+      realtimeEncoding: 'protobuf',
       ...getRoomPasswordPayload(),
       ...(action.mode !== undefined ? { mode: action.mode } : {}),
       ...(action.slot !== undefined ? { slot: action.slot } : {}),
@@ -769,7 +781,11 @@ export const useAppStore = defineStore('app', () => {
         serverCountdownSeconds.value = payload.remainingSeconds;
       });
 
-      nextSocket.on('sim:start', (payload) => {
+      nextSocket.on('sim:start', (rawPayload) => {
+        const payload = isRealtimeBinaryPayload(rawPayload)
+          ? decodeSimStartPayload(rawPayload)
+          : rawPayload;
+
         if (room.value?.roomId !== payload.roomId) {
           return;
         }
@@ -788,7 +804,11 @@ export const useAppStore = defineStore('app', () => {
         appendLog(`开始模拟：${payload.snapshot.battleName}`);
       });
 
-      nextSocket.on('sim:snapshot', (payload) => {
+      nextSocket.on('sim:snapshot', (rawPayload) => {
+        const payload = isRealtimeBinaryPayload(rawPayload)
+          ? decodeSimSnapshotPayload(rawPayload)
+          : rawPayload;
+
         if (room.value?.roomId !== payload.roomId) {
           return;
         }
@@ -799,7 +819,11 @@ export const useAppStore = defineStore('app', () => {
         });
       });
 
-      nextSocket.on('sim:events', (payload) => {
+      nextSocket.on('sim:events', (rawPayload) => {
+        const payload = isRealtimeBinaryPayload(rawPayload)
+          ? decodeSimEventsPayload(rawPayload)
+          : rawPayload;
+
         if (room.value?.roomId !== payload.roomId) {
           return;
         }
@@ -1120,17 +1144,20 @@ export const useAppStore = defineStore('app', () => {
     };
     localControlledPose.value = nextPose;
 
-    socket.value.emit('sim:input-frame', {
-      roomId: room.value.roomId,
-      syncId: currentSyncId.value,
-      actorId: actor.id,
-      issuedAt: Date.now(),
-      payload: {
-        position: cloneVector(nextPose.position),
-        moveDirection: cloneVector(nextPose.moveState.direction),
-        facing: nextPose.facing,
-      },
-    });
+    socket.value.emit(
+      'sim:input-frame',
+      encodeContinuousInputFrame({
+        roomId: room.value.roomId,
+        syncId: currentSyncId.value,
+        actorId: actor.id,
+        issuedAt: Date.now(),
+        payload: {
+          position: cloneVector(nextPose.position),
+          moveDirection: cloneVector(nextPose.moveState.direction),
+          facing: nextPose.facing,
+        },
+      }),
+    );
   }
 
   function emitSimulationInput(
@@ -1189,17 +1216,20 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
-    socket.value.emit('sim:input-frame', {
-      roomId: room.value.roomId,
-      syncId: currentSyncId.value,
-      actorId: actor.id,
-      issuedAt,
-      payload: {
-        position: nextPose.position,
-        moveDirection,
-        facing: nextPose.facing,
-      },
-    });
+    socket.value.emit(
+      'sim:input-frame',
+      encodeContinuousInputFrame({
+        roomId: room.value.roomId,
+        syncId: currentSyncId.value,
+        actorId: actor.id,
+        issuedAt,
+        payload: {
+          position: nextPose.position,
+          moveDirection,
+          facing: nextPose.facing,
+        },
+      }),
+    );
   }
 
   function previewFaceAngle(facing: number): void {

@@ -14,10 +14,14 @@
   "scripts": {
     "dev": "tsup --watch",
     "build": "tsup",
+    "test": "tsx --test \"test/**/*.test.mjs\"",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
     "tsup": "^8.5.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "protobufjs": "^8.6.0"
   }
 }

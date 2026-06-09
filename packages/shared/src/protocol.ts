@@ -1,4 +1,5 @@
 import type { PartySlot } from './base';
+import type { RealtimeBinaryPayload, RealtimeEncoding } from './realtime-codec';
 import type { RoomRuleOptions, RoomSlotState, RoomStateDto } from './room';
 import type {
   ContinuousSimulationInputFrame,
@@ -16,6 +17,7 @@ export interface RoomJoinPayload {
   mode?: 'player' | 'spectator';
   slot?: PartySlot;
   userName?: string;
+  realtimeEncoding?: RealtimeEncoding;
 }
 
 export interface RoomLeavePayload {
@@ -118,9 +120,9 @@ export interface ServerToClientEvents {
   'room:state': (payload: RoomStatePayload) => void;
   'room:slots': (payload: RoomSlotsPayload) => void;
   'room:countdown': (payload: RoomCountdownPayload) => void;
-  'sim:start': (payload: SimStartPayload) => void;
-  'sim:snapshot': (payload: SimSnapshotPayload) => void;
-  'sim:events': (payload: SimEventsPayload) => void;
+  'sim:start': (payload: SimStartPayload | RealtimeBinaryPayload) => void;
+  'sim:snapshot': (payload: SimSnapshotPayload | RealtimeBinaryPayload) => void;
+  'sim:events': (payload: SimEventsPayload | RealtimeBinaryPayload) => void;
   'sim:end': (payload: SimEndPayload) => void;
   'room:closed': (payload: RoomClosedPayload) => void;
   'room:kicked': (payload: RoomKickedPayload) => void;
@@ -137,7 +139,7 @@ export interface ClientToServerEvents {
   'room:update-options': (payload: RoomUpdateOptionsPayload) => void;
   'room:quick-fail': (payload: RoomQuickFailPayload) => void;
   'room:kick': (payload: RoomKickPayload) => void;
-  'sim:input-frame': (payload: ContinuousSimulationInputFrame) => void;
+  'sim:input-frame': (payload: ContinuousSimulationInputFrame | RealtimeBinaryPayload) => void;
   'sim:use-knockback-immune': (payload: UseKnockbackImmuneSimulationInput) => void;
   'sim:use-sprint': (payload: UseSprintSimulationInput) => void;
   'sim:request-resync': (payload: SimResyncRequestPayload) => void;

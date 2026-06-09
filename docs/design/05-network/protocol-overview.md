@@ -7,6 +7,20 @@
 - HTTP：房间列表、房间详情、静态内容
 - Socket.IO：房间内实时交互
 
+实时模拟链路支持按连接协商承载方式：
+
+- 默认 JSON：用于旧客户端、测试与兼容场景
+- Protobuf 二进制：客户端加入房间时通过 `room:join.realtimeEncoding = "protobuf"` 声明
+
+当前使用 Protobuf 承载的事件为：
+
+- `sim:start`
+- `sim:snapshot`
+- `sim:events`
+- `sim:input-frame`
+
+房间状态、槽位、倒计时、结算与错误事件仍使用 JSON。
+
 ## 客户端到服务端
 
 客户端到服务端意图事件如下：

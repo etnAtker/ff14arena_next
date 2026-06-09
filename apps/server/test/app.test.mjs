@@ -4,7 +4,12 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { io } from 'socket.io-client';
-import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
+import {
+  decodeSimEventsPayload,
+  decodeSimSnapshotPayload,
+  encodeContinuousInputFrame,
+  PARTY_SLOT_ORDER,
+} from '@ff14arena/shared';
 import { startServer } from '../src/app.ts';
 
 function waitForConnect(socket) {
@@ -135,6 +140,10 @@ function emitPoseFrame(socket, options) {
       moveDirection: options.moveDirection,
     },
   });
+}
+
+function isBinaryPayload(payload) {
+  return payload instanceof ArrayBuffer || ArrayBuffer.isView(payload);
 }
 
 async function getAvailableBattleId(baseUrl) {
@@ -376,6 +385,90 @@ test('建房申请：超时后过期且不能再加入', async () => {
       roomsPayload.rooms.some((room) => room.roomId === createPayload.roomId),
       false,
     );
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
+test('protobuf 实时链路：加入后收发二进制快照与移动事件', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: 'protobuf 房',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    const snapshotPromise = waitForPayload(owner, 'sim:snapshot', isBinaryPayload);
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+      realtimeEncoding: 'protobuf',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    const rawSnapshot = await snapshotPromise;
+    assert.equal(isBinaryPayload(rawSnapshot), true);
+    const snapshotPayload = decodeSimSnapshotPayload(rawSnapshot);
+    assert.equal(snapshotPayload.roomId, roomId);
+    assert.equal(snapshotPayload.snapshot.phase, 'waiting');
+    assert.deepEqual(snapshotPayload.snapshot.scriptState, {});
+
+    const actorId = `${roomId}:player:owner-user`;
+    const actor = findActor(snapshotPayload.snapshot, actorId);
+    assert.ok(actor);
+
+    const eventsPromise = waitForPayload(owner, 'sim:events', (payload) => {
+      if (!isBinaryPayload(payload)) {
+        return false;
+      }
+
+      return decodeSimEventsPayload(payload).events.some(
+        (event) => event.type === 'actorMoved' && event.payload.actorId === actorId,
+      );
+    });
+    owner.emit(
+      'sim:input-frame',
+      encodeContinuousInputFrame({
+        roomId,
+        syncId: snapshotPayload.syncId,
+        actorId,
+        issuedAt: Date.now(),
+        payload: {
+          position: {
+            x: actor.position.x + 1,
+            y: actor.position.y,
+          },
+          facing: actor.facing,
+          moveDirection: {
+            x: 1,
+            y: 0,
+          },
+        },
+      }),
+    );
+    const rawEvents = await eventsPromise;
+    assert.equal(isBinaryPayload(rawEvents), true);
   } finally {
     owner.close();
     await server.close();
