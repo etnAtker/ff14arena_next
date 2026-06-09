@@ -104,6 +104,18 @@ function submitPose(simulation, actor, position) {
   });
 }
 
+function moveAllActorsToSafePoint(simulation, snapshot, towerPositions) {
+  const safeAngle = Math.atan2(
+    -(towerPositions[0].y + towerPositions[1].y),
+    -(towerPositions[0].x + towerPositions[1].x),
+  );
+  const safePoint = pointOnRadius(safeAngle, 16);
+
+  for (const [index, actor] of snapshot.actors.entries()) {
+    submitPose(simulation, actor, offsetPoint(safePoint, index * 0.1, 0));
+  }
+}
+
 function offsetPoint(center, xOffset, yOffset) {
   return {
     x: center.x + xOffset,
@@ -122,6 +134,13 @@ function pointDistance(left, right) {
   return Math.hypot(left.x - right.x, left.y - right.y);
 }
 
+function assertPointClose(actual, expected) {
+  assert.ok(
+    pointDistance(actual, expected) <= 0.0001,
+    `${JSON.stringify(actual)} !== ${JSON.stringify(expected)}`,
+  );
+}
+
 function createTestActor(position, slot = 'MT') {
   return {
     id: `test_actor_${slot}`,
@@ -135,6 +154,14 @@ function createTestActor(position, slot = 'MT') {
     alive: true,
     statuses: [],
   };
+}
+
+function createTestActors(position = { x: 0, y: 0 }) {
+  return PARTY_SLOT_ORDER.map((slot) => createTestActor(position, slot));
+}
+
+function getTestActorId(slot) {
+  return `test_actor_${slot}`;
 }
 
 test('全局 Bot 目标移动会在一步内精确落点，避免越点抖动', () => {
@@ -260,9 +287,11 @@ test('凯夫卡一运塔少于2人时记录失败，单人塔玩家死亡', () =
     advanceTo(simulation, FIRST_TOWER_RESOLVE_AT - 600);
 
     const snapshot = simulation.getSnapshot();
-    const tower = getTowerRounds(snapshot)[0].towerPositions[0];
+    const towerRound = getTowerRounds(snapshot)[0];
+    const tower = towerRound.towerPositions[0];
     const mt = getActorBySlot(snapshot, 'MT');
 
+    moveAllActorsToSafePoint(simulation, snapshot, towerRound.towerPositions);
     submitPose(simulation, mt, tower);
     advanceTo(simulation, FIRST_TOWER_RESOLVE_AT);
 
@@ -282,9 +311,11 @@ test('凯夫卡一运塔多于2人时只消耗随机选中的2人点名', () => 
     advanceTo(simulation, FIRST_TOWER_RESOLVE_AT - 600);
 
     const snapshot = simulation.getSnapshot();
-    const tower = getTowerRounds(snapshot)[0].towerPositions[0];
+    const towerRound = getTowerRounds(snapshot)[0];
+    const tower = towerRound.towerPositions[0];
     const towerSlots = ['MT', 'ST', 'H1'];
 
+    moveAllActorsToSafePoint(simulation, snapshot, towerRound.towerPositions);
     for (const [index, slot] of towerSlots.entries()) {
       submitPose(simulation, getActorBySlot(snapshot, slot), offsetPoint(tower, index * 0.4, 0));
     }
@@ -326,6 +357,7 @@ test('凯夫卡一运机制伤害命中已有易伤玩家时即死', () => {
       2,
     );
 
+    moveAllActorsToSafePoint(simulation, snapshot, towerRounds[0].towerPositions);
     submitPose(simulation, firstLarge, offsetPoint(firstTower, -0.2, 0));
     submitPose(simulation, secondLarge, offsetPoint(firstTower, 0.2, 0));
     submitPose(
@@ -449,76 +481,478 @@ test('凯夫卡一运：固定路线 Bot controller 已登记', () => {
   assert.ok(controller);
 });
 
-test('凯夫卡一运：偶数轮非处理组站位在双塔外侧并避开塔、大圈和近场点名', () => {
+test('凯夫卡一运：Bot 初始站位按左右上下四组横排', () => {
+  const positions = KEFKA_P2_FIRST_FORSAKEN_TESTING.INITIAL_SOUTH_POSITIONS;
+
+  assert.deepEqual(positions.MT, { x: -12, y: -4 });
+  assert.deepEqual(positions.H1, { x: -8, y: -4 });
+  assert.deepEqual(positions.D1, { x: -12, y: 4 });
+  assert.deepEqual(positions.D3, { x: -8, y: 4 });
+  assert.deepEqual(positions.ST, { x: 8, y: -4 });
+  assert.deepEqual(positions.H2, { x: 12, y: -4 });
+  assert.deepEqual(positions.D2, { x: 8, y: 4 });
+  assert.deepEqual(positions.D4, { x: 12, y: 4 });
+  assert.equal(pointDistance(positions.MT, positions.H1), 4);
+  assert.equal(pointDistance(positions.D1, positions.D3), 4);
+  assert.equal(pointDistance(positions.ST, positions.H2), 4);
+  assert.equal(pointDistance(positions.D2, positions.D4), 4);
+});
+
+test('凯夫卡一运：首次分摊所在双人小组决定1238组', () => {
+  const actors = Object.fromEntries(
+    PARTY_SLOT_ORDER.map((slot) => [slot, createTestActor({ x: 0, y: 0 }, slot)]),
+  );
+  const groups = KEFKA_P2_FIRST_FORSAKEN_TESTING.createInitialBotGroups([
+    [actors.MT, 'share'],
+    [actors.D4, 'share'],
+    [actors.ST, 'largeCircle'],
+    [actors.H1, 'largeCircle'],
+    [actors.H2, 'largeCircle'],
+    [actors.D1, 'fan'],
+    [actors.D2, 'fan'],
+    [actors.D3, 'fan'],
+  ]);
+
+  assert.deepEqual(groups.a, ['MT', 'H1', 'D2', 'D4']);
+  assert.deepEqual(groups.b, ['ST', 'H2', 'D1', 'D3']);
+});
+
+test('凯夫卡一运：初始点名后按1238左半场、4567右半场换位', () => {
+  const groups = {
+    a: ['MT', 'H1', 'D2', 'D4'],
+    b: ['ST', 'H2', 'D1', 'D3'],
+  };
+
+  assert.deepEqual(KEFKA_P2_FIRST_FORSAKEN_TESTING.getInitialGroupStagingTarget('MT', groups), {
+    x: -12,
+    y: -4,
+  });
+  assert.deepEqual(KEFKA_P2_FIRST_FORSAKEN_TESTING.getInitialGroupStagingTarget('H1', groups), {
+    x: -8,
+    y: -4,
+  });
+  assert.deepEqual(KEFKA_P2_FIRST_FORSAKEN_TESTING.getInitialGroupStagingTarget('D2', groups), {
+    x: -12,
+    y: 4,
+  });
+  assert.deepEqual(KEFKA_P2_FIRST_FORSAKEN_TESTING.getInitialGroupStagingTarget('D4', groups), {
+    x: -8,
+    y: 4,
+  });
+  assert.deepEqual(KEFKA_P2_FIRST_FORSAKEN_TESTING.getInitialGroupStagingTarget('ST', groups), {
+    x: 8,
+    y: -4,
+  });
+  assert.deepEqual(KEFKA_P2_FIRST_FORSAKEN_TESTING.getInitialGroupStagingTarget('H2', groups), {
+    x: 12,
+    y: -4,
+  });
+  assert.deepEqual(KEFKA_P2_FIRST_FORSAKEN_TESTING.getInitialGroupStagingTarget('D1', groups), {
+    x: 8,
+    y: 4,
+  });
+  assert.deepEqual(KEFKA_P2_FIRST_FORSAKEN_TESTING.getInitialGroupStagingTarget('D3', groups), {
+    x: 12,
+    y: 4,
+  });
+});
+
+test('凯夫卡一运：新跑法按奇偶轮、左右来源和职能分配塔窗口站位', () => {
   const northAngle = -Math.PI / 2;
   const ringStep = Math.PI / 4;
   const towerRing = Array.from({ length: 8 }, (_, index) =>
     pointOnRadius(northAngle + ringStep * index, 8),
   );
-  const groupSlotsByMarker = {
-    share: [],
-    largeCircle: ['MT', 'ST'],
-    fan: ['H1', 'H2'],
+  const actors = createTestActors();
+  const oddGroupSlotsByMarker = {
+    share: ['MT', 'D1'],
+    largeCircle: ['D2'],
+    fan: ['H1'],
   };
-  const otherSlotsByMarker = {
-    share: [],
-    largeCircle: ['D1', 'D2'],
-    fan: ['D3', 'D4'],
+  const oddOtherGroupSlots = ['ST', 'H2', 'D3', 'D4'];
+  const oddMarkerSources = {
+    [getTestActorId('MT')]: 0,
+    [getTestActorId('D1')]: 2,
   };
-  const otherGroupSlots = ['D1', 'D2', 'D3', 'D4'];
+  const evenGroupSlotsByMarker = {
+    share: [],
+    largeCircle: ['MT', 'D2'],
+    fan: ['H1', 'D4'],
+  };
+  const evenOtherGroupSlots = ['ST', 'H2', 'D1', 'D3'];
+  const evenMarkerSources = {
+    [getTestActorId('H1')]: 1,
+    [getTestActorId('D4')]: 2,
+    [getTestActorId('MT')]: 0,
+    [getTestActorId('D2')]: 3,
+  };
 
   for (const pairDirection of [2, -2]) {
     for (let index = 0; index < towerRing.length; index += 1) {
-      const leftTower = towerRing[index];
-      const rightTower = towerRing[(index + pairDirection + towerRing.length) % towerRing.length];
-      const towerDistance = pointDistance(leftTower, rightTower);
-      const leftLargeCircle = KEFKA_P2_FIRST_FORSAKEN_TESTING.getLocalTowerPoint(
-        leftTower,
-        0,
-        3.45,
-      );
-      const rightLargeCircle = KEFKA_P2_FIRST_FORSAKEN_TESTING.getLocalTowerPoint(
-        rightTower,
-        0,
-        3.45,
-      );
-      const leftFan = KEFKA_P2_FIRST_FORSAKEN_TESTING.getLocalTowerPoint(leftTower, 0, -3.45);
-      const rightFan = KEFKA_P2_FIRST_FORSAKEN_TESTING.getLocalTowerPoint(rightTower, 0, -3.45);
-      const otherTargets = otherGroupSlots.map((slot) =>
-        KEFKA_P2_FIRST_FORSAKEN_TESTING.getNoSharePatternTarget(
+      const towerPositions = [
+        towerRing[index],
+        towerRing[(index + pairDirection + towerRing.length) % towerRing.length],
+      ];
+      const positionSet = KEFKA_P2_FIRST_FORSAKEN_TESTING.getBotTowerPositionSet({
+        index: 1,
+        spawnAt: 0,
+        resolveAt: 10_000,
+        towerIndexes: [index, (index + pairDirection + towerRing.length) % towerRing.length],
+        towerPositions,
+      });
+      const oddTargets = Object.fromEntries(
+        PARTY_SLOT_ORDER.map((slot) => [
           slot,
-          groupSlotsByMarker,
-          otherSlotsByMarker,
-          otherGroupSlots,
-          leftTower,
-          rightTower,
-        ),
+          KEFKA_P2_FIRST_FORSAKEN_TESTING.getOddRoundBotTarget(
+            slot,
+            oddGroupSlotsByMarker,
+            oddOtherGroupSlots,
+            actors,
+            oddMarkerSources,
+            positionSet.odd,
+          ),
+        ]),
+      );
+      const evenTargets = Object.fromEntries(
+        PARTY_SLOT_ORDER.map((slot) => [
+          slot,
+          KEFKA_P2_FIRST_FORSAKEN_TESTING.getEvenRoundBotTarget(
+            slot,
+            evenGroupSlotsByMarker,
+            evenOtherGroupSlots,
+            actors,
+            evenMarkerSources,
+            positionSet.even,
+          ),
+        ]),
       );
 
-      assert.ok(otherTargets.every((target) => target !== null));
-
-      for (const target of otherTargets) {
-        assert.ok(pointDistance(target, leftTower) > 4);
-        assert.ok(pointDistance(target, rightTower) > 4);
-        assert.ok(pointDistance(target, leftLargeCircle) > 5);
-        assert.ok(pointDistance(target, rightLargeCircle) > 5);
-      }
-
-      assert.ok(pointDistance(otherTargets[0], rightTower) > towerDistance);
-      assert.ok(pointDistance(otherTargets[1], leftTower) > towerDistance);
-
-      const nearAoeCenters = [leftFan, rightFan, otherTargets[2], otherTargets[3]];
-
-      for (const target of otherTargets.slice(0, 2)) {
-        for (const nearAoeCenter of nearAoeCenters) {
-          assert.ok(pointDistance(target, nearAoeCenter) > 5);
-        }
-      }
-
-      assert.ok(Math.abs(pointDistance(otherTargets[2], { x: 0, y: 0 }) - 5) <= 0.0001);
-      assert.ok(Math.abs(pointDistance(otherTargets[3], { x: 0, y: 0 }) - 5) <= 0.0001);
+      assert.ok(Object.values(oddTargets).every((target) => target !== null));
+      assert.ok(Object.values(evenTargets).every((target) => target !== null));
+      assert.ok(pointDistance(oddTargets.MT, positionSet.leftTower) <= 4);
+      assert.ok(pointDistance(oddTargets.H1, positionSet.leftTower) <= 4);
+      assert.ok(pointDistance(oddTargets.D1, positionSet.rightTower) <= 4);
+      assert.ok(pointDistance(oddTargets.D2, positionSet.rightTower) <= 4);
+      assert.ok(pointDistance(oddTargets.ST, positionSet.leftTower) > 4);
+      assert.ok(pointDistance(oddTargets.H2, positionSet.leftTower) > 4);
+      assert.ok(pointDistance(oddTargets.D3, positionSet.rightTower) > 4);
+      assert.ok(pointDistance(oddTargets.D4, positionSet.rightTower) > 4);
+      assert.ok(pointDistance(evenTargets.H1, positionSet.leftTower) <= 4);
+      assert.ok(pointDistance(evenTargets.MT, positionSet.leftTower) <= 4);
+      assert.ok(pointDistance(evenTargets.D4, positionSet.rightTower) <= 4);
+      assert.ok(pointDistance(evenTargets.D2, positionSet.rightTower) <= 4);
+      assert.ok(Math.abs(pointDistance(evenTargets.ST, { x: 0, y: 0 }) - 5) <= 0.0001);
+      assert.ok(pointDistance(evenTargets.D3, positionSet.rightTower) > 4);
+      assert.ok(Math.abs(pointDistance(evenTargets.D1, { x: 0, y: 0 }) - 5) <= 0.0001);
     }
   }
+});
+
+test('凯夫卡一运：固定塔型坐标表覆盖8种双塔组合', () => {
+  const positionSets = KEFKA_P2_FIRST_FORSAKEN_TESTING.BOT_TOWER_POSITION_SETS;
+
+  assert.deepEqual(Object.keys(positionSets).sort(), [
+    '0:2',
+    '0:6',
+    '1:3',
+    '1:7',
+    '2:4',
+    '3:5',
+    '4:6',
+    '5:7',
+  ]);
+
+  for (const positions of Object.values(positionSets)) {
+    assert.ok(Math.abs(pointDistance(positions.leftTower, positions.odd.leftShare) - 2) <= 0.0001);
+    assert.ok(Math.abs(pointDistance(positions.leftTower, positions.odd.idleTank) - 4.5) <= 0.0001);
+    assert.ok(Math.abs(pointDistance(positions.leftTower, positions.odd.fan) - 3) <= 0.0001);
+    assert.ok(
+      Math.abs(pointDistance(positions.leftTower, positions.odd.idleHealer) - 4.5) <= 0.0001,
+    );
+    assert.ok(
+      Math.abs(pointDistance(positions.rightTower, positions.odd.rightLargeCircle) - 3.5) <= 0.0001,
+    );
+    assert.ok(
+      Math.abs(pointDistance(positions.rightTower, positions.odd.rightShare) - 3.5) <= 0.0001,
+    );
+    assert.ok(
+      Math.abs(pointDistance(positions.rightTower, positions.even.rightFan) - 3.5) <= 0.0001,
+    );
+    assert.ok(
+      Math.abs(pointDistance(positions.rightTower, positions.even.rightLargeCircle) - 3.5) <=
+        0.0001,
+    );
+  }
+});
+
+test('凯夫卡一运：同塔内踩塔来源按固定处理点分左右', () => {
+  const positionSet = KEFKA_P2_FIRST_FORSAKEN_TESTING.getBotTowerPositionSet({
+    index: 1,
+    spawnAt: 0,
+    resolveAt: 10_000,
+    towerIndexes: [4, 2],
+    towerPositions: [
+      { x: 0, y: 8 },
+      { x: 8, y: 0 },
+    ],
+  });
+  const handlers = [
+    createTestActor(positionSet.odd.leftShare, 'MT'),
+    createTestActor(positionSet.odd.fan, 'H1'),
+    createTestActor(positionSet.odd.rightShare, 'D1'),
+    createTestActor(positionSet.odd.rightLargeCircle, 'D2'),
+  ];
+  const handlerSources = KEFKA_P2_FIRST_FORSAKEN_TESTING.createHandlerSources(
+    handlers,
+    KEFKA_P2_FIRST_FORSAKEN_TESTING.getOddHandlerSourceReferences(positionSet.odd),
+  );
+
+  assert.deepEqual(handlerSources, {
+    [getTestActorId('MT')]: 0,
+    [getTestActorId('H1')]: 1,
+    [getTestActorId('D1')]: 2,
+    [getTestActorId('D2')]: 3,
+  });
+});
+
+test('凯夫卡一运：同点名左右按来源点排序，不按来源塔压缩', () => {
+  const actors = createTestActors();
+  const positionSet = KEFKA_P2_FIRST_FORSAKEN_TESTING.getBotTowerPositionSet({
+    index: 1,
+    spawnAt: 0,
+    resolveAt: 10_000,
+    towerIndexes: [4, 2],
+    towerPositions: [
+      { x: 0, y: 8 },
+      { x: 8, y: 0 },
+    ],
+  });
+  const sameTowerTargets = {
+    MT: KEFKA_P2_FIRST_FORSAKEN_TESTING.getOddRoundBotTarget(
+      'MT',
+      { share: ['MT', 'H1'], largeCircle: ['D2'], fan: ['D1'] },
+      ['ST', 'H2', 'D3', 'D4'],
+      actors,
+      {
+        [getTestActorId('MT')]: 0,
+        [getTestActorId('H1')]: 1,
+      },
+      positionSet.odd,
+    ),
+    H1: KEFKA_P2_FIRST_FORSAKEN_TESTING.getOddRoundBotTarget(
+      'H1',
+      { share: ['MT', 'H1'], largeCircle: ['D2'], fan: ['D1'] },
+      ['ST', 'H2', 'D3', 'D4'],
+      actors,
+      {
+        [getTestActorId('MT')]: 0,
+        [getTestActorId('H1')]: 1,
+      },
+      positionSet.odd,
+    ),
+  };
+  const crossTowerTargets = {
+    MT: KEFKA_P2_FIRST_FORSAKEN_TESTING.getOddRoundBotTarget(
+      'MT',
+      { share: ['MT', 'D1'], largeCircle: ['D2'], fan: ['H1'] },
+      ['ST', 'H2', 'D3', 'D4'],
+      actors,
+      {
+        [getTestActorId('MT')]: 0,
+        [getTestActorId('D1')]: 2,
+      },
+      positionSet.odd,
+    ),
+    D1: KEFKA_P2_FIRST_FORSAKEN_TESTING.getOddRoundBotTarget(
+      'D1',
+      { share: ['MT', 'D1'], largeCircle: ['D2'], fan: ['H1'] },
+      ['ST', 'H2', 'D3', 'D4'],
+      actors,
+      {
+        [getTestActorId('MT')]: 0,
+        [getTestActorId('D1')]: 2,
+      },
+      positionSet.odd,
+    ),
+  };
+
+  assertPointClose(sameTowerTargets.MT, positionSet.odd.leftShare);
+  assertPointClose(sameTowerTargets.H1, positionSet.odd.rightShare);
+  assertPointClose(crossTowerTargets.MT, positionSet.odd.leftShare);
+  assertPointClose(crossTowerTargets.D1, positionSet.odd.rightShare);
+});
+
+test('凯夫卡一运：正点双塔时固定点位不额外旋转且左右正确', () => {
+  const actors = createTestActors();
+  const towerPositions = [
+    { x: 0, y: 8 },
+    { x: 8, y: 0 },
+  ];
+  const positionSet = KEFKA_P2_FIRST_FORSAKEN_TESTING.getBotTowerPositionSet({
+    index: 1,
+    spawnAt: 0,
+    resolveAt: 10_000,
+    towerIndexes: [4, 2],
+    towerPositions,
+  });
+  const oddTargets = Object.fromEntries(
+    PARTY_SLOT_ORDER.map((slot) => [
+      slot,
+      KEFKA_P2_FIRST_FORSAKEN_TESTING.getOddRoundBotTarget(
+        slot,
+        {
+          share: ['MT', 'D1'],
+          largeCircle: ['D2'],
+          fan: ['H1'],
+        },
+        ['ST', 'H2', 'D3', 'D4'],
+        actors,
+        {
+          [getTestActorId('MT')]: 0,
+          [getTestActorId('D1')]: 2,
+        },
+        positionSet.odd,
+      ),
+    ]),
+  );
+  const evenTargets = Object.fromEntries(
+    PARTY_SLOT_ORDER.map((slot) => [
+      slot,
+      KEFKA_P2_FIRST_FORSAKEN_TESTING.getEvenRoundBotTarget(
+        slot,
+        {
+          share: [],
+          largeCircle: ['MT', 'D2'],
+          fan: ['H1', 'D4'],
+        },
+        ['ST', 'H2', 'D1', 'D3'],
+        actors,
+        {
+          [getTestActorId('H1')]: 1,
+          [getTestActorId('D4')]: 2,
+          [getTestActorId('MT')]: 0,
+          [getTestActorId('D2')]: 3,
+        },
+        positionSet.even,
+      ),
+    ]),
+  );
+  const idleOffset = 4.5 / Math.SQRT2;
+
+  assertPointClose(positionSet.leftTower, { x: 0, y: 8 });
+  assertPointClose(positionSet.rightTower, { x: 8, y: 0 });
+  assertPointClose(oddTargets.MT, { x: -2, y: 8 });
+  assertPointClose(oddTargets.ST, { x: -4.5, y: 8 });
+  assertPointClose(oddTargets.H1, { x: 3 / Math.SQRT2, y: 8 + 3 / Math.SQRT2 });
+  assertPointClose(oddTargets.H2, { x: idleOffset, y: 8 + idleOffset });
+  assertPointClose(oddTargets.D2, { x: 8, y: -3.5 });
+  assertPointClose(oddTargets.D1, { x: 8, y: 3.5 });
+  assertPointClose(oddTargets.D3, { x: 8 - Math.SQRT2, y: 3.5 + Math.SQRT2 });
+  assertPointClose(oddTargets.D4, { x: 8 - Math.SQRT2, y: 3.5 + Math.SQRT2 });
+
+  assertPointClose(evenTargets.H1, { x: 0, y: 8 - 3.5 });
+  assertPointClose(evenTargets.MT, { x: 0, y: 8 + 3.5 });
+  assertPointClose(evenTargets.H2, { x: -4.5, y: 8 });
+  assertPointClose(evenTargets.ST, { x: -5, y: 0 });
+  assertPointClose(evenTargets.D4, { x: 8 - 3.5, y: 0 });
+  assertPointClose(evenTargets.D2, { x: 8 + 3.5, y: 0 });
+  assertPointClose(evenTargets.D3, { x: 8, y: -4.5 });
+  assertPointClose(evenTargets.D1, { x: 0, y: -5 });
+});
+
+test('凯夫卡一运：Bot 点名出现1秒后先分组换位，等塔出现1秒再去踩塔', () => {
+  const controller = getBattleBotController('kefka_p2_first_forsaken');
+  const actors = createTestActors({ x: 0, y: 13 });
+  const actor = actors.find((candidate) => candidate.slot === 'MT');
+  const round = {
+    index: 1,
+    spawnAt: 12_700,
+    resolveAt: 22_700,
+    towerIndexes: [4, 2],
+    towerPositions: [
+      { x: 0, y: 8 },
+      { x: 8, y: 0 },
+    ],
+  };
+  const baseSnapshot = {
+    actors,
+    boss: { position: { x: 0, y: 0 } },
+    scriptState: {
+      'kefka:botGroups': {
+        a: ['MT', 'H1', 'D1', 'D2'],
+        b: ['ST', 'H2', 'D3', 'D4'],
+      },
+      'kefka:towerRounds': [round],
+      'kefka:activeMarkers': {
+        [getTestActorId('MT')]: 'share',
+        [getTestActorId('H1')]: 'fan',
+        [getTestActorId('D1')]: 'share',
+        [getTestActorId('D2')]: 'largeCircle',
+      },
+      'kefka:botMarkerSources': {
+        [getTestActorId('MT')]: 0,
+        [getTestActorId('D1')]: 2,
+      },
+      'kefka:botMarkerAssignedAt': {
+        [getTestActorId('MT')]: 9_700,
+        [getTestActorId('H1')]: 9_700,
+        [getTestActorId('D1')]: 9_700,
+        [getTestActorId('D2')]: 9_700,
+      },
+    },
+  };
+
+  assert.ok(controller);
+  assert.ok(actor);
+
+  const beforeTowerFrame = controller({
+    snapshot: {
+      ...baseSnapshot,
+      timeMs: 10_699,
+    },
+    slot: 'MT',
+    actor,
+  });
+  const stagingFrame = controller({
+    snapshot: {
+      ...baseSnapshot,
+      timeMs: 10_700,
+    },
+    slot: 'MT',
+    actor,
+  });
+  const beforeDelayFrame = controller({
+    snapshot: {
+      ...baseSnapshot,
+      timeMs: 13_699,
+    },
+    slot: 'MT',
+    actor,
+  });
+  const movingFrame = controller({
+    snapshot: {
+      ...baseSnapshot,
+      timeMs: 13_700,
+    },
+    slot: 'MT',
+    actor,
+  });
+
+  assertPointClose(beforeTowerFrame.pose.position, actor.position);
+  assertPointClose(beforeTowerFrame.pose.moveState.direction, { x: 0, y: 0 });
+  assert.equal(beforeTowerFrame.pose.moveState.moving, false);
+  assertPointClose(stagingFrame.pose.moveState.direction, {
+    x: -12 / Math.hypot(-12, -4 - 13),
+    y: (-4 - 13) / Math.hypot(-12, -4 - 13),
+  });
+  assertPointClose(beforeDelayFrame.pose.moveState.direction, {
+    x: -12 / Math.hypot(-12, -4 - 13),
+    y: (-4 - 13) / Math.hypot(-12, -4 - 13),
+  });
+  assertPointClose(movingFrame.pose.moveState.direction, {
+    x: -2 / Math.hypot(-2, 8 - 13),
+    y: (8 - 13) / Math.hypot(-2, 8 - 13),
+  });
 });
 
 test('凯夫卡一运：最后一轮消灭之脚锁定后8个Bot统一按终结类型躲避', () => {
