@@ -39,6 +39,7 @@
 ## 6. 验证与本地服务
 
 - 改动完成后，默认通过 `build`、`typecheck`、`lint` 等命令验证。
+- 在 WSL 环境运行 `tsx` 相关测试时，若直接执行 `pnpm --filter @ff14arena/server test` 出现 `listen ENOTSUP` 且路径指向 Windows Temp 下的 IPC 管道，则使用 `TMPDIR=/tmp pnpm --filter @ff14arena/server test`。
 - 不默认启动开发服务器。
 - 仅当用户明确要求本地预览、浏览器检查或联调时，才启动开发服务器。
 

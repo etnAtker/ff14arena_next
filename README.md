@@ -32,6 +32,7 @@ pnpm install
 启动开发环境：
 
 ```bash
+pnpm build
 pnpm dev
 ```
 

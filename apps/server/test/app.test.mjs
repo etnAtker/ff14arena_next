@@ -1115,6 +1115,120 @@ test('等待态玩家可以切换观战并点击槽位回到场内', async () =>
   }
 });
 
+test('等待态玩家与 Bot 换位后再观战会重建当前槽位 Bot', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '换位观战测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    const ownerWaitingSnapshotPromise = waitForEvent(owner, 'sim:snapshot');
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+    await ownerWaitingSnapshotPromise;
+
+    await waitForConnect(guest);
+    const guestWaitingSnapshotPromise = waitForEvent(guest, 'sim:snapshot');
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      slot: 'ST',
+    });
+    await waitForRoomState(
+      guest,
+      (room) =>
+        room.roomId === roomId &&
+        room.slots.find((slot) => slot.slot === 'ST')?.ownerUserId === 'guest-user',
+    );
+    await guestWaitingSnapshotPromise;
+
+    const switchPromise = waitForRoomState(
+      owner,
+      (room) =>
+        room.roomId === roomId &&
+        room.slots.find((slot) => slot.slot === 'D1')?.ownerUserId === 'guest-user' &&
+        room.slots.find((slot) => slot.slot === 'ST')?.occupantType === 'bot',
+    );
+    guest.emit('room:switch-slot', {
+      roomId,
+      targetSlot: 'D1',
+    });
+    const switchedRoom = await switchPromise;
+    const switchedBotSlot = switchedRoom.slots.find((slot) => slot.slot === 'ST');
+    assert.equal(switchedBotSlot?.name, 'Bot ST');
+    assert.equal(switchedBotSlot?.actorId, `${roomId}:bot:ST`);
+
+    const spectateRoomPromise = waitForRoomState(
+      owner,
+      (room) =>
+        room.roomId === roomId &&
+        room.spectators.some((spectator) => spectator.userId === 'guest-user') &&
+        room.slots.find((slot) => slot.slot === 'D1')?.occupantType === 'bot',
+    );
+    const spectateSnapshotPromise = waitForPayload(
+      owner,
+      'sim:snapshot',
+      (payload) =>
+        payload.roomId === roomId &&
+        payload.snapshot.phase === 'waiting' &&
+        payload.snapshot.actors.every((actor) => actor.id !== `${roomId}:player:guest-user`),
+    );
+    guest.emit('room:spectate', {
+      roomId,
+    });
+    const spectateRoom = await spectateRoomPromise;
+    const spectateSnapshot = await spectateSnapshotPromise;
+
+    for (const slotState of spectateRoom.slots) {
+      if (slotState.occupantType !== 'bot') {
+        continue;
+      }
+
+      assert.equal(slotState.name, `Bot ${slotState.slot}`);
+      assert.equal(slotState.actorId, `${roomId}:bot:${slotState.slot}`);
+    }
+
+    const slotActorIds = spectateRoom.slots.map((slot) => slot.actorId);
+    assert.equal(new Set(slotActorIds).size, PARTY_SLOT_ORDER.length);
+    assert.equal(spectateSnapshot.snapshot.actors.length, PARTY_SLOT_ORDER.length);
+    assert.equal(
+      new Set(spectateSnapshot.snapshot.actors.map((actor) => actor.id)).size,
+      spectateSnapshot.snapshot.actors.length,
+    );
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
 test('槽位满员时仍允许从大厅直接加入观战', async () => {
   const server = await startServer({
     host: '127.0.0.1',

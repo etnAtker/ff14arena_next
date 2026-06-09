@@ -693,6 +693,19 @@ export class RoomManager {
     const currentOccupant = room.slots[currentSlot];
     const targetOccupant = room.slots[payload.targetSlot];
 
+    if (targetOccupant.type === 'bot') {
+      const nextBotOccupant = createBotOccupant(room.roomId, currentSlot);
+      room.slots[currentSlot] = nextBotOccupant;
+      room.slots[payload.targetSlot] = currentOccupant;
+      this.rebuildWaitingSimulation(room, {
+        sourceSnapshot: room.simulation?.getSnapshot() ?? null,
+        keepTimeMs: true,
+        resetPositionActorIds: new Set([currentOccupant.actorId, nextBotOccupant.actorId]),
+      });
+      this.broadcastWaitingState(room, 'waiting-state');
+      return;
+    }
+
     room.slots[currentSlot] = targetOccupant;
     room.slots[payload.targetSlot] = currentOccupant;
     this.rebuildWaitingSimulation(room, {
