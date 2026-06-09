@@ -550,11 +550,13 @@ onBeforeUnmount(() => {
         <HomePage
           v-if="page === 'home'"
           :edit-user-name="editUserName"
+          :legacy-protocol-mode="profile.legacyProtocolMode"
           :create-room-name="createRoomName"
           :create-battle-id="createBattleId || null"
           :battle-options="battleOptions"
           :rooms="rooms"
           @edit-user-name-change="editUserName = $event"
+          @legacy-protocol-mode-change="store.updateLegacyProtocolMode"
           @create-room-name-change="createRoomName = $event"
           @create-battle-id-change="createBattleId = $event ?? ''"
           @create-room="handleCreateRoom"

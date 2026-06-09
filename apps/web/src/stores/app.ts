@@ -21,6 +21,7 @@ import type {
   RoomStateDto,
   RoomSpectatorState,
   RoomSummaryDto,
+  ContinuousSimulationInputFrame,
   SimulationEvent,
   SimulationInput,
   SimulationSnapshot,
@@ -612,7 +613,7 @@ export const useAppStore = defineStore('app', () => {
       roomId: action.roomId,
       userId: profile.value.userId,
       userName: profile.value.userName,
-      realtimeEncoding: 'protobuf',
+      realtimeEncoding: profile.value.legacyProtocolMode ? 'json' : 'protobuf',
       ...getRoomPasswordPayload(),
       ...(action.mode !== undefined ? { mode: action.mode } : {}),
       ...(action.slot !== undefined ? { slot: action.slot } : {}),
@@ -886,6 +887,14 @@ export const useAppStore = defineStore('app', () => {
     saveProfile(profile.value);
   }
 
+  function updateLegacyProtocolMode(enabled: boolean): void {
+    profile.value = {
+      ...profile.value,
+      legacyProtocolMode: enabled,
+    };
+    saveProfile(profile.value);
+  }
+
   async function createRoom(name: string, battleId?: string): Promise<void> {
     const action: RoomEntryAction = {
       type: 'create',
@@ -1103,6 +1112,13 @@ export const useAppStore = defineStore('app', () => {
     return nextPose;
   }
 
+  function emitContinuousInputFrame(payload: ContinuousSimulationInputFrame): void {
+    socket.value?.emit(
+      'sim:input-frame',
+      profile.value.legacyProtocolMode ? payload : encodeContinuousInputFrame(payload),
+    );
+  }
+
   function submitLocalControlledPose(options: {
     actorId: string;
     position: Vector2;
@@ -1144,20 +1160,17 @@ export const useAppStore = defineStore('app', () => {
     };
     localControlledPose.value = nextPose;
 
-    socket.value.emit(
-      'sim:input-frame',
-      encodeContinuousInputFrame({
-        roomId: room.value.roomId,
-        syncId: currentSyncId.value,
-        actorId: actor.id,
-        issuedAt: Date.now(),
-        payload: {
-          position: cloneVector(nextPose.position),
-          moveDirection: cloneVector(nextPose.moveState.direction),
-          facing: nextPose.facing,
-        },
-      }),
-    );
+    emitContinuousInputFrame({
+      roomId: room.value.roomId,
+      syncId: currentSyncId.value,
+      actorId: actor.id,
+      issuedAt: Date.now(),
+      payload: {
+        position: cloneVector(nextPose.position),
+        moveDirection: cloneVector(nextPose.moveState.direction),
+        facing: nextPose.facing,
+      },
+    });
   }
 
   function emitSimulationInput(
@@ -1216,20 +1229,17 @@ export const useAppStore = defineStore('app', () => {
       return;
     }
 
-    socket.value.emit(
-      'sim:input-frame',
-      encodeContinuousInputFrame({
-        roomId: room.value.roomId,
-        syncId: currentSyncId.value,
-        actorId: actor.id,
-        issuedAt,
-        payload: {
-          position: nextPose.position,
-          moveDirection,
-          facing: nextPose.facing,
-        },
-      }),
-    );
+    emitContinuousInputFrame({
+      roomId: room.value.roomId,
+      syncId: currentSyncId.value,
+      actorId: actor.id,
+      issuedAt,
+      payload: {
+        position: nextPose.position,
+        moveDirection,
+        facing: nextPose.facing,
+      },
+    });
   }
 
   function previewFaceAngle(facing: number): void {
@@ -1523,6 +1533,7 @@ export const useAppStore = defineStore('app', () => {
     page,
     loadLobbyData,
     updateProfile,
+    updateLegacyProtocolMode,
     createRoom,
     joinRoom,
     leaveRoom,

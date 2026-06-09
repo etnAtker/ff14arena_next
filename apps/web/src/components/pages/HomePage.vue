@@ -11,6 +11,7 @@ import {
   NInput,
   NSpace,
   NSelect,
+  NSwitch,
   NTag,
   NText,
 } from 'naive-ui';
@@ -19,6 +20,7 @@ import { getRoomPhaseLabel, getRoomPhaseTagType } from '../../utils/ui';
 
 const props = defineProps<{
   editUserName: string;
+  legacyProtocolMode: boolean;
   createRoomName: string;
   createBattleId: string | null;
   battleOptions: SelectOption[];
@@ -27,6 +29,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   editUserNameChange: [value: string];
+  legacyProtocolModeChange: [value: boolean];
   createRoomNameChange: [value: string];
   createBattleIdChange: [value: string | null];
   createRoom: [];
@@ -39,37 +42,50 @@ const emit = defineEmits<{
 <template>
   <n-grid cols="1 m:2" responsive="screen" :x-gap="16" :y-gap="16">
     <n-gi>
-      <n-card title="创建房间" embedded>
-        <n-form label-placement="top">
-          <n-form-item label="昵称">
-            <n-input
-              :value="props.editUserName"
-              maxlength="24"
-              placeholder="输入昵称"
-              @update:value="emit('editUserNameChange', $event)"
-            />
-          </n-form-item>
-          <n-form-item label="房间名">
-            <n-input
-              :value="props.createRoomName"
-              maxlength="32"
-              placeholder="输入房间名"
-              @update:value="emit('createRoomNameChange', $event)"
-            />
-          </n-form-item>
-          <n-form-item label="战斗">
-            <n-select
-              :value="props.createBattleId"
-              :options="props.battleOptions"
-              placeholder="请选择战斗"
-              @update:value="
-                emit('createBattleIdChange', typeof $event === 'string' ? $event : null)
-              "
-            />
-          </n-form-item>
-          <n-button type="primary" block @click="emit('createRoom')">创建并进入</n-button>
-        </n-form>
-      </n-card>
+      <n-space vertical :size="16">
+        <n-card title="个人设置" embedded>
+          <n-form label-placement="top">
+            <n-form-item label="昵称">
+              <n-input
+                :value="props.editUserName"
+                maxlength="24"
+                placeholder="输入昵称"
+                @update:value="emit('editUserNameChange', $event)"
+              />
+            </n-form-item>
+            <n-form-item label="旧协议兼容模式（损失性能）">
+              <n-switch
+                :value="props.legacyProtocolMode"
+                @update:value="emit('legacyProtocolModeChange', $event)"
+              />
+            </n-form-item>
+          </n-form>
+        </n-card>
+
+        <n-card title="创建房间" embedded>
+          <n-form label-placement="top">
+            <n-form-item label="房间名">
+              <n-input
+                :value="props.createRoomName"
+                maxlength="32"
+                placeholder="输入房间名"
+                @update:value="emit('createRoomNameChange', $event)"
+              />
+            </n-form-item>
+            <n-form-item label="战斗">
+              <n-select
+                :value="props.createBattleId"
+                :options="props.battleOptions"
+                placeholder="请选择战斗"
+                @update:value="
+                  emit('createBattleIdChange', typeof $event === 'string' ? $event : null)
+                "
+              />
+            </n-form-item>
+            <n-button type="primary" block @click="emit('createRoom')">创建并进入</n-button>
+          </n-form>
+        </n-card>
+      </n-space>
     </n-gi>
 
     <n-gi>

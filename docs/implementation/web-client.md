@@ -105,7 +105,7 @@
 ### 当前输入链
 
 - 连续覆盖型输入统一通过 `sim:input-frame` 发送
-- Web 客户端加入房间时声明 `realtimeEncoding: "protobuf"`，实时模拟链路使用 Protobuf 二进制承载
+- Web 客户端默认加入房间时声明 `realtimeEncoding: "protobuf"`，实时模拟链路使用 Protobuf 二进制承载；首页开启“旧协议兼容模式（损失性能）”后改为声明 `realtimeEncoding: "json"`，实时模拟链路使用 JSON 承载
 - 输入帧包含：
   - `position`
   - `facing`
