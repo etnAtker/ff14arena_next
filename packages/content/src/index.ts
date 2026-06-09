@@ -56,6 +56,7 @@ export const battleStaticCatalog: BattleStaticData[] = battleDefinitions.map((ba
   bossName: battle.bossName,
   arenaRadius: battle.arenaRadius,
   bossTargetRingRadius: battle.bossTargetRingRadius,
+  ...(battle.arenaBackground === undefined ? {} : { arenaBackground: battle.arenaBackground }),
   mapMarkers: battle.mapMarkers ?? [],
   statusMetadata: getBattleStatusMetadata(battle.id),
   defaultPlayerMaxHp: DEFAULT_PLAYER_MAX_HP,

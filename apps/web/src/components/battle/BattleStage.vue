@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { Application, Graphics, Text, TextStyle } from 'pixi.js';
+import { Application, Assets, Graphics, Sprite, Text, TextStyle, Texture } from 'pixi.js';
 import { onBeforeUnmount, onMounted, ref } from 'vue';
 import type {
   ActorMarkerMechanicSnapshot,
   ActorMarkerShape,
+  BattleArenaBackground,
   FieldMarkerShape,
   MapMarker,
   RingIndicatorMechanicSnapshot,
@@ -42,6 +43,7 @@ const props = defineProps<{
   cameraYaw: number;
   cameraZoom: number;
   operationMode: OperationMode;
+  arenaBackground: BattleArenaBackground | null;
 }>();
 
 const emit = defineEmits<{
@@ -67,6 +69,10 @@ let isUnmounted = false;
 let isAppReady = false;
 let lastDrawAt = 0;
 const renderActors = new Map<string, RenderActorState>();
+let arenaBackgroundSprite: Sprite | null = null;
+let loadedArenaBackgroundUrl: string | null = null;
+let failedArenaBackgroundUrl: string | null = null;
+let arenaBackgroundLoadToken = 0;
 let stageGraphics: Graphics | null = null;
 let bossLabel: Text | null = null;
 const actorLabels = new Map<string, Text>();
@@ -175,23 +181,100 @@ function clearStage(): void {
 }
 
 function createStagePrimitives(): void {
-  if (app === null || stageGraphics !== null || bossLabel !== null) {
+  if (app === null) {
     return;
   }
 
-  stageGraphics = new Graphics();
-  app.stage.addChild(stageGraphics);
+  if (arenaBackgroundSprite === null) {
+    arenaBackgroundSprite = new Sprite(Texture.EMPTY);
+    arenaBackgroundSprite.anchor.set(0.5);
+    arenaBackgroundSprite.visible = false;
+    app.stage.addChild(arenaBackgroundSprite);
+  }
 
-  bossLabel = new Text({
-    text: '首',
-    style: new TextStyle({
-      fill: '#1a120d',
-      fontSize: 14,
-      fontWeight: '700',
-    }),
-  });
-  bossLabel.anchor.set(0.5);
-  app.stage.addChild(bossLabel);
+  if (stageGraphics === null) {
+    stageGraphics = new Graphics();
+    app.stage.addChild(stageGraphics);
+  }
+
+  if (bossLabel === null) {
+    bossLabel = new Text({
+      text: '首',
+      style: new TextStyle({
+        fill: '#1a120d',
+        fontSize: 14,
+        fontWeight: '700',
+      }),
+    });
+    bossLabel.anchor.set(0.5);
+    app.stage.addChild(bossLabel);
+  }
+}
+
+function loadArenaBackgroundTexture(imageUrl: string): void {
+  if (loadedArenaBackgroundUrl === imageUrl || failedArenaBackgroundUrl === imageUrl) {
+    return;
+  }
+
+  const loadToken = ++arenaBackgroundLoadToken;
+
+  Assets.load<Texture>(imageUrl)
+    .then((texture) => {
+      if (isUnmounted || loadToken !== arenaBackgroundLoadToken || arenaBackgroundSprite === null) {
+        return;
+      }
+
+      arenaBackgroundSprite.texture = texture;
+      loadedArenaBackgroundUrl = imageUrl;
+      failedArenaBackgroundUrl = null;
+    })
+    .catch(() => {
+      if (loadToken !== arenaBackgroundLoadToken) {
+        return;
+      }
+
+      failedArenaBackgroundUrl = imageUrl;
+      loadedArenaBackgroundUrl = null;
+
+      if (arenaBackgroundSprite !== null) {
+        arenaBackgroundSprite.visible = false;
+      }
+    });
+}
+
+function updateArenaBackground(
+  width: number,
+  height: number,
+  arenaRadius: number,
+  scale: number,
+): boolean {
+  const background = props.arenaBackground;
+
+  if (arenaBackgroundSprite === null || background === null) {
+    if (arenaBackgroundSprite !== null) {
+      arenaBackgroundSprite.visible = false;
+    }
+    return false;
+  }
+
+  if (loadedArenaBackgroundUrl !== background.imageUrl) {
+    arenaBackgroundSprite.visible = false;
+    loadArenaBackgroundTexture(background.imageUrl);
+    return false;
+  }
+
+  const center = toStagePoint(background.center, width, height, arenaRadius);
+  const cameraYaw = props.operationMode === 'fixed' ? 0 : props.cameraYaw;
+
+  arenaBackgroundSprite.visible = true;
+  arenaBackgroundSprite.alpha = background.opacity ?? 1;
+  arenaBackgroundSprite.x = center.x;
+  arenaBackgroundSprite.y = center.y;
+  arenaBackgroundSprite.width = background.width * scale;
+  arenaBackgroundSprite.height = background.height * scale;
+  arenaBackgroundSprite.rotation = -cameraYaw;
+
+  return true;
 }
 
 function syncActorLabels(snapshot: SimulationSnapshot): void {
@@ -1072,6 +1155,9 @@ function draw(now: number): void {
 
   if (props.snapshot === null) {
     hideLabels();
+    if (arenaBackgroundSprite !== null) {
+      arenaBackgroundSprite.visible = false;
+    }
     return;
   }
 
@@ -1095,10 +1181,14 @@ function draw(now: number): void {
     (mechanic) =>
       mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy' && mechanic.showLabel !== false,
   );
+  const hasArenaBackground = updateArenaBackground(width, height, arenaRadius, scale);
 
-  graphics
-    .circle(arenaCenter.x, arenaCenter.y, arenaRadius * scale)
-    .fill({ color: 0x162225, alpha: 1 });
+  if (!hasArenaBackground) {
+    graphics
+      .circle(arenaCenter.x, arenaCenter.y, arenaRadius * scale)
+      .fill({ color: 0x162225, alpha: 1 });
+  }
+
   graphics
     .circle(arenaCenter.x, arenaCenter.y, arenaRadius * scale)
     .stroke({ width: 3, color: 0x86d8ca, alpha: 0.92 });

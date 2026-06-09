@@ -3,6 +3,7 @@ import type {
   ActorMarkerShape,
   BaseActorSnapshot,
   BattleStartTimeOptions,
+  BattleArenaBackground,
   BossSnapshot,
   DamageType,
   EncounterResult,
@@ -242,6 +243,7 @@ export interface BattleDefinition {
   name: string;
   arenaRadius: number;
   bossTargetRingRadius: number;
+  arenaBackground?: BattleArenaBackground;
   mapMarkers?: MapMarker[];
   slots: readonly PartySlot[];
   bossName: string;

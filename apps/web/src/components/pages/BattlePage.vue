@@ -15,6 +15,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type {
   BaseActorSnapshot,
+  BattleArenaBackground,
   BattleStartTimeOptions,
   BossCastBarState,
   EncounterResult,
@@ -63,6 +64,7 @@ const props = defineProps<{
   battleStartNoticeUntilMs: number;
   logs: string[];
   latestResult: EncounterResult | null;
+  arenaBackground: BattleArenaBackground | null;
   statusMetadata: StatusMetadata[];
   failedStatusIconUrls: string[];
   operationModeOptions: SelectOption[];
@@ -875,6 +877,7 @@ onBeforeUnmount(() => {
               :camera-yaw="props.cameraYaw"
               :camera-zoom="props.cameraZoom"
               :operation-mode="props.operationMode"
+              :arena-background="props.arenaBackground"
               @camera-yaw-change="emit('cameraYawChange', $event)"
               @camera-zoom-change="emit('cameraZoomChange', $event)"
               @face-angle="emit('faceAngle', $event)"

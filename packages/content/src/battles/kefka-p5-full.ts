@@ -2474,6 +2474,12 @@ export const KEFKA_P5_FULL_BATTLE: BattleDefinition = {
   name: '凯夫卡P5：整合',
   arenaRadius: ARENA_RADIUS,
   bossTargetRingRadius: BOSS_TARGET_RING_RADIUS,
+  arenaBackground: {
+    imageUrl: '/map/kefka-p5.png',
+    center: CENTER,
+    width: 40,
+    height: 40,
+  },
   slots: PARTY_SLOT_ORDER,
   bossName: '凯夫卡',
   initialPartyPositions: Object.fromEntries(

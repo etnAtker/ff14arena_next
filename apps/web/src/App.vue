@@ -653,6 +653,7 @@ onBeforeUnmount(() => {
             :battle-start-notice-until-ms="battleStartNoticeUntilMs"
             :logs="logs"
             :latest-result="latestResult"
+            :arena-background="battleStaticData?.arenaBackground ?? null"
             :status-metadata="battleStaticData?.statusMetadata ?? []"
             :failed-status-icon-urls="failedStatusIconUrls"
             :operation-mode-options="[

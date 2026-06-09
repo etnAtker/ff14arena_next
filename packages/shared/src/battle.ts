@@ -32,12 +32,21 @@ export interface StatusMetadata {
   partyListPriority: number;
 }
 
+export interface BattleArenaBackground {
+  imageUrl: string;
+  center: Vector2;
+  width: number;
+  height: number;
+  opacity?: number;
+}
+
 export interface BattleStaticData {
   id: string;
   name: string;
   bossName: string;
   arenaRadius: number;
   bossTargetRingRadius: number;
+  arenaBackground?: BattleArenaBackground;
   mapMarkers: MapMarker[];
   statusMetadata: StatusMetadata[];
   defaultPlayerMaxHp: number;
