@@ -78,6 +78,9 @@ docker compose up -d
 
 完整部署说明见 [docs/implementation/deployment.md](./docs/implementation/deployment.md)。
 
+> [!IMPORTANT]
+> 浏览器的 randomUUID 函数只能在 [secure contexts](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Secure_Contexts) 中使用。如果想部署在公网，请申请一个 https 证书。
+
 ## 文档指引
 
 - [文档索引](./docs/README.md)
