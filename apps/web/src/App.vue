@@ -25,6 +25,13 @@ import {
 import AppTopbar from './components/layout/AppTopbar.vue';
 import { getCameraYawForFacing } from './components/battle/camera';
 import { useAppStore } from './stores/app';
+import type { AppChangelogEntry, AppVersionConfig } from './utils/app-version';
+import {
+  getPendingChangelogEntries,
+  loadAppVersionConfig,
+  loadCachedAppVersion,
+  saveCachedAppVersion,
+} from './utils/app-version';
 import { normalizeAngleDifference, rotateVector } from './utils/angle';
 import { loadOperationMode, saveOperationMode } from './utils/operation-mode';
 import type { OperationMode, SelectValue } from './utils/ui';
@@ -112,6 +119,9 @@ const isMetricsRoute = window.location.pathname === '/metrics';
 const lastTraditionalFacing = ref<number | null>(null);
 const pendingPointerFacing = ref<number | null>(null);
 const lastSentPointerFacing = ref<number | null>(null);
+const appVersionConfig = ref<AppVersionConfig | null>(null);
+const pendingChangelogEntries = ref<AppChangelogEntry[]>([]);
+const changelogModalVisible = ref(false);
 const pressedKeys = new Set<string>();
 
 const battleOptions = computed<SelectOption[]>(() =>
@@ -262,6 +272,36 @@ function cancelRoomPasswordPrompt(): void {
 
 function openMetricsPage(): void {
   window.location.assign('/metrics');
+}
+
+async function checkAppVersion(): Promise<void> {
+  try {
+    const config = await loadAppVersionConfig();
+
+    if (config === null) {
+      return;
+    }
+
+    const pendingEntries = getPendingChangelogEntries(config, loadCachedAppVersion());
+
+    if (pendingEntries.length === 0) {
+      return;
+    }
+
+    appVersionConfig.value = config;
+    pendingChangelogEntries.value = pendingEntries;
+    changelogModalVisible.value = true;
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function confirmChangelog(): void {
+  if (appVersionConfig.value !== null) {
+    saveCachedAppVersion(appVersionConfig.value.version);
+  }
+
+  changelogModalVisible.value = false;
 }
 
 function updateCameraYaw(nextYaw: number): void {
@@ -417,6 +457,7 @@ onMounted(async () => {
   }
 
   await refreshLobby();
+  void checkAppVersion();
   window.addEventListener('keydown', handleKeyDown);
   window.addEventListener('keyup', handleKeyUp);
   window.addEventListener('blur', handleWindowBlur);
@@ -547,6 +588,34 @@ onBeforeUnmount(() => {
           </n-space>
         </n-modal>
 
+        <n-modal
+          :show="changelogModalVisible"
+          preset="dialog"
+          title="更新日志"
+          :mask-closable="false"
+          :closable="false"
+          style="width: min(672px, calc(100vw - 32px))"
+        >
+          <n-space vertical :size="14">
+            <div class="changelog-scroll">
+              <div v-for="entry in pendingChangelogEntries" :key="entry.version" class="changelog">
+                <div class="changelog-title">
+                  <span class="changelog-version">{{ entry.version }}</span>
+                  <span>{{ entry.title }}</span>
+                </div>
+                <div class="changelog-list">
+                  <div v-for="item in entry.items" :key="item" class="changelog-item">
+                    {{ item }}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <n-space justify="end">
+              <n-button type="primary" @click="confirmChangelog">知道了</n-button>
+            </n-space>
+          </n-space>
+        </n-modal>
+
         <HomePage
           v-if="page === 'home'"
           :edit-user-name="editUserName"
@@ -668,6 +737,88 @@ onBeforeUnmount(() => {
 .content-alert {
   margin-bottom: 0;
   flex: 0 0 auto;
+}
+
+.changelog-scroll {
+  max-height: 80dvh;
+  overflow-y: auto;
+  padding-right: 6px;
+  scrollbar-color: rgba(201, 139, 90, 0.55) rgba(255, 223, 177, 0.08);
+  scrollbar-width: thin;
+}
+
+.changelog-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.changelog-scroll::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(255, 223, 177, 0.08);
+}
+
+.changelog-scroll::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(26, 22, 20, 0.96);
+  border-radius: 999px;
+  background: rgba(201, 139, 90, 0.68);
+}
+
+.changelog-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(215, 157, 111, 0.82);
+}
+
+.changelog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 223, 177, 0.1);
+}
+
+.changelog + .changelog {
+  margin-top: 2px;
+}
+
+.changelog:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.changelog-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-weight: 600;
+  color: #f6efe4;
+}
+
+.changelog-version {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid rgba(201, 139, 90, 0.42);
+  border-radius: 6px;
+  background: rgba(201, 139, 90, 0.12);
+  color: #e2b488;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.changelog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: rgba(246, 239, 228, 0.82);
+}
+
+.changelog-item {
+  padding: 8px 10px;
+  border-left: 2px solid rgba(201, 139, 90, 0.48);
+  border-radius: 0 6px 6px 0;
+  background: rgba(255, 255, 255, 0.025);
+  line-height: 1.6;
+  word-break: break-word;
 }
 
 .battle-page-shell {
