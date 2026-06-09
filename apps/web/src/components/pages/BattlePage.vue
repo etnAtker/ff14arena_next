@@ -16,6 +16,7 @@ import { PARTY_SLOT_ORDER } from '@ff14arena/shared';
 import type {
   BaseActorSnapshot,
   BattleArenaBackground,
+  BattleRoomOptionDefinition,
   BattleStartTimeOptions,
   BossCastBarState,
   EncounterResult,
@@ -68,6 +69,7 @@ const props = defineProps<{
   statusMetadata: StatusMetadata[];
   failedStatusIconUrls: string[];
   operationModeOptions: SelectOption[];
+  battleRoomOptions: BattleRoomOptionDefinition[];
 }>();
 
 const emit = defineEmits<{
@@ -76,7 +78,12 @@ const emit = defineEmits<{
   spectate: [];
   startBattle: [payload: StartBattlePayload];
   quickFail: [];
-  roomOptionsChange: [options: Partial<RoomStateDto['options']>];
+  roomOptionsChange: [
+    payload: {
+      options?: Partial<RoomStateDto['options']>;
+      mechanicOptions?: Partial<RoomStateDto['mechanicOptions']>;
+    },
+  ];
   startCountdownSecondsChange: [seconds: number];
   startTimeSecondsChange: [seconds: number];
   switchSlot: [slot: PartySlot];
@@ -246,6 +253,10 @@ const startTimePresetOptions = computed<SelectOption[]>(() =>
 );
 const usesStartTimePresets = computed(() => startTimePresetOptions.value.length > 0);
 const deadActorsInteractEnabled = computed(() => props.room?.options.deadActorsInteract ?? true);
+const hasBattleRoomOptions = computed(() => props.battleRoomOptions.length > 0);
+const startTimeRoomHintLabel = computed(() =>
+  usesStartTimePresets.value ? '可选择阶段' : '可跳过时间',
+);
 const isPartyListDefaultOrder = computed(() =>
   partyListOrder.value.every((slot, index) => slot === PARTY_SLOT_ORDER[index]),
 );
@@ -290,6 +301,10 @@ function createStartBattlePayload(): StartBattlePayload {
 
 function emitStartBattle(): void {
   emit('startBattle', createStartBattlePayload());
+}
+
+function getBattleRoomOptionValue(option: BattleRoomOptionDefinition): boolean {
+  return props.room?.mechanicOptions[option.key] ?? option.defaultValue;
 }
 
 function getSlotState(slot: PartySlot) {
@@ -822,9 +837,38 @@ onBeforeUnmount(() => {
               </h2>
             </div>
             <div class="stage-meta">
-              <n-button secondary strong class="room-management-button" @click="openRoomManagement">
-                房间管理
-              </n-button>
+              <div class="room-management-entry">
+                <n-tag
+                  v-if="props.isOwner && hasBattleRoomOptions"
+                  class="room-management-hint-tag clickable"
+                  size="small"
+                  type="success"
+                  :bordered="false"
+                  title="当前机制有可配置选项"
+                  @click="openRoomManagement"
+                >
+                  存在机制选项
+                </n-tag>
+                <n-tag
+                  v-if="props.isOwner && supportsStartTime"
+                  class="room-management-hint-tag clickable"
+                  size="small"
+                  type="info"
+                  :bordered="false"
+                  title="当前战斗支持从指定时间开始"
+                  @click="openRoomManagement"
+                >
+                  {{ startTimeRoomHintLabel }}
+                </n-tag>
+                <n-button
+                  secondary
+                  strong
+                  class="room-management-button"
+                  @click="openRoomManagement"
+                >
+                  房间管理
+                </n-button>
+              </div>
               <n-button
                 secondary
                 strong
@@ -1031,156 +1075,180 @@ onBeforeUnmount(() => {
         <n-button tertiary @click="closeRoomManagement">关闭</n-button>
       </div>
 
-      <div
-        v-if="props.isOwner && props.snapshot?.phase === 'waiting'"
-        class="room-management-controls"
-      >
-        <div class="room-management-control">
-          <span class="room-management-control-label">倒计时</span>
-          <n-input-number
-            size="small"
-            class="countdown-input"
-            :min="MIN_START_COUNTDOWN_SECONDS"
-            :max="MAX_START_COUNTDOWN_SECONDS"
-            :step="1"
-            :precision="0"
-            :disabled="isStartCountdownActive"
-            :value="props.startCountdownSeconds"
-            @update:value="handleStartCountdownSecondsInput"
-          />
-        </div>
-        <div v-if="supportsStartTime" class="room-management-control">
-          <span class="room-management-control-label">开始时间</span>
-          <n-select
-            v-if="usesStartTimePresets"
-            size="small"
-            class="countdown-input start-time-input"
-            :options="startTimePresetOptions"
-            :disabled="isStartCountdownActive"
-            :value="Math.round(props.startTimeSeconds * 1_000)"
-            @update:value="handleStartTimePresetChange"
-          />
-          <n-input-number
-            v-else
-            size="small"
-            class="countdown-input start-time-input"
-            :min="(props.startTimeOptions?.minMs ?? 0) / 1_000"
-            :max="(props.startTimeOptions?.maxMs ?? 0) / 1_000"
-            :step="START_TIME_STEP_SECONDS"
-            :precision="2"
-            :disabled="isStartCountdownActive"
-            :value="props.startTimeSeconds"
-            @update:value="handleStartTimeSecondsInput"
-          />
-        </div>
-        <div class="room-management-control">
-          <span class="room-management-control-label">死亡后参与机制</span>
-          <n-switch
-            size="small"
-            :value="deadActorsInteractEnabled"
-            :disabled="isStartCountdownActive"
-            @update:value="
-              emit('roomOptionsChange', {
-                deadActorsInteract: $event,
-              })
-            "
-          />
-        </div>
-      </div>
-
-      <div class="room-management-section">
-        <div class="room-management-section-title">场内成员</div>
-        <div class="room-member-list">
-          <div
-            v-for="slotState in props.room?.slots ?? []"
-            :key="slotState.slot"
-            class="room-member-row"
-          >
-            <div class="room-member-main">
-              <n-tag size="small" :bordered="false">{{ slotState.slot }}</n-tag>
-              <span class="room-member-name">{{ slotState.name ?? '等待加入' }}</span>
-              <n-tag
-                size="small"
-                :type="slotState.occupantType === 'bot' ? 'info' : 'default'"
-                :bordered="false"
-              >
-                {{ slotState.occupantType === 'bot' ? 'Bot' : '玩家' }}
-              </n-tag>
-              <n-tag
-                v-if="slotState.occupantType === 'player'"
-                class="online-tag"
-                :type="slotState.online ? 'success' : 'warning'"
-                size="small"
-                :bordered="false"
-              >
-                {{ getSlotOnlineText(slotState) }}
-              </n-tag>
-              <n-tag
-                v-if="slotState.ownerUserId === props.room?.ownerUserId"
-                class="owner-tag"
-                type="warning"
-                size="small"
-                :bordered="false"
-              >
-                房主
-              </n-tag>
-            </div>
-            <n-button
-              v-if="canKickSlot(slotState.slot)"
-              tertiary
-              strong
+      <div class="room-management-body">
+        <div
+          v-if="props.isOwner && props.snapshot?.phase === 'waiting'"
+          class="room-management-controls"
+        >
+          <div class="room-management-control">
+            <span class="room-management-control-label">倒计时</span>
+            <n-input-number
               size="small"
-              type="error"
-              @click="handleKickSlot(slotState.slot)"
-            >
-              移出
-            </n-button>
+              class="countdown-input"
+              :min="MIN_START_COUNTDOWN_SECONDS"
+              :max="MAX_START_COUNTDOWN_SECONDS"
+              :step="1"
+              :precision="0"
+              :disabled="isStartCountdownActive"
+              :value="props.startCountdownSeconds"
+              @update:value="handleStartCountdownSecondsInput"
+            />
+          </div>
+          <div v-if="supportsStartTime" class="room-management-control">
+            <span class="room-management-control-label">开始时间</span>
+            <n-select
+              v-if="usesStartTimePresets"
+              size="small"
+              class="countdown-input start-time-input"
+              :options="startTimePresetOptions"
+              :disabled="isStartCountdownActive"
+              :value="Math.round(props.startTimeSeconds * 1_000)"
+              @update:value="handleStartTimePresetChange"
+            />
+            <n-input-number
+              v-else
+              size="small"
+              class="countdown-input start-time-input"
+              :min="(props.startTimeOptions?.minMs ?? 0) / 1_000"
+              :max="(props.startTimeOptions?.maxMs ?? 0) / 1_000"
+              :step="START_TIME_STEP_SECONDS"
+              :precision="2"
+              :disabled="isStartCountdownActive"
+              :value="props.startTimeSeconds"
+              @update:value="handleStartTimeSecondsInput"
+            />
+          </div>
+          <div class="room-management-control">
+            <span class="room-management-control-label">死亡后参与机制</span>
+            <n-switch
+              size="small"
+              :value="deadActorsInteractEnabled"
+              :disabled="isStartCountdownActive"
+              @update:value="
+                emit('roomOptionsChange', {
+                  options: {
+                    deadActorsInteract: $event,
+                  },
+                })
+              "
+            />
+          </div>
+          <div
+            v-for="option in props.battleRoomOptions"
+            :key="option.key"
+            class="room-management-control room-mechanic-option-control"
+          >
+            <span class="room-management-control-label">{{ option.title }}</span>
+            <span class="room-management-control-description">{{ option.description }}</span>
+            <n-switch
+              size="small"
+              :value="getBattleRoomOptionValue(option)"
+              :disabled="isStartCountdownActive"
+              @update:value="
+                emit('roomOptionsChange', {
+                  mechanicOptions: {
+                    [option.key]: $event,
+                  },
+                })
+              "
+            />
           </div>
         </div>
-      </div>
 
-      <div class="room-management-section">
-        <div class="room-management-section-title">观战成员</div>
-        <div v-if="props.room?.spectators.length" class="room-member-list">
-          <div
-            v-for="spectator in props.room.spectators"
-            :key="spectator.userId"
-            class="room-member-row"
-          >
-            <div class="room-member-main">
-              <n-tag size="small" :bordered="false">观战</n-tag>
-              <span class="room-member-name">{{ spectator.name }}</span>
-              <n-tag
-                class="online-tag"
-                :type="spectator.online ? 'success' : 'warning'"
-                size="small"
-                :bordered="false"
-              >
-                {{ spectator.online ? '在线' : '离线' }}
-              </n-tag>
-              <n-tag
-                v-if="spectator.userId === props.room?.ownerUserId"
-                class="owner-tag"
-                type="warning"
-                size="small"
-                :bordered="false"
-              >
-                房主
-              </n-tag>
-            </div>
-            <n-button
-              v-if="canKickSpectator(spectator.userId)"
-              tertiary
-              strong
-              size="small"
-              type="error"
-              @click="handleKickSpectator(spectator.userId, spectator.name)"
+        <div class="room-management-section">
+          <div class="room-management-section-title">场内成员</div>
+          <div class="room-member-list">
+            <div
+              v-for="slotState in props.room?.slots ?? []"
+              :key="slotState.slot"
+              class="room-member-row"
             >
-              移出
-            </n-button>
+              <div class="room-member-main">
+                <n-tag size="small" :bordered="false">{{ slotState.slot }}</n-tag>
+                <span class="room-member-name">{{ slotState.name ?? '等待加入' }}</span>
+                <n-tag
+                  size="small"
+                  :type="slotState.occupantType === 'bot' ? 'info' : 'default'"
+                  :bordered="false"
+                >
+                  {{ slotState.occupantType === 'bot' ? 'Bot' : '玩家' }}
+                </n-tag>
+                <n-tag
+                  v-if="slotState.occupantType === 'player'"
+                  class="online-tag"
+                  :type="slotState.online ? 'success' : 'warning'"
+                  size="small"
+                  :bordered="false"
+                >
+                  {{ getSlotOnlineText(slotState) }}
+                </n-tag>
+                <n-tag
+                  v-if="slotState.ownerUserId === props.room?.ownerUserId"
+                  class="owner-tag"
+                  type="warning"
+                  size="small"
+                  :bordered="false"
+                >
+                  房主
+                </n-tag>
+              </div>
+              <n-button
+                v-if="canKickSlot(slotState.slot)"
+                tertiary
+                strong
+                size="small"
+                type="error"
+                @click="handleKickSlot(slotState.slot)"
+              >
+                移出
+              </n-button>
+            </div>
           </div>
         </div>
-        <n-empty v-else description="暂无观战成员。" />
+
+        <div class="room-management-section">
+          <div class="room-management-section-title">观战成员</div>
+          <div v-if="props.room?.spectators.length" class="room-member-list">
+            <div
+              v-for="spectator in props.room.spectators"
+              :key="spectator.userId"
+              class="room-member-row"
+            >
+              <div class="room-member-main">
+                <n-tag size="small" :bordered="false">观战</n-tag>
+                <span class="room-member-name">{{ spectator.name }}</span>
+                <n-tag
+                  class="online-tag"
+                  :type="spectator.online ? 'success' : 'warning'"
+                  size="small"
+                  :bordered="false"
+                >
+                  {{ spectator.online ? '在线' : '离线' }}
+                </n-tag>
+                <n-tag
+                  v-if="spectator.userId === props.room?.ownerUserId"
+                  class="owner-tag"
+                  type="warning"
+                  size="small"
+                  :bordered="false"
+                >
+                  房主
+                </n-tag>
+              </div>
+              <n-button
+                v-if="canKickSpectator(spectator.userId)"
+                tertiary
+                strong
+                size="small"
+                type="error"
+                @click="handleKickSpectator(spectator.userId, spectator.name)"
+              >
+                移出
+              </n-button>
+            </div>
+          </div>
+          <n-empty v-else description="暂无观战成员。" />
+        </div>
       </div>
     </div>
   </n-modal>
@@ -1425,23 +1493,38 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 
+.room-management-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.room-management-hint-tag.clickable {
+  cursor: pointer;
+}
+
 .room-management-modal {
+  display: flex;
+  flex-direction: column;
   width: min(760px, calc(100vw - 32px));
   max-height: min(720px, calc(100vh - 48px));
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   background: rgba(26, 22, 20, 0.98);
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.52);
-  padding: 18px;
 }
 
 .room-management-header {
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 18px 18px 14px;
 }
 
 .room-management-title {
@@ -1449,6 +1532,36 @@ onBeforeUnmount(() => {
   color: #f6efe4;
   font-size: 20px;
   font-weight: 700;
+}
+
+.room-management-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 18px;
+  scrollbar-color: rgba(201, 139, 90, 0.7) rgba(255, 255, 255, 0.05);
+  scrollbar-width: thin;
+}
+
+.room-management-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.room-management-body::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.room-management-body::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(26, 22, 20, 0.98);
+  border-radius: 999px;
+  background: rgba(201, 139, 90, 0.7);
+}
+
+.room-management-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(226, 164, 112, 0.9);
 }
 
 .room-management-controls {
@@ -1469,11 +1582,34 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.room-mechanic-option-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
 .room-management-control-label {
   flex: 0 0 auto;
   color: rgba(246, 239, 228, 0.72);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.room-mechanic-option-control .room-management-control-label {
+  white-space: normal;
+}
+
+.room-management-control-description {
+  grid-column: 1;
+  min-width: 0;
+  color: rgba(246, 239, 228, 0.52);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.room-mechanic-option-control .n-switch {
+  grid-column: 2;
+  grid-row: 1 / span 2;
 }
 
 .room-management-section {

@@ -56,6 +56,7 @@ function createSnapshot(overrides = {}) {
       targetRingRadius: 3,
     },
     mechanics: [],
+    stageActors: [],
     hud: {
       bossCastBar: null,
       bossCastBars: [],
@@ -147,6 +148,22 @@ test('protobuf 快照保留可选标量的默认值', () => {
         resolveAt: 0,
       },
     ],
+    stageActors: [
+      {
+        id: 'stage-actor-1',
+        label: '',
+        showLabel: false,
+        sourceId: 'boss-1',
+        stableId: '',
+        center: { x: 0, y: 0 },
+        shape: 'enemy',
+        radius: 0,
+        direction: 0,
+        targetRingRadius: 0,
+        targetRingColor: '',
+        resolveAt: 0,
+      },
+    ],
   });
 
   const decoded = decodeSimSnapshotPayload(
@@ -177,6 +194,11 @@ test('protobuf 快照保留可选标量的默认值', () => {
   assert.equal(decoded.mechanics[3].allowTransfer, false);
   assert.equal(decoded.mechanics[3].allowDeadRetarget, false);
   assert.equal(decoded.mechanics[3].preventTargetHoldingOtherTether, false);
+  assert.equal(decoded.stageActors[0].showLabel, false);
+  assert.equal(decoded.stageActors[0].stableId, '');
+  assert.equal(decoded.stageActors[0].direction, 0);
+  assert.equal(decoded.stageActors[0].targetRingRadius, 0);
+  assert.equal(decoded.stageActors[0].targetRingColor, '');
 });
 
 test('protobuf 快照不会为省略的可选字段补默认值', () => {
@@ -208,6 +230,17 @@ test('protobuf 快照不会为省略的可选字段补默认值', () => {
             resolveAt: 0,
           },
         ],
+        stageActors: [
+          {
+            id: 'stage-actor-1',
+            label: '舞台角色',
+            sourceId: 'boss-1',
+            center: { x: 0, y: 0 },
+            shape: 'enemy',
+            radius: 3,
+            resolveAt: 0,
+          },
+        ],
       }),
       reason: 'tick',
     }),
@@ -217,6 +250,8 @@ test('protobuf 快照不会为省略的可选字段补默认值', () => {
   assert.equal(Object.hasOwn(decoded.actors[0].statuses[0], 'multiplier'), false);
   assert.equal(Object.hasOwn(decoded.mechanics[0], 'filled'), false);
   assert.equal(Object.hasOwn(decoded.mechanics[0], 'color'), false);
+  assert.equal(Object.hasOwn(decoded.stageActors[0], 'showLabel'), false);
+  assert.equal(Object.hasOwn(decoded.stageActors[0], 'stableId'), false);
 });
 
 test('protobuf 事件保留嵌套机制和状态的默认值', () => {
@@ -258,6 +293,26 @@ test('protobuf 事件保留嵌套机制和状态的默认值', () => {
             },
           },
         },
+        {
+          eventId: 'event-3',
+          tick: 1,
+          timeMs: 1000,
+          type: 'stageActorUpdated',
+          payload: {
+            id: 'stage-actor-1',
+            label: '舞台角色',
+            showLabel: false,
+            sourceId: 'boss-1',
+            stableId: '',
+            center: { x: 0, y: 0 },
+            shape: 'enemy',
+            radius: 0,
+            direction: 0,
+            targetRingRadius: 0,
+            targetRingColor: '',
+            resolveAt: 0,
+          },
+        },
       ],
     }),
   );
@@ -265,4 +320,9 @@ test('protobuf 事件保留嵌套机制和状态的默认值', () => {
   assert.equal(decoded.events[0].payload.filled, false);
   assert.equal(decoded.events[0].payload.radius, 0);
   assert.equal(decoded.events[1].payload.status.multiplier, 0);
+  assert.equal(decoded.events[2].payload.showLabel, false);
+  assert.equal(decoded.events[2].payload.stableId, '');
+  assert.equal(decoded.events[2].payload.direction, 0);
+  assert.equal(decoded.events[2].payload.targetRingRadius, 0);
+  assert.equal(decoded.events[2].payload.targetRingColor, '');
 });

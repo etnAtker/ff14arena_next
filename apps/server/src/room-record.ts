@@ -4,6 +4,7 @@ import type {
   EncounterResult,
   PartySlot,
   RealtimeEncoding,
+  RoomMechanicOptions,
   RoomPhase,
   RoomRuleOptions,
 } from '@ff14arena/shared';
@@ -47,6 +48,7 @@ export interface RoomRecord {
   ownerUserId: string;
   ownerName: string;
   options: RoomRuleOptions;
+  mechanicOptions: RoomMechanicOptions;
   phase: RoomPhase;
   battleId: string | null;
   battle: BattleDefinition | null;

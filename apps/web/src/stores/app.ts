@@ -1056,7 +1056,10 @@ export const useAppStore = defineStore('app', () => {
     });
   }
 
-  async function updateRoomOptions(options: Partial<RoomStateDto['options']>): Promise<void> {
+  async function updateRoomOptions(payload: {
+    options?: Partial<RoomStateDto['options']>;
+    mechanicOptions?: Partial<RoomStateDto['mechanicOptions']>;
+  }): Promise<void> {
     if (room.value === null) {
       return;
     }
@@ -1064,7 +1067,7 @@ export const useAppStore = defineStore('app', () => {
     const currentSocket = socket.value ?? (await ensureSocket());
     currentSocket.emit('room:update-options', {
       roomId: room.value.roomId,
-      options,
+      ...payload,
     });
   }
 
@@ -1446,6 +1449,17 @@ export const useAppStore = defineStore('app', () => {
           (mechanic) => mechanic.id !== event.payload.mechanicId,
         );
         appendLog(`机制结算：${event.payload.mechanicId}`);
+        break;
+      case 'stageActorUpdated':
+        authoritativeSnapshot.value.stageActors = authoritativeSnapshot.value.stageActors.filter(
+          (stageActor) => stageActor.id !== event.payload.id,
+        );
+        authoritativeSnapshot.value.stageActors.push(event.payload);
+        break;
+      case 'stageActorRemoved':
+        authoritativeSnapshot.value.stageActors = authoritativeSnapshot.value.stageActors.filter(
+          (stageActor) => stageActor.id !== event.payload.stageActorId,
+        );
         break;
       case 'tetherTransferred': {
         const mechanic = authoritativeSnapshot.value.mechanics.find(

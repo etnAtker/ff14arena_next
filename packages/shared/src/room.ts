@@ -5,6 +5,8 @@ export interface RoomRuleOptions {
   deadActorsInteract: boolean;
 }
 
+export type RoomMechanicOptions = Record<string, boolean>;
+
 export interface RoomSlotState {
   slot: PartySlot;
   occupantType: 'empty' | 'player' | 'bot';
@@ -42,6 +44,7 @@ export interface RoomStateDto {
   spectators: RoomSpectatorState[];
   startCountdown: RoomStartCountdownState | null;
   options: RoomRuleOptions;
+  mechanicOptions: RoomMechanicOptions;
   latestResult: EncounterResult | null;
 }
 

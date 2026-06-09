@@ -7,6 +7,7 @@ import type {
   ContinuousSimulationInputFrame,
   PartySlot,
   RealtimeBinaryPayload,
+  RoomMechanicOptions,
   RoomKickPayload,
   RoomJoinPayload,
   RoomStartPayload,
@@ -58,6 +59,26 @@ const SNAPSHOT_BROADCAST_INTERVAL_TICKS = 20;
 const DEFAULT_ROOM_OPTIONS = {
   deadActorsInteract: true,
 };
+
+function createDefaultMechanicOptions(
+  battle: NonNullable<ReturnType<typeof getBattleDefinition>> | null,
+): RoomMechanicOptions {
+  return Object.fromEntries(
+    (battle?.roomOptions ?? [])
+      .filter((option) => option.type === 'boolean')
+      .map((option) => [option.key, option.defaultValue]),
+  );
+}
+
+function getBooleanMechanicOptionKeys(
+  battle: NonNullable<ReturnType<typeof getBattleDefinition>> | null,
+): Set<string> {
+  return new Set(
+    (battle?.roomOptions ?? [])
+      .filter((option) => option.type === 'boolean')
+      .map((option) => option.key),
+  );
+}
 
 function isRealtimeBinaryPayload(
   payload: ContinuousSimulationInputFrame | RealtimeBinaryPayload,
@@ -184,6 +205,7 @@ export class RoomManager {
       ownerUserId: pendingRoom.ownerUserId,
       ownerName: pendingRoom.ownerName,
       options: { ...DEFAULT_ROOM_OPTIONS },
+      mechanicOptions: createDefaultMechanicOptions(pendingRoom.battle),
       phase: 'waiting',
       battleId: pendingRoom.battleId,
       battle: pendingRoom.battle,
@@ -244,6 +266,7 @@ export class RoomManager {
       battle: room.battle,
       roomId: room.roomId,
       party: buildPartyBlueprint(room),
+      roomOptions: room.mechanicOptions,
       sourceSnapshot,
       latestResult: room.latestResult,
       ...(options?.keepTimeMs === undefined ? {} : { keepTimeMs: options.keepTimeMs }),
@@ -721,6 +744,7 @@ export class RoomManager {
 
     room.battleId = battle.id;
     room.battle = battle;
+    room.mechanicOptions = createDefaultMechanicOptions(battle);
     room.latestResult = null;
     room.syncId += 1;
     this.resetPoseSyncState(room);
@@ -936,16 +960,43 @@ export class RoomManager {
 
     const nextOptions = {
       ...room.options,
-      ...(payload.options.deadActorsInteract === undefined
+      ...(payload.options?.deadActorsInteract === undefined
         ? {}
         : { deadActorsInteract: payload.options.deadActorsInteract }),
     };
+    const nextMechanicOptions = {
+      ...room.mechanicOptions,
+    };
+    const mechanicOptionUpdates = Object.entries(payload.mechanicOptions ?? {});
+    const allowedMechanicOptionKeys = getBooleanMechanicOptionKeys(room.battle);
 
-    if (nextOptions.deadActorsInteract === room.options.deadActorsInteract) {
+    for (const [key, value] of mechanicOptionUpdates) {
+      if (!allowedMechanicOptionKeys.has(key)) {
+        this.emitError(socket, 'invalid_room_option', '当前战斗不存在该机制选项');
+        return;
+      }
+
+      if (typeof value !== 'boolean') {
+        this.emitError(socket, 'invalid_room_option', '机制选项值必须是布尔值');
+        return;
+      }
+
+      nextMechanicOptions[key] = value;
+    }
+
+    const optionsUnchanged = nextOptions.deadActorsInteract === room.options.deadActorsInteract;
+    const mechanicOptionsUnchanged =
+      Object.keys(nextMechanicOptions).length === Object.keys(room.mechanicOptions).length &&
+      Object.entries(nextMechanicOptions).every(
+        ([key, value]) => room.mechanicOptions[key] === value,
+      );
+
+    if (optionsUnchanged && mechanicOptionsUnchanged) {
       return;
     }
 
     room.options = nextOptions;
+    room.mechanicOptions = nextMechanicOptions;
     this.rebuildWaitingSimulation(room, {
       sourceSnapshot: room.simulation?.getSnapshot() ?? null,
       keepTimeMs: true,
@@ -1330,6 +1381,7 @@ export class RoomManager {
       battle: room.battle!,
       roomId: room.roomId,
       party: buildPartyBlueprint(room),
+      roomOptions: room.mechanicOptions,
       sourceSnapshot,
       resetAllActors: true,
       preserveActorPose: true,

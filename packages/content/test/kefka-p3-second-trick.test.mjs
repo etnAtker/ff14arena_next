@@ -78,6 +78,9 @@ function createSeededRandomValues(seed, count) {
 function createKefkaP3SecondSimulation(options = {}) {
   const battle = getBattleDefinition('kefka_p3_second_trick');
   assert.ok(battle);
+  const roomOptions = options.roomOptions ?? {
+    kefkaP3MtPullsExdeath: true,
+  };
 
   const simulation = createSimulation();
   simulation.loadBattle({
@@ -90,6 +93,7 @@ function createKefkaP3SecondSimulation(options = {}) {
       actorId: `player_${slot}`,
     })),
     ...(options.startTimeMs === undefined ? {} : { startTimeMs: options.startTimeMs }),
+    roomOptions,
   });
   simulation.start();
 
@@ -489,9 +493,7 @@ test('诅咒敕令读条开始时随机锁定玩家方向', () => {
       assert.ok(locked);
       assert.equal(locked.targetId, d4.id);
       assertCloseAngle(locked.direction, getFacing(locked.center, { x: 12, y: 0 }));
-      const chaosMarker = snapshot.mechanics.find(
-        (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '卡奥斯',
-      );
+      const chaosMarker = snapshot.stageActors.find((mechanic) => mechanic.label === '卡奥斯');
       assert.ok(chaosMarker);
       assertCloseAngle(chaosMarker.direction, locked.direction);
     },
@@ -509,9 +511,7 @@ test('暴雷锁定最近目标时艾克斯迪斯会转向目标', () => {
     const targetId = snapshot.scriptState[`kefkaP3Second:thunder:${firstThunderResolveAt}`];
     assert.ok(targetId);
     const target = getActorById(snapshot, targetId);
-    const exdeathMarker = snapshot.mechanics.find(
-      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '艾克斯迪斯',
-    );
+    const exdeathMarker = snapshot.stageActors.find((mechanic) => mechanic.label === '艾克斯迪斯');
 
     assert.ok(exdeathMarker);
     assertCloseAngle(exdeathMarker.direction, getFacing(exdeathMarker.center, target.position));
@@ -525,20 +525,12 @@ test('小Boss读条锁定期间仍保留场地标记', () => {
     advanceTo(simulation, ZERO_AT + 32_500);
 
     const thunderSnapshot = simulation.getSnapshot();
-    assert.ok(
-      thunderSnapshot.mechanics.some(
-        (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '艾克斯迪斯',
-      ),
-    );
+    assert.ok(thunderSnapshot.stageActors.some((mechanic) => mechanic.label === '艾克斯迪斯'));
 
     advanceTo(simulation, ZERO_AT + 41_500);
 
     const curseSnapshot = simulation.getSnapshot();
-    assert.ok(
-      curseSnapshot.mechanics.some(
-        (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '卡奥斯',
-      ),
-    );
+    assert.ok(curseSnapshot.stageActors.some((mechanic) => mechanic.label === '卡奥斯'));
   });
 });
 
@@ -549,11 +541,11 @@ test('小Boss重定位复用稳定场地标记', () => {
     advanceTo(simulation, 50);
 
     const initialSnapshot = simulation.getSnapshot();
-    const initialChaos = initialSnapshot.mechanics.find(
-      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '卡奥斯',
+    const initialChaos = initialSnapshot.stageActors.find(
+      (mechanic) => mechanic.label === '卡奥斯',
     );
-    const initialExdeath = initialSnapshot.mechanics.find(
-      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '艾克斯迪斯',
+    const initialExdeath = initialSnapshot.stageActors.find(
+      (mechanic) => mechanic.label === '艾克斯迪斯',
     );
     assert.ok(initialChaos);
     assert.ok(initialExdeath);
@@ -561,17 +553,45 @@ test('小Boss重定位复用稳定场地标记', () => {
     advanceTo(simulation, 2_050);
 
     const movedSnapshot = simulation.getSnapshot();
-    const chaosMarkers = movedSnapshot.mechanics.filter(
-      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '卡奥斯',
+    const chaosMarkers = movedSnapshot.stageActors.filter(
+      (mechanic) => mechanic.label === '卡奥斯',
     );
-    const exdeathMarkers = movedSnapshot.mechanics.filter(
-      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '艾克斯迪斯',
+    const exdeathMarkers = movedSnapshot.stageActors.filter(
+      (mechanic) => mechanic.label === '艾克斯迪斯',
     );
 
     assert.equal(chaosMarkers.length, 1);
     assert.equal(exdeathMarkers.length, 1);
     assert.equal(chaosMarkers[0].id, initialChaos.id);
     assert.equal(exdeathMarkers[0].id, initialExdeath.id);
+  });
+});
+
+test('凯夫卡P3二运：关闭MT拉艾克斯迪斯后小Boss追踪目标互换', () => {
+  withMockedRandom(createSeededRandomValues(56, 128), () => {
+    const simulation = createKefkaP3SecondSimulation({
+      roomOptions: {
+        kefkaP3MtPullsExdeath: false,
+      },
+    });
+    let snapshot = simulation.getSnapshot();
+    const mt = getActorBySlot(snapshot, 'MT');
+    const st = getActorBySlot(snapshot, 'ST');
+    const mtPosition = { x: 12, y: 0 };
+    const stPosition = { x: -12, y: 0 };
+    submitPose(simulation, mt, mtPosition);
+    submitPose(simulation, st, stPosition);
+
+    advanceTo(simulation, 2_050);
+
+    snapshot = simulation.getSnapshot();
+    const chaosMarker = snapshot.stageActors.find((mechanic) => mechanic.label === '卡奥斯');
+    const exdeathMarker = snapshot.stageActors.find((mechanic) => mechanic.label === '艾克斯迪斯');
+
+    assert.ok(chaosMarker);
+    assert.ok(exdeathMarker);
+    assertClosePoint(chaosMarker.center, { x: 6, y: 0 });
+    assertClosePoint(exdeathMarker.center, { x: -8, y: 0 });
   });
 });
 
@@ -750,9 +770,7 @@ test('107.6秒卡奥斯随机释放经度聚爆或纬度聚爆', () => {
     assert.ok(explosionState);
     assert.ok(['longitude', 'latitude'].includes(explosionState.mode));
     assert.ok(snapshot.hud.bossCastBars.some((cast) => cast.actionName.endsWith('聚爆')));
-    const chaosMarker = snapshot.mechanics.find(
-      (mechanic) => mechanic.kind === 'fieldMarker' && mechanic.label === '卡奥斯',
-    );
+    const chaosMarker = snapshot.stageActors.find((mechanic) => mechanic.label === '卡奥斯');
     assert.ok(chaosMarker);
     assertCloseAngle(chaosMarker.direction, explosionState.facing);
 

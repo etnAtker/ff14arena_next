@@ -196,6 +196,16 @@ const CHAOS_EARTH_STATUS_ID = 'kefka_p3_second_chaos_earth';
 const VOID_EROSION_1_STATUS_ID = 'kefka_p3_second_void_erosion_1';
 const VOID_EROSION_2_STATUS_ID = 'kefka_p3_second_void_erosion_2';
 const VOID_CORROSION_STATUS_ID = 'kefka_p3_second_void_corrosion';
+const KEFKA_P3_MT_PULLS_EXDEATH_OPTION_KEY = 'kefkaP3MtPullsExdeath';
+const KEFKA_P3_ROOM_OPTIONS = [
+  {
+    key: KEFKA_P3_MT_PULLS_EXDEATH_OPTION_KEY,
+    type: 'boolean',
+    title: 'MT拉艾克斯迪斯',
+    description: '开启时艾克斯迪斯追踪 MT、卡奥斯追踪 ST；关闭时两者目标互换。',
+    defaultValue: false,
+  },
+] as const satisfies NonNullable<BattleDefinition['roomOptions']>;
 
 const TANK_SLOTS = ['MT', 'ST'] as const satisfies readonly PartySlot[];
 const HEALER_SLOTS = ['H1', 'H2'] as const satisfies readonly PartySlot[];
@@ -705,7 +715,7 @@ function spawnChaosMarker(
   resolveAfterMs: number,
   direction = getWanderingBossState(ctx).chaosFacing,
 ): void {
-  ctx.spawn.fieldMarker({
+  ctx.spawn.stageActor({
     label: '卡奥斯',
     center,
     shape: 'enemy',
@@ -724,7 +734,7 @@ function spawnExdeathMarker(
   resolveAfterMs: number,
   direction = getWanderingBossState(ctx).exdeathFacing,
 ): void {
-  ctx.spawn.fieldMarker({
+  ctx.spawn.stageActor({
     label: '艾克斯迪斯',
     center,
     shape: 'enemy',
@@ -738,13 +748,25 @@ function spawnExdeathMarker(
   });
 }
 
+function doesMtPullExdeath(ctx: BattleScriptContext): boolean {
+  return ctx.roomOptions.boolean(KEFKA_P3_MT_PULLS_EXDEATH_OPTION_KEY);
+}
+
+function getExdeathFollowSlot(ctx: BattleScriptContext): PartySlot {
+  return doesMtPullExdeath(ctx) ? 'MT' : 'ST';
+}
+
+function getChaosFollowSlot(ctx: BattleScriptContext): PartySlot {
+  return doesMtPullExdeath(ctx) ? 'ST' : 'MT';
+}
+
 function repositionWanderingBosses(ctx: BattleScriptContext): void {
   const state = getWanderingBossState(ctx);
   const battleTime = ctx.state.getBattleTime();
   let nextState = state;
 
   if (battleTime >= state.chaosLockedUntil) {
-    const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+    const st = getActorBySlot(ctx.select.allPlayers(), getChaosFollowSlot(ctx));
     const chaosCenter = calculateFollowerCenter(
       state.chaosCenter,
       st.position,
@@ -763,7 +785,7 @@ function repositionWanderingBosses(ctx: BattleScriptContext): void {
   }
 
   if (battleTime >= state.exdeathLockedUntil) {
-    const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+    const mt = getActorBySlot(ctx.select.allPlayers(), getExdeathFollowSlot(ctx));
     const exdeathCenter = calculateFollowerCenter(
       state.exdeathCenter,
       mt.position,
@@ -1560,7 +1582,7 @@ function scheduleChaosExplosion(
   const stateKey = `kefkaP3Second:chaosExplosion:${castStartAt}`;
 
   ctx.timeline.at(castStartAt, () => {
-    const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+    const st = getActorBySlot(ctx.select.allPlayers(), getChaosFollowSlot(ctx));
     const bossState = getWanderingBossState(ctx);
     const mode: ChaosExplosionMode = Math.random() < 0.5 ? 'longitude' : 'latitude';
     const center = { ...bossState.chaosCenter };
@@ -2296,8 +2318,8 @@ function initializeLateSplitBlackHolesAt(ctx: BattleScriptContext, startTimeMs: 
 }
 
 function initializeWanderingBossesAt(ctx: BattleScriptContext, startTimeMs: number): void {
-  const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
-  const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+  const st = getActorBySlot(ctx.select.allPlayers(), getChaosFollowSlot(ctx));
+  const mt = getActorBySlot(ctx.select.allPlayers(), getExdeathFollowSlot(ctx));
   const chaosCenter = calculateFollowerCenter(CENTER, st.position, CHAOS_TARGET_RING_RADIUS);
   const exdeathCenter = calculateFollowerCenter(CENTER, mt.position, EXDEATH_TARGET_RING_RADIUS);
   const chaosFacing =
@@ -2364,7 +2386,7 @@ function initializeChaosExplosionAt(ctx: BattleScriptContext, startTimeMs: numbe
     return;
   }
 
-  const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+  const st = getActorBySlot(ctx.select.allPlayers(), getChaosFollowSlot(ctx));
   const bossState = getWanderingBossState(ctx);
   const mode: ChaosExplosionMode = Math.random() < 0.5 ? 'longitude' : 'latitude';
   const center = { ...bossState.chaosCenter };
@@ -2644,6 +2666,7 @@ export const KEFKA_P3_SECOND_TRICK_BATTLE: BattleDefinition = {
   ) as BattleDefinition['initialPartyPositions'],
   mapMarkers: KEFKA_MAP_MARKERS,
   startTimeOptions: START_TIME_OPTIONS,
+  roomOptions: KEFKA_P3_ROOM_OPTIONS,
   buildScript: buildKefkaP3SecondScript,
   initializeAt: initializeKefkaP3SecondAt,
   failureTexts: {

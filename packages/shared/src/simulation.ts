@@ -258,6 +258,22 @@ export interface FieldMarkerMechanicSnapshot {
   resolveAt: number;
 }
 
+export interface StageActorSnapshot {
+  id: string;
+  label: string;
+  showLabel?: boolean;
+  sourceId: string;
+  stableId?: string;
+  center: Vector2;
+  shape: FieldMarkerShape;
+  radius: number;
+  direction?: number;
+  color?: string;
+  targetRingRadius?: number;
+  targetRingColor?: string;
+  resolveAt: number;
+}
+
 export type MechanicSnapshot =
   | CircleMechanicSnapshot
   | DonutMechanicSnapshot
@@ -291,6 +307,7 @@ export interface SimulationSnapshot {
   actors: BaseActorSnapshot[];
   boss: BossSnapshot;
   mechanics: MechanicSnapshot[];
+  stageActors: StageActorSnapshot[];
   hud: HudState;
   scriptState: Record<string, unknown>;
   failureMarked: boolean;

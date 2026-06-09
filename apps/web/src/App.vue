@@ -35,7 +35,7 @@ import {
 import { normalizeAngleDifference, rotateVector } from './utils/angle';
 import { loadOperationMode, saveOperationMode } from './utils/operation-mode';
 import type { OperationMode, SelectValue } from './utils/ui';
-import type { BattleStartTimeOptions } from '@ff14arena/shared';
+import type { BattleRoomOptionDefinition, BattleStartTimeOptions } from '@ff14arena/shared';
 
 const HomePage = defineAsyncComponent(() => import('./components/pages/HomePage.vue'));
 const BattlePage = defineAsyncComponent(() => import('./components/pages/BattlePage.vue'));
@@ -154,6 +154,12 @@ const startTimeOptions = computed<BattleStartTimeOptions | null>(
     battleStaticData.value?.startTimeOptions ??
     battles.value.find((battle) => battle.id === room.value?.battleId)?.startTimeOptions ??
     null,
+);
+const battleRoomOptions = computed<BattleRoomOptionDefinition[]>(
+  () =>
+    battleStaticData.value?.roomOptions ??
+    battles.value.find((battle) => battle.id === room.value?.battleId)?.roomOptions ??
+    [],
 );
 const roomPhaseLabel = computed(() => {
   if (snapshot.value === null) {
@@ -649,6 +655,7 @@ onBeforeUnmount(() => {
             :start-countdown-seconds="startCountdownSeconds"
             :start-time-seconds="startTimeSeconds"
             :start-time-options="startTimeOptions"
+            :battle-room-options="battleRoomOptions"
             :server-countdown-seconds="serverCountdownSeconds"
             :battle-start-notice-until-ms="battleStartNoticeUntilMs"
             :logs="logs"

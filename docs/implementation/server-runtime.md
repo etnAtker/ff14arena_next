@@ -44,7 +44,7 @@
 该变量未设置或为空字符串时，创建和加入房间不要求密码；该变量非空时，`POST /rooms` 和 Socket `room:join` 都必须携带匹配密码。
 密码校验覆盖创建房间、普通加入、加入观战和断线重连。
 
-`GET /battles/:battleId/static` 返回战斗静态数据，包括地图标点、初始站位和该战斗可展示的状态元数据。状态元数据包含 XIVAPI 名称、描述、图标路径、前端图标 URL、兜底文字和 `PartyListPriority`。
+`GET /battles/:battleId/static` 返回战斗静态数据，包括地图标点、初始站位、战斗声明的机制房间选项和该战斗可展示的状态元数据。状态元数据包含 XIVAPI 名称、描述、图标路径、前端图标 URL、兜底文字和 `PartyListPriority`。
 
 `POST /rooms` 当前只创建建房申请，不立即实例化真实房间。
 响应返回 `roomId` 和 `expiresAt`。
@@ -89,6 +89,9 @@
 房间包含规则选项 `deadActorsInteract`，默认开启。  
 该选项开启时，角色死亡后 `alive=false` 但 `mechanicActive=true`，仍可移动、使用通用主动能力、被机制选中、处理踩塔/连线/范围和接受击退；客户端仅按死亡状态半透明显示角色。  
 房主可以在 `waiting` 且未开始倒计时时修改该选项；运行中和倒计时期间不允许修改。
+
+战斗内容可以通过 `BattleDefinition.roomOptions` 声明机制房间选项。当前只支持 `boolean` 类型，每项包含 `key`、`title`、`description` 和 `defaultValue`。服务端在创建或切换战斗时按当前战斗声明初始化 `mechanicOptions`，并只允许房主在 `waiting` 且未开始倒计时时修改当前战斗声明过的机制选项；未知 key 或非布尔值会返回 `invalid_room_option`。  
+机制选项会随 `RoomStateDto.mechanicOptions` 下发给客户端，并在加载战斗时传入 `packages/core` 的脚本上下文，由 `packages/content` 中的具体战斗脚本读取。
 
 ## 4. 实时同步
 

@@ -48,6 +48,7 @@ export const battleCatalog: BattleSummary[] = battleDefinitions.map((battle) => 
   id: battle.id,
   name: battle.name,
   ...(battle.startTimeOptions === undefined ? {} : { startTimeOptions: battle.startTimeOptions }),
+  ...(battle.roomOptions === undefined ? {} : { roomOptions: battle.roomOptions }),
 }));
 
 export const battleStaticCatalog: BattleStaticData[] = battleDefinitions.map((battle) => ({
@@ -61,6 +62,7 @@ export const battleStaticCatalog: BattleStaticData[] = battleDefinitions.map((ba
   statusMetadata: getBattleStatusMetadata(battle.id),
   defaultPlayerMaxHp: DEFAULT_PLAYER_MAX_HP,
   ...(battle.startTimeOptions === undefined ? {} : { startTimeOptions: battle.startTimeOptions }),
+  ...(battle.roomOptions === undefined ? {} : { roomOptions: battle.roomOptions }),
   initialPartyPositions: battle.initialPartyPositions,
 }));
 

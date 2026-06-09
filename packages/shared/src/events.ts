@@ -1,4 +1,9 @@
-import type { EncounterOutcome, MechanicSnapshot, StatusSnapshot } from './simulation';
+import type {
+  EncounterOutcome,
+  MechanicSnapshot,
+  StageActorSnapshot,
+  StatusSnapshot,
+} from './simulation';
 import type { Vector2 } from './base';
 
 export interface BaseSimulationEvent<TType extends string, TPayload> {
@@ -51,6 +56,13 @@ export type AoeResolvedEvent = BaseSimulationEvent<
   'aoeResolved',
   {
     mechanicId: string;
+  }
+>;
+export type StageActorUpdatedEvent = BaseSimulationEvent<'stageActorUpdated', StageActorSnapshot>;
+export type StageActorRemovedEvent = BaseSimulationEvent<
+  'stageActorRemoved',
+  {
+    stageActorId: string;
   }
 >;
 
@@ -116,6 +128,8 @@ export type SimulationEvent =
   | BossCastResolvedEvent
   | AoeSpawnedEvent
   | AoeResolvedEvent
+  | StageActorUpdatedEvent
+  | StageActorRemovedEvent
   | TetherTransferredEvent
   | DamageAppliedEvent
   | StatusAppliedEvent

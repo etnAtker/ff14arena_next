@@ -5,10 +5,12 @@ import type {
   ActorMarkerMechanicSnapshot,
   ActorMarkerShape,
   BattleArenaBackground,
+  FieldMarkerMechanicSnapshot,
   FieldMarkerShape,
   MapMarker,
   RingIndicatorMechanicSnapshot,
   SimulationSnapshot,
+  StageActorSnapshot,
   Vector2,
 } from '@ff14arena/shared';
 import { getFacingForCameraYaw } from './camera';
@@ -60,6 +62,10 @@ interface RenderActorState {
   targetPosition: Vector2;
   targetFacing: number;
 }
+
+type EnemyFieldMarker = FieldMarkerMechanicSnapshot & { shape: 'enemy' };
+type EnemyStageActor = StageActorSnapshot & { shape: 'enemy' };
+type EnemyStageMarker = EnemyFieldMarker | EnemyStageActor;
 
 let app: Application | null = null;
 let dragButton: 0 | 2 | null = null;
@@ -393,19 +399,16 @@ function syncFieldMarkerTextLabels(snapshot: SimulationSnapshot): void {
     return;
   }
 
-  const fieldMarkerMechanics = snapshot.mechanics.filter(
-    (mechanic) =>
-      mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy' && mechanic.showLabel !== false,
-  );
-  const activeFieldMarkerIds = new Set(fieldMarkerMechanics.map((mechanic) => mechanic.id));
+  const enemyMarkers = getEnemyStageMarkers(snapshot);
+  const activeFieldMarkerIds = new Set(enemyMarkers.map((mechanic) => mechanic.id));
 
-  for (const mechanic of fieldMarkerMechanics) {
+  for (const mechanic of enemyMarkers) {
     if (fieldMarkerTextLabels.has(mechanic.id)) {
       continue;
     }
 
     const label = new Text({
-      text: getEnemyFieldMarkerStageText(mechanic.label, fieldMarkerMechanics),
+      text: getEnemyFieldMarkerStageText(mechanic.label, enemyMarkers),
       style: new TextStyle({
         fill: '#f8fafc',
         fontSize: 12,
@@ -501,6 +504,19 @@ function getEnemyFieldMarkerStageText(
     }).length > 1;
 
   return duplicateFirstChar ? chars.slice(0, 2).join('') || '?' : firstChar;
+}
+
+function getEnemyStageMarkers(snapshot: SimulationSnapshot): EnemyStageMarker[] {
+  const fieldMarkers = snapshot.mechanics.filter(
+    (mechanic): mechanic is EnemyFieldMarker =>
+      mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy' && mechanic.showLabel !== false,
+  );
+  const stageActors = snapshot.stageActors.filter(
+    (stageActor): stageActor is EnemyStageActor =>
+      stageActor.shape === 'enemy' && stageActor.showLabel !== false,
+  );
+
+  return [...fieldMarkers, ...stageActors];
 }
 
 function hideLabels(): void {
@@ -1177,10 +1193,7 @@ function draw(now: number): void {
   syncActorMarkerTextLabels(props.snapshot);
   syncFieldMarkerTextLabels(props.snapshot);
   syncRingIndicatorQuestionLabels(props.snapshot);
-  const activeEnemyFieldMarkers = props.snapshot.mechanics.filter(
-    (mechanic) =>
-      mechanic.kind === 'fieldMarker' && mechanic.shape === 'enemy' && mechanic.showLabel !== false,
-  );
+  const activeEnemyStageMarkers = getEnemyStageMarkers(props.snapshot);
   const hasArenaBackground = updateArenaBackground(width, height, arenaRadius, scale);
 
   if (!hasArenaBackground) {
@@ -1202,6 +1215,36 @@ function draw(now: number): void {
 
   for (const marker of props.snapshot.mapMarkers) {
     drawMapMarker(graphics, marker, width, height, arenaRadius, scale);
+  }
+
+  for (const stageActor of props.snapshot.stageActors) {
+    const point = toStagePoint(stageActor.center, width, height, arenaRadius);
+    drawFieldMarker(
+      graphics,
+      stageActor.center,
+      stageActor.shape,
+      stageActor.radius,
+      stageActor.direction,
+      stageActor.color,
+      stageActor.targetRingRadius,
+      stageActor.targetRingColor,
+      width,
+      height,
+      arenaRadius,
+      scale,
+    );
+
+    if (stageActor.shape === 'enemy') {
+      const label = fieldMarkerTextLabels.get(stageActor.id);
+
+      if (label !== undefined) {
+        label.visible = true;
+        label.text = getEnemyFieldMarkerStageText(stageActor.label, activeEnemyStageMarkers);
+        label.x = point.x;
+        label.y = point.y;
+        label.alpha = 0.98;
+      }
+    }
   }
 
   for (const mechanic of props.snapshot.mechanics) {
@@ -1314,7 +1357,7 @@ function draw(now: number): void {
 
         if (label !== undefined) {
           label.visible = true;
-          label.text = getEnemyFieldMarkerStageText(mechanic.label, activeEnemyFieldMarkers);
+          label.text = getEnemyFieldMarkerStageText(mechanic.label, activeEnemyStageMarkers);
           label.x = point.x;
           label.y = point.y;
           label.alpha = 0.98;

@@ -17,6 +17,7 @@ import type {
   MoveState,
   RingIndicatorRingSnapshot,
   SimulationSnapshot,
+  StageActorSnapshot,
   StatusSnapshot,
 } from './simulation';
 
@@ -184,6 +185,29 @@ const root = protobuf.Root.fromJSON({
             preventTargetHoldingOtherTetherPresent: { type: 'bool', id: 59 },
           },
         },
+        StageActorSnapshot: {
+          fields: {
+            id: { type: 'string', id: 1 },
+            label: { type: 'string', id: 2 },
+            showLabel: { type: 'bool', id: 3 },
+            sourceId: { type: 'string', id: 4 },
+            stableId: { type: 'string', id: 5 },
+            center: { type: 'Vector2', id: 6 },
+            shape: { type: 'string', id: 7 },
+            radius: { type: 'double', id: 8 },
+            direction: { type: 'double', id: 9 },
+            color: { type: 'string', id: 10 },
+            targetRingRadius: { type: 'double', id: 11 },
+            targetRingColor: { type: 'string', id: 12 },
+            resolveAt: { type: 'double', id: 13 },
+            showLabelPresent: { type: 'bool', id: 14 },
+            stableIdPresent: { type: 'bool', id: 15 },
+            directionPresent: { type: 'bool', id: 16 },
+            colorPresent: { type: 'bool', id: 17 },
+            targetRingRadiusPresent: { type: 'bool', id: 18 },
+            targetRingColorPresent: { type: 'bool', id: 19 },
+          },
+        },
         EncounterResult: {
           fields: {
             outcome: { type: 'string', id: 1 },
@@ -208,6 +232,7 @@ const root = protobuf.Root.fromJSON({
             failureMarked: { type: 'bool', id: 14 },
             failureReasons: { rule: 'repeated', type: 'string', id: 15 },
             latestResult: { type: 'EncounterResult', id: 16 },
+            stageActors: { rule: 'repeated', type: 'StageActorSnapshot', id: 17 },
           },
         },
         SimStartPayload: {
@@ -256,6 +281,8 @@ const root = protobuf.Root.fromJSON({
             addedReason: { type: 'string', id: 27 },
             failureReasons: { rule: 'repeated', type: 'string', id: 28 },
             outcome: { type: 'string', id: 29 },
+            stageActor: { type: 'StageActorSnapshot', id: 30 },
+            stageActorId: { type: 'string', id: 31 },
           },
         },
         SimEventsPayload: {
@@ -320,6 +347,14 @@ const mechanicOptionalScalarKeys = [
   'allowTransfer',
   'allowDeadRetarget',
   'preventTargetHoldingOtherTether',
+] as const;
+const stageActorOptionalScalarKeys = [
+  'showLabel',
+  'stableId',
+  'direction',
+  'color',
+  'targetRingRadius',
+  'targetRingColor',
 ] as const;
 
 function encode(type: protobuf.Type, value: unknown): Uint8Array {
@@ -562,6 +597,28 @@ function mechanicValue(value: unknown): MechanicSnapshot {
   return mechanic as unknown as MechanicSnapshot;
 }
 
+function stageActorValue(value: unknown): StageActorSnapshot {
+  const record = (value ?? {}) as ProtoRecord;
+  const stageActor: ProtoRecord = {
+    id: String(record.id ?? ''),
+    label: String(record.label ?? ''),
+    sourceId: String(record.sourceId ?? ''),
+    center: vectorValue(record.center),
+    shape: String(record.shape ?? 'enemy'),
+    radius: numberValue(record.radius),
+    resolveAt: numberValue(record.resolveAt),
+  };
+
+  copyOptionalBoolean(record, stageActor, 'showLabel');
+  copyOptionalString(record, stageActor, 'stableId');
+  copyOptionalNumber(record, stageActor, 'direction');
+  copyOptionalString(record, stageActor, 'color');
+  copyOptionalNumber(record, stageActor, 'targetRingRadius');
+  copyOptionalString(record, stageActor, 'targetRingColor');
+
+  return stageActor as unknown as StageActorSnapshot;
+}
+
 function encounterResultValue(value: unknown): EncounterResult {
   const record = (value ?? {}) as ProtoRecord;
   return {
@@ -589,6 +646,7 @@ function snapshotValue(value: unknown): SimulationSnapshot {
     actors: arrayValue(record.actors).map(actorValue),
     boss: bossValue(record.boss),
     mechanics: arrayValue(record.mechanics).map(mechanicValue),
+    stageActors: arrayValue(record.stageActors).map(stageActorValue),
     hud: hudValue(record.hud),
     scriptState: {},
     failureMarked: booleanValue(record.failureMarked),
@@ -644,6 +702,16 @@ function eventToProto(event: SimulationEvent): ProtoRecord {
       return {
         ...proto,
         mechanicId: event.payload.mechanicId,
+      };
+    case 'stageActorUpdated':
+      return {
+        ...proto,
+        stageActor: stageActorToProto(event.payload),
+      };
+    case 'stageActorRemoved':
+      return {
+        ...proto,
+        stageActorId: event.payload.stageActorId,
       };
     case 'tetherTransferred':
       return {
@@ -754,6 +822,20 @@ function eventValue(value: unknown): SimulationEvent {
         type,
         payload: {
           mechanicId: String(record.mechanicId ?? ''),
+        },
+      };
+    case 'stageActorUpdated':
+      return {
+        ...base,
+        type,
+        payload: stageActorValue(record.stageActor),
+      };
+    case 'stageActorRemoved':
+      return {
+        ...base,
+        type,
+        payload: {
+          stageActorId: String(record.stageActorId ?? ''),
         },
       };
     case 'tetherTransferred':
@@ -894,6 +976,10 @@ function mechanicToProto(mechanic: MechanicSnapshot): ProtoRecord {
   return withPresenceFields({ ...mechanic }, mechanicOptionalScalarKeys);
 }
 
+function stageActorToProto(stageActor: StageActorSnapshot): ProtoRecord {
+  return withPresenceFields({ ...stageActor }, stageActorOptionalScalarKeys);
+}
+
 function snapshotToProto(snapshot: SimulationSnapshot): ProtoRecord {
   return {
     ...snapshot,
@@ -901,6 +987,7 @@ function snapshotToProto(snapshot: SimulationSnapshot): ProtoRecord {
     actors: snapshot.actors.map(actorToProto),
     boss: bossToProto(snapshot.boss),
     mechanics: snapshot.mechanics.map(mechanicToProto),
+    stageActors: (snapshot.stageActors ?? []).map(stageActorToProto),
     hud: {
       bossCastBar: snapshot.hud.bossCastBar ?? undefined,
       bossCastBars: snapshot.hud.bossCastBars,

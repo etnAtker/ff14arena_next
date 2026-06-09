@@ -14,10 +14,21 @@ export interface BattleStartTimePreset {
   timeMs: number;
 }
 
+export interface BooleanBattleRoomOptionDefinition {
+  key: string;
+  type: 'boolean';
+  title: string;
+  description: string;
+  defaultValue: boolean;
+}
+
+export type BattleRoomOptionDefinition = BooleanBattleRoomOptionDefinition;
+
 export interface BattleSummary {
   id: string;
   name: string;
   startTimeOptions?: BattleStartTimeOptions;
+  roomOptions?: BattleRoomOptionDefinition[];
 }
 
 export interface StatusMetadata {
@@ -51,6 +62,7 @@ export interface BattleStaticData {
   statusMetadata: StatusMetadata[];
   defaultPlayerMaxHp: number;
   startTimeOptions?: BattleStartTimeOptions;
+  roomOptions?: BattleRoomOptionDefinition[];
   initialPartyPositions: Record<
     PartySlot,
     {

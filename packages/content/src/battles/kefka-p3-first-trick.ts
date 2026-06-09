@@ -101,6 +101,9 @@ const CHAOS_MARKER_SPAWN_AT = 3_000;
 const CHAOS_REPOSITION_START_AT = 4_000;
 const CHAOS_REPOSITION_END_AT = 41_000;
 const CHAOS_REPOSITION_INTERVAL_MS = 1_000;
+const EXDEATH_INITIAL_MARKER_SPAWN_AT = CHAOS_MARKER_SPAWN_AT;
+const EXDEATH_INITIAL_REPOSITION_START_AT = CHAOS_REPOSITION_START_AT;
+const EXDEATH_INITIAL_REPOSITION_END_AT = BURST_CAST_START_AT;
 const CHAOS_MARKER_RADIUS = 0.8;
 const CHAOS_MARKER_ST_OFFSET = 6;
 const CHAOS_MARKER_TARGET_RING_RADIUS = 6;
@@ -147,6 +150,16 @@ const CHAOS_FIRE_STATUS_ID = 'kefka_p3_chaos_fire';
 const CHAOS_WATER_STATUS_ID = 'kefka_p3_chaos_water';
 const CHAOS_WIND_STATUS_ID = 'kefka_p3_chaos_wind';
 const CHAOS_REVERSE_WIND_STATUS_ID = 'kefka_p3_chaos_reverse_wind';
+const KEFKA_P3_MT_PULLS_EXDEATH_OPTION_KEY = 'kefkaP3MtPullsExdeath';
+const KEFKA_P3_ROOM_OPTIONS = [
+  {
+    key: KEFKA_P3_MT_PULLS_EXDEATH_OPTION_KEY,
+    type: 'boolean',
+    title: 'MT拉艾克斯迪斯',
+    description: '开启时艾克斯迪斯追踪 MT、卡奥斯追踪 ST；关闭时两者目标互换。',
+    defaultValue: false,
+  },
+] as const satisfies NonNullable<BattleDefinition['roomOptions']>;
 const WIND_STATUS_IDS = [CHAOS_WIND_STATUS_ID, CHAOS_REVERSE_WIND_STATUS_ID] as const;
 const WATER_TELEGRAPH_COLOR = '#38bdf8';
 const WIND_TELEGRAPH_COLOR = '#22c55e';
@@ -533,6 +546,18 @@ function getChaosExplosionState(ctx: BattleScriptContext): ChaosExplosionState {
 
 function getPartySlotOrderIndex(actor: BaseActorSnapshot): number {
   return actor.slot === null ? Number.MAX_SAFE_INTEGER : PARTY_SLOT_ORDER.indexOf(actor.slot);
+}
+
+function doesMtPullExdeath(ctx: BattleScriptContext): boolean {
+  return ctx.roomOptions.boolean(KEFKA_P3_MT_PULLS_EXDEATH_OPTION_KEY);
+}
+
+function getExdeathFollowSlot(ctx: BattleScriptContext): PartySlot {
+  return doesMtPullExdeath(ctx) ? 'MT' : 'ST';
+}
+
+function getChaosFollowSlot(ctx: BattleScriptContext): PartySlot {
+  return doesMtPullExdeath(ctx) ? 'ST' : 'MT';
 }
 
 function getNearestAlivePlayerToPoint(
@@ -1083,7 +1108,7 @@ function spawnExdeathMarker(
   resolveAfterMs: number,
   direction = getBossState(ctx).exdeathFacing,
 ): void {
-  ctx.spawn.fieldMarker({
+  ctx.spawn.stageActor({
     label: '艾克斯德司',
     center,
     shape: 'enemy',
@@ -1098,7 +1123,7 @@ function spawnExdeathMarker(
 }
 
 function startBurstCast(ctx: BattleScriptContext): void {
-  const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+  const mt = getActorBySlot(ctx.select.allPlayers(), getExdeathFollowSlot(ctx));
   const burstCenter = calculateBurstCenter(mt.position);
   const facing =
     distance(burstCenter, mt.position) <= 0.0001
@@ -1128,7 +1153,7 @@ function resolveBurst(ctx: BattleScriptContext): void {
 }
 
 function startVacuumWaveCast(ctx: BattleScriptContext): void {
-  const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+  const mt = getActorBySlot(ctx.select.allPlayers(), getExdeathFollowSlot(ctx));
   const exdeathCenter = getBurstCenter(ctx);
   const vacuumWaveCenter = calculateVacuumWaveCenter(exdeathCenter, mt.position);
   const facing =
@@ -1142,7 +1167,7 @@ function startVacuumWaveCast(ctx: BattleScriptContext): void {
 }
 
 function repositionExdeathTowardMt(ctx: BattleScriptContext): void {
-  const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+  const mt = getActorBySlot(ctx.select.allPlayers(), getExdeathFollowSlot(ctx));
   const exdeathCenter = getBurstCenter(ctx);
   const nextCenter = calculateVacuumWaveCenter(exdeathCenter, mt.position);
   const facing =
@@ -1152,6 +1177,35 @@ function repositionExdeathTowardMt(ctx: BattleScriptContext): void {
 
   updateExdeathBossState(ctx, nextCenter, facing);
   spawnExdeathMarker(ctx, nextCenter, EXDEATH_REPOSITION_INTERVAL_MS, facing);
+}
+
+function spawnInitialExdeathMarker(ctx: BattleScriptContext): void {
+  const mt = getActorBySlot(ctx.select.allPlayers(), getExdeathFollowSlot(ctx));
+  const facing =
+    distance(CENTER, mt.position) <= 0.0001
+      ? getBossState(ctx).exdeathFacing
+      : createFacingTowards(CENTER, mt.position);
+
+  updateExdeathBossState(ctx, CENTER, facing);
+  spawnExdeathMarker(
+    ctx,
+    CENTER,
+    EXDEATH_INITIAL_REPOSITION_START_AT - EXDEATH_INITIAL_MARKER_SPAWN_AT,
+    facing,
+  );
+}
+
+function repositionInitialExdeathTowardMt(ctx: BattleScriptContext): void {
+  const mt = getActorBySlot(ctx.select.allPlayers(), getExdeathFollowSlot(ctx));
+  const nextCenter = calculateFollowerState(
+    getBossState(ctx).exdeathCenter,
+    mt.position,
+    EXDEATH_TARGET_RING_RADIUS,
+    getBossState(ctx).exdeathFacing,
+  );
+
+  updateExdeathBossState(ctx, nextCenter.center, nextCenter.facing);
+  spawnExdeathMarker(ctx, nextCenter.center, EXDEATH_REPOSITION_INTERVAL_MS, nextCenter.facing);
 }
 
 function resolveVacuumWave(ctx: BattleScriptContext): void {
@@ -1235,7 +1289,7 @@ function spawnChaosMarker(
   resolveAfterMs: number,
   direction = getBossState(ctx).chaosFacing,
 ): void {
-  ctx.spawn.fieldMarker({
+  ctx.spawn.stageActor({
     label: '卡奥斯',
     center,
     shape: 'enemy',
@@ -1249,7 +1303,7 @@ function spawnChaosMarker(
 }
 
 function spawnInitialChaosMarker(ctx: BattleScriptContext): void {
-  const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+  const st = getActorBySlot(ctx.select.allPlayers(), getChaosFollowSlot(ctx));
   const facing =
     distance(CENTER, st.position) <= 0.0001
       ? getBossState(ctx).chaosFacing
@@ -1260,7 +1314,7 @@ function spawnInitialChaosMarker(ctx: BattleScriptContext): void {
 }
 
 function repositionChaosTowardSt(ctx: BattleScriptContext): void {
-  const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+  const st = getActorBySlot(ctx.select.allPlayers(), getChaosFollowSlot(ctx));
   const nextCenter = calculateChaosCenter(getChaosCenter(ctx), st.position);
   const facing =
     distance(nextCenter, st.position) <= 0.0001
@@ -1272,7 +1326,7 @@ function repositionChaosTowardSt(ctx: BattleScriptContext): void {
 }
 
 function startChaosExplosionCast(ctx: BattleScriptContext): void {
-  const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+  const st = getActorBySlot(ctx.select.allPlayers(), getChaosFollowSlot(ctx));
   const center = getChaosCenter(ctx);
   const mode: ChaosExplosionMode = Math.random() < 0.5 ? 'longitude' : 'latitude';
   const facing =
@@ -1632,7 +1686,7 @@ function initializeBossStateAt(ctx: BattleScriptContext, startTimeMs: number): v
   let bossState = getBossState(ctx);
 
   if (startTimeMs > CHAOS_MARKER_SPAWN_AT) {
-    const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+    const st = getActorBySlot(ctx.select.allPlayers(), getChaosFollowSlot(ctx));
     const maxRepositionAt = Math.min(startTimeMs, CHAOS_EXPLOSION_CAST_START_AT);
     let center: Vector2 = { ...CENTER };
     let facing =
@@ -1651,8 +1705,28 @@ function initializeBossStateAt(ctx: BattleScriptContext, startTimeMs: number): v
     bossState = { ...bossState, chaosCenter: center, chaosFacing: facing };
   }
 
+  if (startTimeMs > EXDEATH_INITIAL_MARKER_SPAWN_AT && startTimeMs < BURST_CAST_START_AT) {
+    const mt = getActorBySlot(ctx.select.allPlayers(), getExdeathFollowSlot(ctx));
+    const maxRepositionAt = Math.min(startTimeMs, EXDEATH_INITIAL_REPOSITION_END_AT);
+    let center: Vector2 = { ...CENTER };
+    let facing =
+      distance(CENTER, mt.position) <= 0.0001 ? 0 : createFacingTowards(CENTER, mt.position);
+
+    for (
+      let repositionAt = EXDEATH_INITIAL_REPOSITION_START_AT;
+      repositionAt <= maxRepositionAt && repositionAt < EXDEATH_INITIAL_REPOSITION_END_AT;
+      repositionAt += EXDEATH_REPOSITION_INTERVAL_MS
+    ) {
+      const next = calculateFollowerState(center, mt.position, EXDEATH_TARGET_RING_RADIUS, facing);
+      center = next.center;
+      facing = next.facing;
+    }
+
+    bossState = { ...bossState, exdeathCenter: center, exdeathFacing: facing };
+  }
+
   if (startTimeMs >= BURST_CAST_START_AT) {
-    const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+    const mt = getActorBySlot(ctx.select.allPlayers(), getExdeathFollowSlot(ctx));
     const burstCenter = calculateBurstCenter(mt.position);
     const facing =
       distance(burstCenter, mt.position) <= 0.0001
@@ -1662,7 +1736,7 @@ function initializeBossStateAt(ctx: BattleScriptContext, startTimeMs: number): v
   }
 
   if (startTimeMs >= EXDEATH_REPOSITION_START_AT) {
-    const mt = getActorBySlot(ctx.select.allPlayers(), 'MT');
+    const mt = getActorBySlot(ctx.select.allPlayers(), getExdeathFollowSlot(ctx));
     const maxRepositionAt = Math.min(startTimeMs, VACUUM_WAVE_CAST_START_AT);
     let center = bossState.exdeathCenter;
     let facing = bossState.exdeathFacing;
@@ -1691,7 +1765,7 @@ function initializeBossStateAt(ctx: BattleScriptContext, startTimeMs: number): v
     );
   }
 
-  if (startTimeMs >= BURST_CAST_START_AT && startTimeMs < COMPLETE_AT) {
+  if (startTimeMs >= EXDEATH_INITIAL_MARKER_SPAWN_AT && startTimeMs < COMPLETE_AT) {
     spawnExdeathMarker(
       ctx,
       bossState.exdeathCenter,
@@ -1706,7 +1780,7 @@ function initializeChaosExplosionAt(ctx: BattleScriptContext, startTimeMs: numbe
     return;
   }
 
-  const st = getActorBySlot(ctx.select.allPlayers(), 'ST');
+  const st = getActorBySlot(ctx.select.allPlayers(), getChaosFollowSlot(ctx));
   const bossState = getBossState(ctx);
   const mode: ChaosExplosionMode = Math.random() < 0.5 ? 'longitude' : 'latitude';
   const facing =
@@ -1847,6 +1921,7 @@ function buildKefkaP3Script(ctx: BattleScriptContext): void {
 
   ctx.timeline.at(CHAOS_MARKER_SPAWN_AT, () => {
     spawnInitialChaosMarker(ctx);
+    spawnInitialExdeathMarker(ctx);
   });
 
   ctx.timeline.at(MECHANIC_START_AT, () => {
@@ -1884,6 +1959,16 @@ function buildKefkaP3Script(ctx: BattleScriptContext): void {
   ) {
     ctx.timeline.at(repositionAt, () => {
       repositionExdeathTowardMt(ctx);
+    });
+  }
+
+  for (
+    let repositionAt = EXDEATH_INITIAL_REPOSITION_START_AT;
+    repositionAt < EXDEATH_INITIAL_REPOSITION_END_AT;
+    repositionAt += EXDEATH_REPOSITION_INTERVAL_MS
+  ) {
+    ctx.timeline.at(repositionAt, () => {
+      repositionInitialExdeathTowardMt(ctx);
     });
   }
 
@@ -1968,6 +2053,7 @@ export const KEFKA_P3_FIRST_TRICK_BATTLE: BattleDefinition = {
   ) as BattleDefinition['initialPartyPositions'],
   mapMarkers: KEFKA_MAP_MARKERS,
   startTimeOptions: START_TIME_OPTIONS,
+  roomOptions: KEFKA_P3_ROOM_OPTIONS,
   buildScript: buildKefkaP3Script,
   initializeAt: initializeKefkaP3FirstAt,
   failureTexts: {
@@ -2013,6 +2099,9 @@ export const KEFKA_P3_FIRST_TRICK_TESTING = {
   EXDEATH_REPOSITION_START_AT,
   EXDEATH_REPOSITION_END_AT,
   EXDEATH_REPOSITION_INTERVAL_MS,
+  EXDEATH_INITIAL_MARKER_SPAWN_AT,
+  EXDEATH_INITIAL_REPOSITION_START_AT,
+  EXDEATH_INITIAL_REPOSITION_END_AT,
   CHAOS_EXPLOSION_CAST_START_AT,
   CHAOS_EXPLOSION_FIRST_RESOLVE_AT,
   CHAOS_EXPLOSION_SECOND_RESOLVE_AT,

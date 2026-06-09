@@ -4,6 +4,7 @@ import type {
   BaseActorSnapshot,
   BattleStartTimeOptions,
   BattleArenaBackground,
+  BattleRoomOptionDefinition,
   BossSnapshot,
   DamageType,
   EncounterResult,
@@ -13,6 +14,7 @@ import type {
   PartySlot,
   SimulationEvent,
   SimulationSnapshot,
+  StageActorSnapshot,
   StatusId,
   Vector2,
 } from '@ff14arena/shared';
@@ -43,6 +45,9 @@ export interface TimelineApi {
 }
 
 export interface BattleScriptContext {
+  readonly roomOptions: {
+    boolean(key: string): boolean;
+  };
   readonly timeline: TimelineApi;
   readonly boss: {
     readonly id: string;
@@ -203,6 +208,20 @@ export interface BattleScriptContext {
       resolveAfterMs?: number;
       sourceId?: string;
     }): MechanicSnapshot;
+    stageActor(options: {
+      label: string;
+      center: Vector2;
+      shape: FieldMarkerShape;
+      radius: number;
+      direction?: number;
+      stableId?: string;
+      color?: string;
+      showLabel?: boolean;
+      targetRingRadius?: number;
+      targetRingColor?: string;
+      resolveAfterMs?: number;
+      sourceId?: string;
+    }): StageActorSnapshot;
   };
   readonly status: {
     apply(
@@ -255,6 +274,7 @@ export interface BattleDefinition {
     }
   >;
   startTimeOptions?: BattleStartTimeOptions;
+  roomOptions?: BattleRoomOptionDefinition[];
   buildScript(ctx: BattleScriptContext): void;
   initializeAt?(ctx: BattleScriptContext, startTimeMs: number): void;
   failureTexts: BattleFailureTextApi;
@@ -275,6 +295,7 @@ export interface SimulationInstance {
     resetPositionActorIds?: Set<string>;
     startTimeMs?: number;
     latestResult?: EncounterResult | null;
+    roomOptions?: Record<string, boolean>;
   }): void;
   start(): void;
   stop(): void;

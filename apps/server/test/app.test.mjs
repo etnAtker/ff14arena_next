@@ -651,6 +651,83 @@ test('房间全流程：创建、立即加入、等待态快照、开始战斗',
   }
 });
 
+test('房间机制选项：按战斗声明初始化、更新并拒绝未知选项', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battlesResponse = await globalThis.fetch(`${baseUrl}/battles`);
+    assert.equal(battlesResponse.status, 200);
+    const battlesPayload = await battlesResponse.json();
+    const p3First = battlesPayload.battles.find((battle) => battle.id === 'kefka_p3_first_trick');
+    assert.ok(p3First);
+    assert.equal(p3First.roomOptions[0].key, 'kefkaP3MtPullsExdeath');
+    assert.equal(p3First.roomOptions[0].defaultValue, false);
+
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '机制选项测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId: 'kefka_p3_first_trick',
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    const joinedRoom = await waitForRoomState(
+      owner,
+      (room) => room.roomId === roomId && room.mechanicOptions.kefkaP3MtPullsExdeath === false,
+    );
+    assert.equal(joinedRoom.mechanicOptions.kefkaP3MtPullsExdeath, false);
+
+    const updatedRoomPromise = waitForRoomState(
+      owner,
+      (room) => room.roomId === roomId && room.mechanicOptions.kefkaP3MtPullsExdeath === true,
+    );
+    owner.emit('room:update-options', {
+      roomId,
+      mechanicOptions: {
+        kefkaP3MtPullsExdeath: true,
+      },
+    });
+    const updatedRoom = await updatedRoomPromise;
+    assert.equal(updatedRoom.mechanicOptions.kefkaP3MtPullsExdeath, true);
+
+    const errorPromise = waitForPayload(
+      owner,
+      'server:error',
+      (payload) => payload.code === 'invalid_room_option',
+    );
+    owner.emit('room:update-options', {
+      roomId,
+      mechanicOptions: {
+        unknownMechanicOption: true,
+      },
+    });
+    await errorPromise;
+  } finally {
+    owner.close();
+    await server.close();
+  }
+});
+
 test('客户端同步快照不会暴露服务端脚本状态', async () => {
   const server = await startServer({
     host: '127.0.0.1',

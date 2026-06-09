@@ -64,6 +64,7 @@ export function createRoomState(room: RoomRecord): RoomStateDto {
     spectators: createRoomSpectators(room),
     startCountdown: room.startCountdown,
     options: room.options,
+    mechanicOptions: { ...room.mechanicOptions },
     latestResult: room.latestResult,
   };
 }

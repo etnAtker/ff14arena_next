@@ -15,6 +15,7 @@ import type {
   MechanicSnapshot,
   SimulationEvent,
   SimulationSnapshot,
+  StageActorSnapshot,
   StatusAppliedEvent,
   StatusId,
   TetherTransferredEvent,
@@ -80,6 +81,7 @@ interface RuntimeState {
   boss: BossSnapshot;
   bossCastBars: BossCastBarState[];
   mechanics: Map<string, MechanicSnapshot>;
+  stageActors: Map<string, StageActorSnapshot>;
   tetherReadyAt: Map<string, number>;
   botTetherReadyAt: Map<string, number>;
   scheduler: SchedulerEntry[];
@@ -113,13 +115,16 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
   let running = false;
   let accumulatorMs = 0;
   let state: RuntimeState | null = null;
+  let currentRoomOptions: Record<string, boolean> = {};
   let eventId = 0;
   let schedulerId = 0;
   let mechanicId = 0;
+  let stageActorId = 0;
 
   const nextEventId = () => `evt_${++eventId}`;
   const nextSchedulerId = () => `sch_${++schedulerId}`;
   const nextMechanicId = () => `mech_${++mechanicId}`;
+  const nextStageActorId = () => `stage_actor_${++stageActorId}`;
 
   function emit<T extends SimulationEvent>(event: Omit<T, 'eventId' | 'tick' | 'timeMs'>): void {
     const currentState = assertState(state);
@@ -483,6 +488,37 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
     });
     queueScheduler(mechanic.resolveAt, () => resolveMechanic(mechanic.id));
     return mechanic;
+  }
+
+  function removeStageActor(stageActorIdValue: string, expectedResolveAt: number): void {
+    const currentState = assertState(state);
+    const stageActor = currentState.stageActors.get(stageActorIdValue);
+
+    if (stageActor === undefined || stageActor.resolveAt !== expectedResolveAt) {
+      return;
+    }
+
+    currentState.stageActors.delete(stageActorIdValue);
+    emit({
+      type: 'stageActorRemoved',
+      payload: {
+        stageActorId: stageActorIdValue,
+      },
+    });
+  }
+
+  function updateStageActor(stageActor: StageActorSnapshot): StageActorSnapshot {
+    const currentState = assertState(state);
+
+    currentState.stageActors.set(stageActor.id, stageActor);
+    emit({
+      type: 'stageActorUpdated',
+      payload: stageActor,
+    });
+    queueScheduler(stageActor.resolveAt, () =>
+      removeStageActor(stageActor.id, stageActor.resolveAt),
+    );
+    return stageActor;
   }
 
   function restoreBossCast(
@@ -857,6 +893,22 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
 
   function createScriptContext(): BattleScriptContext {
     return {
+      roomOptions: {
+        boolean(key) {
+          const currentState = assertState(state);
+          const explicitValue = currentRoomOptions[key];
+
+          if (explicitValue !== undefined) {
+            return explicitValue;
+          }
+
+          const definition = currentState.battle.roomOptions?.find(
+            (option) => option.key === key && option.type === 'boolean',
+          );
+
+          return definition?.defaultValue ?? false;
+        },
+      },
       timeline: {
         at(timeMs, fn) {
           queueScheduler(timeMs, fn);
@@ -1202,6 +1254,35 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
             resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
           });
         },
+        stageActor(options) {
+          const currentState = assertState(state);
+          const existing =
+            options.stableId === undefined
+              ? undefined
+              : [...currentState.stageActors.values()].find(
+                  (stageActor) => stageActor.stableId === options.stableId,
+                );
+
+          return updateStageActor({
+            id: existing?.id ?? nextStageActorId(),
+            label: options.label,
+            sourceId: options.sourceId ?? currentState.boss.id,
+            ...(options.stableId === undefined ? {} : { stableId: options.stableId }),
+            center: cloneVector(options.center),
+            shape: options.shape,
+            radius: options.radius,
+            ...(options.direction === undefined ? {} : { direction: options.direction }),
+            ...(options.color === undefined ? {} : { color: options.color }),
+            ...(options.showLabel === undefined ? {} : { showLabel: options.showLabel }),
+            ...(options.targetRingRadius === undefined
+              ? {}
+              : { targetRingRadius: options.targetRingRadius }),
+            ...(options.targetRingColor === undefined
+              ? {}
+              : { targetRingColor: options.targetRingColor }),
+            resolveAt: currentState.timeMs + (options.resolveAfterMs ?? FIXED_TICK_MS),
+          });
+        },
       },
       status: {
         apply(targetIds, statusId, durationMs, options) {
@@ -1349,6 +1430,9 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       actors: [...currentState.actors.values()].map((actor) => structuredClone(actor)),
       boss: structuredClone(currentState.boss),
       mechanics: [...currentState.mechanics.values()].map((mechanic) => structuredClone(mechanic)),
+      stageActors: [...currentState.stageActors.values()].map((stageActor) =>
+        structuredClone(stageActor),
+      ),
       hud: {
         bossCastBar:
           currentState.boss.castBar === null ? null : structuredClone(currentState.boss.castBar),
@@ -1384,6 +1468,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
       resetPositionActorIds,
       startTimeMs,
       latestResult = null,
+      roomOptions = {},
     }) {
       const actors = new Map<string, BaseActorSnapshot>();
       const movementRuntime = new Map<string, ActorMovementRuntime>();
@@ -1400,6 +1485,8 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         resetAllActors || requestedStartTimeMs !== null
           ? Math.floor(initialTimeMs / tickMs)
           : (sourceSnapshot?.tick ?? 0);
+
+      currentRoomOptions = { ...roomOptions };
 
       for (const member of party) {
         const placement = battle.initialPartyPositions[member.slot];
@@ -1540,6 +1627,7 @@ export function createSimulation(config: SimulationConfig = {}): SimulationInsta
         },
         bossCastBars: [],
         mechanics: new Map(),
+        stageActors: new Map(),
         tetherReadyAt: new Map(),
         botTetherReadyAt: new Map(),
         scheduler: [],

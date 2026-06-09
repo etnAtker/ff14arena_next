@@ -1,6 +1,6 @@
 import type { PartySlot } from './base';
 import type { RealtimeBinaryPayload, RealtimeEncoding } from './realtime-codec';
-import type { RoomRuleOptions, RoomSlotState, RoomStateDto } from './room';
+import type { RoomMechanicOptions, RoomRuleOptions, RoomSlotState, RoomStateDto } from './room';
 import type {
   ContinuousSimulationInputFrame,
   EncounterResult,
@@ -55,7 +55,8 @@ export interface RoomKickPayload {
 
 export interface RoomUpdateOptionsPayload {
   roomId: string;
-  options: Partial<RoomRuleOptions>;
+  options?: Partial<RoomRuleOptions>;
+  mechanicOptions?: Partial<RoomMechanicOptions>;
 }
 
 export interface RoomStatePayload {
