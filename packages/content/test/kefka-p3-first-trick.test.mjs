@@ -2216,7 +2216,7 @@ test('凯夫卡P3一运：72秒分配1到8顺位并按奇偶显示颜色', () =>
 
       assert.equal(marker.label, `${order}`);
       assert.equal(marker.targetId, assignments[index]);
-      assert.equal(marker.markerShape, 'circleDot');
+      assert.equal(marker.markerShape, 'numberCircle');
       assert.equal(
         marker.color,
         order % 2 === 1 ? MAHJONG_ODD_MARKER_COLOR : MAHJONG_EVEN_MARKER_COLOR,

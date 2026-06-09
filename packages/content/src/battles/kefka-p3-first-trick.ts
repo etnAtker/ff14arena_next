@@ -1424,7 +1424,7 @@ function spawnMahjongOrderMarkers(
     ctx.spawn.actorMarker({
       label: `${order}`,
       target: actor,
-      markerShape: 'circleDot',
+      markerShape: 'numberCircle',
       color: order % 2 === 1 ? MAHJONG_ODD_MARKER_COLOR : MAHJONG_EVEN_MARKER_COLOR,
       resolveAfterMs,
     });
