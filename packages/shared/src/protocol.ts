@@ -46,6 +46,11 @@ export interface RoomQuickFailPayload {
   roomId: string;
 }
 
+export interface RoomKickPayload {
+  roomId: string;
+  targetUserId: string;
+}
+
 export interface RoomUpdateOptionsPayload {
   roomId: string;
   options: Partial<RoomRuleOptions>;
@@ -94,6 +99,11 @@ export interface RoomClosedPayload {
   reason: string;
 }
 
+export interface RoomKickedPayload {
+  roomId: string;
+  reason: string;
+}
+
 export interface SimResyncRequestPayload {
   roomId: string;
   reason?: string;
@@ -113,6 +123,7 @@ export interface ServerToClientEvents {
   'sim:events': (payload: SimEventsPayload) => void;
   'sim:end': (payload: SimEndPayload) => void;
   'room:closed': (payload: RoomClosedPayload) => void;
+  'room:kicked': (payload: RoomKickedPayload) => void;
   'server:error': (payload: ServerErrorPayload) => void;
 }
 
@@ -125,6 +136,7 @@ export interface ClientToServerEvents {
   'room:start': (payload: RoomStartPayload) => void;
   'room:update-options': (payload: RoomUpdateOptionsPayload) => void;
   'room:quick-fail': (payload: RoomQuickFailPayload) => void;
+  'room:kick': (payload: RoomKickPayload) => void;
   'sim:input-frame': (payload: ContinuousSimulationInputFrame) => void;
   'sim:use-knockback-immune': (payload: UseKnockbackImmuneSimulationInput) => void;
   'sim:use-sprint': (payload: UseSprintSimulationInput) => void;

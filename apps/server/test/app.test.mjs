@@ -1115,6 +1115,292 @@ test('等待态玩家可以切换观战并点击槽位回到场内', async () =>
   }
 });
 
+test('等待态玩家断线超时后会释放槽位给 Bot', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+    disconnectedPlayerGraceMs: 30,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '断线清理测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+
+    await waitForConnect(guest);
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      slot: 'ST',
+    });
+    await waitForRoomState(
+      owner,
+      (room) => room.slots.find((slot) => slot.slot === 'ST')?.ownerUserId === 'guest-user',
+    );
+
+    const releasedPromise = waitForRoomState(
+      owner,
+      (room) => room.slots.find((slot) => slot.slot === 'ST')?.occupantType === 'bot',
+    );
+    guest.close();
+    const releasedRoom = await releasedPromise;
+    const releasedSlot = releasedRoom.slots.find((slot) => slot.slot === 'ST');
+    assert.equal(releasedSlot?.name, 'Bot ST');
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
+test('等待态玩家断线后在宽限期内重连会保留槽位', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+    disconnectedPlayerGraceMs: 80,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+  let reconnectedGuest;
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '断线重连保留测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+
+    await waitForConnect(guest);
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      slot: 'ST',
+    });
+    await waitForRoomState(
+      owner,
+      (room) => room.slots.find((slot) => slot.slot === 'ST')?.ownerUserId === 'guest-user',
+    );
+
+    const offlinePromise = waitForRoomState(
+      owner,
+      (room) => room.slots.find((slot) => slot.slot === 'ST')?.online === false,
+    );
+    guest.close();
+    await offlinePromise;
+
+    reconnectedGuest = io(baseUrl, { transports: ['websocket'] });
+    await waitForConnect(reconnectedGuest);
+    reconnectedGuest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+    });
+    const rejoinedRoom = await waitForRoomState(
+      owner,
+      (room) => room.slots.find((slot) => slot.slot === 'ST')?.online === true,
+    );
+    assert.equal(rejoinedRoom.slots.find((slot) => slot.slot === 'ST')?.ownerUserId, 'guest-user');
+
+    const released = await waitForNoPayload(
+      owner,
+      'room:state',
+      (payload) => payload.room.slots.find((slot) => slot.slot === 'ST')?.occupantType === 'bot',
+      120,
+    );
+    assert.equal(released, true);
+  } finally {
+    owner.close();
+    guest.close();
+    reconnectedGuest?.close();
+    await server.close();
+  }
+});
+
+test('等待态房主可以移出占槽玩家', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const guest = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '移出成员测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+
+    await waitForConnect(guest);
+    guest.emit('room:join', {
+      roomId,
+      userId: 'guest-user',
+      userName: '队员',
+      slot: 'ST',
+    });
+    await waitForRoomState(
+      owner,
+      (room) => room.slots.find((slot) => slot.slot === 'ST')?.ownerUserId === 'guest-user',
+    );
+
+    const kickedPromise = waitForEvent(guest, 'room:kicked');
+    const releasedPromise = waitForRoomState(
+      owner,
+      (room) => room.slots.find((slot) => slot.slot === 'ST')?.occupantType === 'bot',
+    );
+    owner.emit('room:kick', {
+      roomId,
+      targetUserId: 'guest-user',
+    });
+    const kickedPayload = await kickedPromise;
+    const releasedRoom = await releasedPromise;
+
+    assert.equal(kickedPayload.roomId, roomId);
+    assert.equal(kickedPayload.reason, '你已被房主移出房间');
+    assert.equal(releasedRoom.slots.find((slot) => slot.slot === 'ST')?.name, 'Bot ST');
+  } finally {
+    owner.close();
+    guest.close();
+    await server.close();
+  }
+});
+
+test('等待态房主可以移出观战成员', async () => {
+  const server = await startServer({
+    host: '127.0.0.1',
+    port: 0,
+    logger: false,
+  });
+  const baseUrl = `http://127.0.0.1:${server.port}`;
+  const owner = io(baseUrl, { transports: ['websocket'] });
+  const spectator = io(baseUrl, { transports: ['websocket'] });
+
+  try {
+    const battleId = await getAvailableBattleId(baseUrl);
+    const createResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: '移出观战测试',
+        ownerUserId: 'owner-user',
+        ownerName: '房主',
+        battleId,
+      }),
+    });
+    assert.equal(createResponse.status, 200);
+    const createPayload = await createResponse.json();
+    const roomId = createPayload.roomId;
+
+    await waitForConnect(owner);
+    owner.emit('room:join', {
+      roomId,
+      userId: 'owner-user',
+      userName: '房主',
+    });
+    await waitForRoomState(owner, (room) => room.roomId === roomId && room.phase === 'waiting');
+
+    await waitForConnect(spectator);
+    spectator.emit('room:join', {
+      roomId,
+      userId: 'spectator-user',
+      userName: '观战者',
+      mode: 'spectator',
+    });
+    await waitForRoomState(owner, (room) =>
+      room.spectators.some((roomSpectator) => roomSpectator.userId === 'spectator-user'),
+    );
+
+    const kickedPromise = waitForEvent(spectator, 'room:kicked');
+    const removedPromise = waitForRoomState(owner, (room) =>
+      room.spectators.every((roomSpectator) => roomSpectator.userId !== 'spectator-user'),
+    );
+    owner.emit('room:kick', {
+      roomId,
+      targetUserId: 'spectator-user',
+    });
+    const kickedPayload = await kickedPromise;
+    const removedRoom = await removedPromise;
+
+    assert.equal(kickedPayload.roomId, roomId);
+    assert.equal(removedRoom.spectators.length, 0);
+  } finally {
+    owner.close();
+    spectator.close();
+    await server.close();
+  }
+});
+
 test('等待态玩家与 Bot 换位后再观战会重建当前槽位 Bot', async () => {
   const server = await startServer({
     host: '127.0.0.1',

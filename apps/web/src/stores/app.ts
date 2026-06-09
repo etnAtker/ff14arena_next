@@ -748,6 +748,19 @@ export const useAppStore = defineStore('app', () => {
         loadLobbyData().catch(() => undefined);
       });
 
+      nextSocket.on('room:kicked', (payload) => {
+        if (room.value?.roomId !== payload.roomId) {
+          return;
+        }
+
+        appendLog(payload.reason);
+        serverError.value = payload.reason;
+        room.value = null;
+        spectatePending.value = false;
+        resetBattleState();
+        loadLobbyData().catch(() => undefined);
+      });
+
       nextSocket.on('room:countdown', (payload) => {
         if (room.value?.roomId !== payload.roomId) {
           return;
@@ -932,6 +945,17 @@ export const useAppStore = defineStore('app', () => {
     room.value = null;
     resetBattleState();
     loadLobbyData().catch(() => undefined);
+  }
+
+  function kickMember(targetUserId: string): void {
+    if (room.value === null || socket.value === null) {
+      return;
+    }
+
+    socket.value.emit('room:kick', {
+      roomId: room.value.roomId,
+      targetUserId,
+    });
   }
 
   async function selectBattle(battleId: string): Promise<void> {
@@ -1472,6 +1496,7 @@ export const useAppStore = defineStore('app', () => {
     createRoom,
     joinRoom,
     leaveRoom,
+    kickMember,
     selectBattle,
     switchSlot,
     spectate,

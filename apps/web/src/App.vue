@@ -598,6 +598,7 @@ onBeforeUnmount(() => {
             @start-countdown-seconds-change="startCountdownSeconds = $event"
             @start-time-seconds-change="startTimeSeconds = $event"
             @switch-slot="store.switchSlot($event)"
+            @kick-member="store.kickMember($event)"
             @reset-zoom="resetCameraZoom"
             @camera-yaw-change="updateCameraYaw"
             @camera-zoom-change="updateCameraZoom"

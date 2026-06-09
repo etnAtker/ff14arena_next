@@ -6,6 +6,7 @@ import type {
   ClientToServerEvents,
   ContinuousSimulationInputFrame,
   PartySlot,
+  RoomKickPayload,
   RoomJoinPayload,
   RoomStartPayload,
   RoomStateDto,
@@ -41,6 +42,7 @@ const DEFAULT_START_COUNTDOWN_MS = 5_000;
 const MIN_START_COUNTDOWN_MS = 1_000;
 const MAX_START_COUNTDOWN_MS = 30_000;
 const PENDING_ROOM_TTL_MS = 30_000;
+const DISCONNECTED_PLAYER_GRACE_MS = 30_000;
 const QUICK_FAIL_REASON = '房主手动结束本轮模拟';
 const SNAPSHOT_BROADCAST_INTERVAL_TICKS = 20;
 const DEFAULT_ROOM_OPTIONS = {
@@ -66,6 +68,7 @@ interface PendingRoomRecord {
 export interface RoomManagerOptions {
   roomPassword?: string;
   pendingRoomTtlMs?: number;
+  disconnectedPlayerGraceMs?: number;
 }
 
 export class RoomManager {
@@ -74,6 +77,9 @@ export class RoomManager {
   private readonly userRooms = new Map<string, string>();
   private readonly roomPassword: string;
   private readonly pendingRoomTtlMs: number;
+  private readonly disconnectedPlayerGraceMs: number;
+  private readonly disconnectedPlayerCleanupHandles = new Map<string, NodeJS.Timeout>();
+  private readonly disconnectedSpectatorCleanupHandles = new Map<string, NodeJS.Timeout>();
   private roomCounter = 0;
 
   constructor(
@@ -83,6 +89,8 @@ export class RoomManager {
   ) {
     this.roomPassword = options?.roomPassword?.trim() ?? '';
     this.pendingRoomTtlMs = options?.pendingRoomTtlMs ?? PENDING_ROOM_TTL_MS;
+    this.disconnectedPlayerGraceMs =
+      options?.disconnectedPlayerGraceMs ?? DISCONNECTED_PLAYER_GRACE_MS;
   }
 
   isRoomPasswordRequired(): boolean {
@@ -138,6 +146,7 @@ export class RoomManager {
     }
 
     this.pendingRooms.clear();
+    this.clearAllDisconnectedCleanupHandles();
 
     for (const room of this.rooms.values()) {
       if (room.loopHandle !== null) {
@@ -388,6 +397,7 @@ export class RoomManager {
 
     if (currentSlot !== undefined) {
       const occupant = room.slots[currentSlot] as PlayerSlotOccupant;
+      this.clearDisconnectedPlayerCleanup(room.roomId, payload.userId);
       occupant.socketId = socket.id;
       occupant.online = true;
       occupant.departed = false;
@@ -416,6 +426,7 @@ export class RoomManager {
     const currentSpectator = room.spectators.get(payload.userId);
 
     if (currentSpectator !== undefined) {
+      this.clearDisconnectedSpectatorCleanup(room.roomId, payload.userId);
       currentSpectator.socketId = socket.id;
       currentSpectator.online = true;
       currentSpectator.name = userName;
@@ -884,6 +895,53 @@ export class RoomManager {
     }
   }
 
+  kickMember(socket: TypedSocket, payload: RoomKickPayload): void {
+    const room = this.rooms.get(payload.roomId);
+
+    if (room === undefined) {
+      this.emitError(socket, 'room_not_found', '房间不存在');
+      return;
+    }
+
+    const operator = this.getRoomMemberBySocket(room, socket.id);
+
+    if (operator?.userId !== room.ownerUserId) {
+      this.emitError(socket, 'not_owner', '只有房主可以移出成员');
+      return;
+    }
+
+    if (room.phase !== 'waiting') {
+      this.emitError(socket, 'room_not_waiting', '当前房间状态不允许移出成员');
+      return;
+    }
+
+    if (room.startCountdown !== null) {
+      this.emitError(socket, 'start_countdown_active', '倒计时期间不允许移出成员');
+      return;
+    }
+
+    if (payload.targetUserId === room.ownerUserId) {
+      this.emitError(socket, 'cannot_kick_owner', '不能移出房主');
+      return;
+    }
+
+    const targetSlot = this.findPlayerSlot(room, payload.targetUserId);
+
+    if (targetSlot !== undefined) {
+      this.kickPlayerSlot(room, targetSlot);
+      return;
+    }
+
+    const spectator = room.spectators.get(payload.targetUserId);
+
+    if (spectator !== undefined) {
+      this.kickSpectator(room, spectator);
+      return;
+    }
+
+    this.emitError(socket, 'member_not_found', '目标成员不在房间内');
+  }
+
   enqueueInput(
     socket: TypedSocket,
     input: UseKnockbackImmuneSimulationInput | UseSprintSimulationInput,
@@ -1017,12 +1075,14 @@ export class RoomManager {
 
     if (room.phase === 'waiting') {
       if (shouldLeaveRoom) {
+        this.clearDisconnectedPlayerCleanup(room.roomId, occupant.userId);
         this.userRooms.delete(occupant.userId);
         room.slots[slot] = createBotOccupant(room.roomId, slot);
       } else {
         occupant.online = false;
         occupant.socketId = null;
         occupant.departed = false;
+        this.scheduleDisconnectedPlayerCleanup(room, occupant.userId);
       }
 
       this.rebuildWaitingSimulation(room, {
@@ -1034,6 +1094,7 @@ export class RoomManager {
     }
 
     if (shouldLeaveRoom) {
+      this.clearDisconnectedPlayerCleanup(room.roomId, occupant.userId);
       this.userRooms.delete(occupant.userId);
     }
 
@@ -1042,6 +1103,45 @@ export class RoomManager {
     occupant.departed = shouldLeaveRoom;
 
     this.emitRoomSlots(room);
+    this.emitRoomState(room);
+  }
+
+  private emitMemberKicked(room: RoomRecord, socketId: string | null): void {
+    if (socketId === null) {
+      return;
+    }
+
+    const targetSocket = this.io.sockets.sockets.get(socketId);
+
+    if (targetSocket === undefined) {
+      return;
+    }
+
+    targetSocket.emit('room:kicked', {
+      roomId: room.roomId,
+      reason: '你已被房主移出房间',
+    });
+    targetSocket.leave(room.roomId);
+  }
+
+  private kickPlayerSlot(room: RoomRecord, slot: PartySlot): void {
+    const occupant = room.slots[slot] as PlayerSlotOccupant;
+    this.emitMemberKicked(room, occupant.socketId);
+    this.clearDisconnectedPlayerCleanup(room.roomId, occupant.userId);
+    this.userRooms.delete(occupant.userId);
+    room.slots[slot] = createBotOccupant(room.roomId, slot);
+    this.rebuildWaitingSimulation(room, {
+      sourceSnapshot: room.simulation?.getSnapshot() ?? null,
+      keepTimeMs: true,
+    });
+    this.broadcastWaitingState(room, 'waiting-state');
+  }
+
+  private kickSpectator(room: RoomRecord, spectator: RoomSpectator): void {
+    this.emitMemberKicked(room, spectator.socketId);
+    this.clearDisconnectedSpectatorCleanup(room.roomId, spectator.userId);
+    this.userRooms.delete(spectator.userId);
+    room.spectators.delete(spectator.userId);
     this.emitRoomState(room);
   }
 
@@ -1056,11 +1156,13 @@ export class RoomManager {
     }
 
     if (shouldLeaveRoom) {
+      this.clearDisconnectedSpectatorCleanup(room.roomId, spectator.userId);
       this.userRooms.delete(spectator.userId);
       room.spectators.delete(spectator.userId);
     } else {
       spectator.online = false;
       spectator.socketId = null;
+      this.scheduleDisconnectedSpectatorCleanup(room, spectator.userId);
     }
 
     this.emitRoomState(room);
@@ -1300,6 +1402,129 @@ export class RoomManager {
     return PARTY_SLOT_ORDER.find((slot) => room.slots[slot].type !== 'player');
   }
 
+  private createDisconnectedMemberKey(roomId: string, userId: string): string {
+    return `${roomId}:${userId}`;
+  }
+
+  private clearDisconnectedPlayerCleanup(roomId: string, userId: string): void {
+    const key = this.createDisconnectedMemberKey(roomId, userId);
+    const handle = this.disconnectedPlayerCleanupHandles.get(key);
+
+    if (handle === undefined) {
+      return;
+    }
+
+    clearTimeout(handle);
+    this.disconnectedPlayerCleanupHandles.delete(key);
+  }
+
+  private clearDisconnectedSpectatorCleanup(roomId: string, userId: string): void {
+    const key = this.createDisconnectedMemberKey(roomId, userId);
+    const handle = this.disconnectedSpectatorCleanupHandles.get(key);
+
+    if (handle === undefined) {
+      return;
+    }
+
+    clearTimeout(handle);
+    this.disconnectedSpectatorCleanupHandles.delete(key);
+  }
+
+  private clearDisconnectedCleanupHandlesForRoom(roomId: string): void {
+    for (const [key, handle] of this.disconnectedPlayerCleanupHandles.entries()) {
+      if (!key.startsWith(`${roomId}:`)) {
+        continue;
+      }
+
+      clearTimeout(handle);
+      this.disconnectedPlayerCleanupHandles.delete(key);
+    }
+
+    for (const [key, handle] of this.disconnectedSpectatorCleanupHandles.entries()) {
+      if (!key.startsWith(`${roomId}:`)) {
+        continue;
+      }
+
+      clearTimeout(handle);
+      this.disconnectedSpectatorCleanupHandles.delete(key);
+    }
+  }
+
+  private clearAllDisconnectedCleanupHandles(): void {
+    for (const handle of this.disconnectedPlayerCleanupHandles.values()) {
+      clearTimeout(handle);
+    }
+
+    for (const handle of this.disconnectedSpectatorCleanupHandles.values()) {
+      clearTimeout(handle);
+    }
+
+    this.disconnectedPlayerCleanupHandles.clear();
+    this.disconnectedSpectatorCleanupHandles.clear();
+  }
+
+  private scheduleDisconnectedPlayerCleanup(room: RoomRecord, userId: string): void {
+    const key = this.createDisconnectedMemberKey(room.roomId, userId);
+    this.clearDisconnectedPlayerCleanup(room.roomId, userId);
+
+    const handle = setTimeout(() => {
+      this.disconnectedPlayerCleanupHandles.delete(key);
+      const liveRoom = this.rooms.get(room.roomId);
+
+      if (liveRoom === undefined || liveRoom.phase !== 'waiting') {
+        return;
+      }
+
+      const slot = this.findPlayerSlot(liveRoom, userId);
+
+      if (slot === undefined) {
+        return;
+      }
+
+      const occupant = liveRoom.slots[slot];
+
+      if (occupant.type !== 'player' || occupant.online || occupant.socketId !== null) {
+        return;
+      }
+
+      this.userRooms.delete(userId);
+      liveRoom.slots[slot] = createBotOccupant(liveRoom.roomId, slot);
+      this.rebuildWaitingSimulation(liveRoom, {
+        sourceSnapshot: liveRoom.simulation?.getSnapshot() ?? null,
+        keepTimeMs: true,
+      });
+      this.broadcastWaitingState(liveRoom, 'waiting-state');
+    }, this.disconnectedPlayerGraceMs);
+
+    this.disconnectedPlayerCleanupHandles.set(key, handle);
+  }
+
+  private scheduleDisconnectedSpectatorCleanup(room: RoomRecord, userId: string): void {
+    const key = this.createDisconnectedMemberKey(room.roomId, userId);
+    this.clearDisconnectedSpectatorCleanup(room.roomId, userId);
+
+    const handle = setTimeout(() => {
+      this.disconnectedSpectatorCleanupHandles.delete(key);
+      const liveRoom = this.rooms.get(room.roomId);
+      const spectator = liveRoom?.spectators.get(userId);
+
+      if (
+        liveRoom === undefined ||
+        spectator === undefined ||
+        spectator.online ||
+        spectator.socketId !== null
+      ) {
+        return;
+      }
+
+      this.userRooms.delete(userId);
+      liveRoom.spectators.delete(userId);
+      this.emitRoomState(liveRoom);
+    }, this.disconnectedPlayerGraceMs);
+
+    this.disconnectedSpectatorCleanupHandles.set(key, handle);
+  }
+
   private closeRoom(roomId: string, reason: string): void {
     const room = this.rooms.get(roomId);
 
@@ -1312,6 +1537,7 @@ export class RoomManager {
     }
 
     this.clearStartCountdown(room);
+    this.clearDisconnectedCleanupHandlesForRoom(room.roomId);
 
     this.io.to(room.roomId).emit('room:closed', {
       roomId: room.roomId,

@@ -27,6 +27,7 @@ export interface ServerContextOptions {
   staticRoot?: string;
   roomPassword?: string;
   pendingRoomTtlMs?: number;
+  disconnectedPlayerGraceMs?: number;
 }
 
 export interface ServerContext {
@@ -99,6 +100,9 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
     ...(options?.pendingRoomTtlMs === undefined
       ? {}
       : { pendingRoomTtlMs: options.pendingRoomTtlMs }),
+    ...(options?.disconnectedPlayerGraceMs === undefined
+      ? {}
+      : { disconnectedPlayerGraceMs: options.disconnectedPlayerGraceMs }),
   });
 
   app.addHook('onRequest', async (request) => {
@@ -261,6 +265,11 @@ export function createServerContext(options?: ServerContextOptions): ServerConte
       roomManager.quickFail(socket, payload.roomId);
     });
 
+    socket.on('room:kick', (payload) => {
+      metrics.recordSocketInbound('room:kick');
+      roomManager.kickMember(socket, payload);
+    });
+
     socket.on('sim:input-frame', (payload) => {
       metrics.recordSocketInbound('sim:input-frame');
       roomManager.enqueueContinuousInput(socket, payload);
@@ -312,6 +321,10 @@ export async function startServer(options?: StartServerOptions) {
 
   if (options?.pendingRoomTtlMs !== undefined) {
     contextOptions.pendingRoomTtlMs = options.pendingRoomTtlMs;
+  }
+
+  if (options?.disconnectedPlayerGraceMs !== undefined) {
+    contextOptions.disconnectedPlayerGraceMs = options.disconnectedPlayerGraceMs;
   }
 
   const context = createServerContext(

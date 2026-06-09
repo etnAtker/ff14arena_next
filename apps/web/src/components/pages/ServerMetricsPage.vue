@@ -313,7 +313,7 @@ onBeforeUnmount(() => {
               <tr>
                 <th>房间</th>
                 <th>状态</th>
-                <th>玩家 / Bot</th>
+                <th>在线 / 真人 / Bot</th>
                 <th>Tick</th>
                 <th>Tick p95</th>
                 <th>Bot p95</th>
@@ -332,7 +332,10 @@ onBeforeUnmount(() => {
                     {{ room.phase === 'running' ? '模拟中' : '待开始' }}
                   </n-tag>
                 </td>
-                <td>{{ room.onlinePlayerCount }}/{{ room.playerCount }} / {{ room.botCount }}</td>
+                <td>
+                  在线 {{ room.onlinePlayerCount }} / 真人 {{ room.playerCount }} / Bot
+                  {{ room.botCount }}
+                </td>
                 <td>{{ room.tick ?? '-' }}</td>
                 <td>{{ formatMs(room.tickDurationMs.p95) }}</td>
                 <td>{{ formatMs(room.botControllerDurationMs.p95) }}</td>
