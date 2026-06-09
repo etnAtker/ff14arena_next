@@ -287,6 +287,32 @@ function resetFacingInputState(): void {
   lastSentPointerFacing.value = null;
 }
 
+function sendIdleMovementFrame(): void {
+  if (page.value !== 'battle') {
+    return;
+  }
+
+  store.sendContinuousInputFrame({
+    moveDirection: {
+      x: 0,
+      y: 0,
+    },
+  });
+}
+
+function clearKeyboardInputState(options?: { sendIdleFrame?: boolean }): void {
+  if (pressedKeys.size === 0) {
+    return;
+  }
+
+  pressedKeys.clear();
+  lastTraditionalFacing.value = null;
+
+  if (options?.sendIdleFrame === true) {
+    sendIdleMovementFrame();
+  }
+}
+
 function handleKeyDown(event: KeyboardEvent): void {
   pressedKeys.add(event.code);
 
@@ -301,6 +327,18 @@ function handleKeyDown(event: KeyboardEvent): void {
 
 function handleKeyUp(event: KeyboardEvent): void {
   pressedKeys.delete(event.code);
+}
+
+function handleWindowBlur(): void {
+  clearKeyboardInputState({ sendIdleFrame: true });
+}
+
+function handleVisibilityChange(): void {
+  if (!document.hidden) {
+    return;
+  }
+
+  clearKeyboardInputState({ sendIdleFrame: true });
 }
 
 let movementTimer: number | null = null;
@@ -381,6 +419,8 @@ onMounted(async () => {
   await refreshLobby();
   window.addEventListener('keydown', handleKeyDown);
   window.addEventListener('keyup', handleKeyUp);
+  window.addEventListener('blur', handleWindowBlur);
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 
   await nextTick();
 
@@ -430,6 +470,9 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleKeyDown);
   window.removeEventListener('keyup', handleKeyUp);
+  window.removeEventListener('blur', handleWindowBlur);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+  clearKeyboardInputState();
 
   if (movementTimer !== null) {
     window.clearInterval(movementTimer);
