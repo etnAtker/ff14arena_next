@@ -33,6 +33,10 @@ const emit = defineEmits<{
           <p class="eyebrow">FF14 Arena Next</p>
           <h1 class="page-title">联机机制模拟</h1>
         </div>
+        <p v-if="!props.roomName" class="deployment-notice">
+          若没有影响严重的恶性 Bug，模拟器仅会在 0:00 和 12:00
+          左右进行闪断更新。更新会使服务器会清空所有房间，请见谅！
+        </p>
         <div v-if="props.roomName" class="room-block">
           <div class="room-row single-line">
             <strong class="room-name">{{ props.roomName }}</strong>
@@ -104,11 +108,11 @@ const emit = defineEmits<{
 }
 
 .topbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  flex-wrap: wrap;
 }
 
 .topbar-actions {
@@ -122,8 +126,17 @@ const emit = defineEmits<{
   min-width: 160px;
 }
 
+.deployment-notice {
+  margin: 0;
+  justify-self: center;
+  max-width: 760px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(246, 239, 228, 0.74);
+}
+
 .room-block {
-  flex: 1;
   min-width: 300px;
 }
 
@@ -176,8 +189,20 @@ const emit = defineEmits<{
     padding: 16px;
   }
 
+  .topbar {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-block,
+  .deployment-notice,
+  .room-block,
   .topbar-actions {
     width: 100%;
+  }
+
+  .deployment-notice {
+    justify-self: stretch;
+    text-align: left;
   }
 }
 </style>

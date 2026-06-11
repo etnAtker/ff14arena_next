@@ -210,6 +210,16 @@ const KEFKA_P3_ROOM_OPTIONS = [
 const TANK_SLOTS = ['MT', 'ST'] as const satisfies readonly PartySlot[];
 const HEALER_SLOTS = ['H1', 'H2'] as const satisfies readonly PartySlot[];
 const DPS_SLOTS = ['D1', 'D2', 'D3', 'D4'] as const satisfies readonly PartySlot[];
+const TARGET_MARKER_SLOT_ORDER = [
+  'H1',
+  'H2',
+  'D1',
+  'D2',
+  'D3',
+  'D4',
+  'ST',
+  'MT',
+] as const satisfies readonly PartySlot[];
 
 const INITIAL_POSITIONS: Record<PartySlot, Vector2> = {
   MT: { x: -4.2, y: 12 },
@@ -587,20 +597,18 @@ function isTankActor(actor: BaseActorSnapshot): boolean {
 }
 
 function orderTargetActors(actors: BaseActorSnapshot[]): BaseActorSnapshot[] {
-  const nonTankActors = actors.filter((actor) => !isTankActor(actor));
-  const tankActors = actors.filter(isTankActor).sort((left, right) => {
-    if (left.slot === right.slot) {
-      return 0;
-    }
+  return [...actors].sort(
+    (left, right) => getTargetMarkerSlotOrder(left) - getTargetMarkerSlotOrder(right),
+  );
+}
 
-    return left.slot === 'MT' ? -1 : 1;
-  });
-
-  return [...nonTankActors, ...tankActors];
+function getTargetMarkerSlotOrder(actor: BaseActorSnapshot): number {
+  return actor.slot === null
+    ? Number.MAX_SAFE_INTEGER
+    : TARGET_MARKER_SLOT_ORDER.indexOf(actor.slot);
 }
 
 function createTargetAssignmentGroups(ctx: BattleScriptContext): TargetAssignmentGroup[] {
-  const actors = shuffle(ctx.select.allPlayers());
   const groups = [
     {
       statusId: FIRST_TARGET_STATUS_ID,
@@ -621,15 +629,37 @@ function createTargetAssignmentGroups(ctx: BattleScriptContext): TargetAssignmen
       markerColor: THIRD_TARGET_MARKER_COLOR,
     },
   ] as const;
-  let cursor = 0;
+  const actors = ctx.select.allPlayers();
+  const groupedActors = groups.map(() => [] as BaseActorSnapshot[]);
+  const tankActors = shuffle(TANK_SLOTS.map((slot) => getActorBySlot(actors, slot)));
+  const tankGroupIndexes = shuffle(groups.map((_, index) => index)).slice(0, tankActors.length);
 
-  return groups.map((group) => {
-    const assignedActors = actors.slice(cursor, cursor + group.count);
-    cursor += group.count;
+  for (const [index, tankActor] of tankActors.entries()) {
+    groupedActors[tankGroupIndexes[index]!]!.push(tankActor);
+  }
 
+  const nonTankActors = shuffle(actors.filter((actor) => !isTankActor(actor)));
+  let nonTankCursor = 0;
+
+  for (const [index, group] of groups.entries()) {
+    const groupActors = groupedActors[index]!;
+
+    while (groupActors.length < group.count) {
+      const actor = nonTankActors[nonTankCursor];
+
+      if (actor === undefined) {
+        throw new Error('not enough non-tank actors for kefka p3 second target assignment');
+      }
+
+      groupActors.push(actor);
+      nonTankCursor += 1;
+    }
+  }
+
+  return groups.map((group, index) => {
     return {
       statusId: group.statusId,
-      actors: orderTargetActors(assignedActors),
+      actors: orderTargetActors(groupedActors[index]!),
       durationMs: group.durationMs,
       markerColor: group.markerColor,
     };
