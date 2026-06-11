@@ -2475,7 +2475,7 @@ export const KEFKA_P5_FULL_BATTLE: BattleDefinition = {
   arenaRadius: ARENA_RADIUS,
   bossTargetRingRadius: BOSS_TARGET_RING_RADIUS,
   arenaBackground: {
-    imageUrl: '/map/kefka-p5.png',
+    imageUrl: '/map/kefka-p5.webp',
     center: CENTER,
     width: 40,
     height: 40,
