@@ -907,7 +907,7 @@ test('131.6秒会同 tick 判定本色出演的我和最后一次黑洞射线', 
   });
 });
 
-test('141.1秒会在场中生成只用于绘图的正点箭头', () => {
+test('141.1秒会在场中生成面向最后消失位置反方向的凯夫卡箭头', () => {
   withMockedRandom(createSeededRandomValues(302, 512), () => {
     const simulation = createKefkaP3SecondSimulation({ startTimeMs: TERMINAL_ARROW_AT + 100 });
     const snapshot = simulation.getSnapshot();
@@ -918,13 +918,15 @@ test('141.1秒会在场中生成只用于绘图的正点箭头', () => {
         getDistance(mechanic.center, { x: 0, y: 0 }) < 0.001 &&
         typeof mechanic.direction === 'number',
     );
-    const cardinalDirections = [-Math.PI / 2, 0, Math.PI / 2, Math.PI];
+    const appearances = snapshot.scriptState['kefkaP3Second:kefkaAppearances'];
+    const finalTrueSelf = appearances
+      .filter((appearance) => appearance.kind === 'trueSelf')
+      .sort((left, right) => right.disappearAt - left.disappearAt)[0];
 
     assert.ok(arrow);
+    assert.ok(finalTrueSelf);
     assert.equal(getKefkaMarkers(snapshot).length, 1);
-    assert.ok(
-      cardinalDirections.some((direction) => getAngleDiff(arrow.direction, direction) < 0.001),
-    );
+    assertCloseAngle(arrow.direction, getFacing(finalTrueSelf.position, { x: 0, y: 0 }));
   });
 });
 

@@ -1679,6 +1679,12 @@ function getTerminalArrowDirection(ctx: BattleScriptContext): number | undefined
   return ctx.state.getValue<number>('kefkaP3Second:terminalArrowDirection');
 }
 
+function getLastTrueSelfAppearance(ctx: BattleScriptContext): KefkaAppearanceState | undefined {
+  return getKefkaAppearances(ctx)
+    .filter((appearance) => appearance.kind === 'trueSelf')
+    .sort((left, right) => right.disappearAt - left.disappearAt)[0];
+}
+
 function ensureTerminalArrowDirection(ctx: BattleScriptContext): number {
   const existingDirection = getTerminalArrowDirection(ctx);
 
@@ -1686,7 +1692,13 @@ function ensureTerminalArrowDirection(ctx: BattleScriptContext): number {
     return existingDirection;
   }
 
-  const direction = shuffle([-Math.PI / 2, 0, Math.PI / 2, Math.PI])[0]!;
+  const lastTrueSelfAppearance = getLastTrueSelfAppearance(ctx);
+
+  if (lastTrueSelfAppearance === undefined) {
+    throw new Error('missing kefka p3 second final true self appearance');
+  }
+
+  const direction = createFacingTowards(lastTrueSelfAppearance.position, CENTER);
   ctx.state.setValue('kefkaP3Second:terminalArrowDirection', direction);
 
   return direction;
