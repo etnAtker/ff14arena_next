@@ -586,25 +586,17 @@ function isTankActor(actor: BaseActorSnapshot): boolean {
   return actor.slot === 'MT' || actor.slot === 'ST';
 }
 
-function orderFirstTargetActors(actors: BaseActorSnapshot[]): BaseActorSnapshot[] {
-  const tankIndexes = actors
-    .map((actor, index) => (isTankActor(actor) ? index : -1))
-    .filter((index) => index >= 0);
-  const preferredMarkerIndex = 2;
+function orderTargetActors(actors: BaseActorSnapshot[]): BaseActorSnapshot[] {
+  const nonTankActors = actors.filter((actor) => !isTankActor(actor));
+  const tankActors = actors.filter(isTankActor).sort((left, right) => {
+    if (left.slot === right.slot) {
+      return 0;
+    }
 
-  if (tankIndexes.length === 0 || tankIndexes.includes(preferredMarkerIndex)) {
-    return actors;
-  }
+    return left.slot === 'MT' ? -1 : 1;
+  });
 
-  const orderedActors = [...actors];
-  const tankIndex = tankIndexes[tankIndexes.length - 1]!;
-
-  [orderedActors[tankIndex], orderedActors[preferredMarkerIndex]] = [
-    orderedActors[preferredMarkerIndex]!,
-    orderedActors[tankIndex]!,
-  ];
-
-  return orderedActors;
+  return [...nonTankActors, ...tankActors];
 }
 
 function createTargetAssignmentGroups(ctx: BattleScriptContext): TargetAssignmentGroup[] {
@@ -637,10 +629,7 @@ function createTargetAssignmentGroups(ctx: BattleScriptContext): TargetAssignmen
 
     return {
       statusId: group.statusId,
-      actors:
-        group.statusId === FIRST_TARGET_STATUS_ID
-          ? orderFirstTargetActors(assignedActors)
-          : assignedActors,
+      actors: orderTargetActors(assignedActors),
       durationMs: group.durationMs,
       markerColor: group.markerColor,
     };

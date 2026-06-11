@@ -75,6 +75,14 @@ function createSeededRandomValues(seed, count) {
   });
 }
 
+function createRandomValues(randomValues, count = 64, fallback = 0) {
+  return Array.from({ length: count }, (_, index) => randomValues[index] ?? fallback);
+}
+
+function createInitialAssignmentRandomValues(randomValues) {
+  return createRandomValues([...Array.from({ length: 8 }, () => 0), ...randomValues]);
+}
+
 function createKefkaP3SecondSimulation(options = {}) {
   const battle = getBattleDefinition('kefka_p3_second_trick');
   assert.ok(battle);
@@ -185,6 +193,16 @@ function getActorBySlot(snapshot, slot) {
   assert.ok(actor, `missing actor for slot ${slot}`);
 
   return actor;
+}
+
+function getActorMarker(snapshot, actor, color) {
+  const marker = snapshot.mechanics.find(
+    (mechanic) =>
+      mechanic.kind === 'actorMarker' && mechanic.color === color && mechanic.targetId === actor.id,
+  );
+  assert.ok(marker, `missing ${color} marker for ${actor.slot}`);
+
+  return marker;
 }
 
 function getMechanics(snapshot, kind, label) {
@@ -364,21 +382,22 @@ test('第一目标只有单T时，T固定获得黄色3标记', () => {
 
       const snapshot = simulation.getSnapshot();
       const st = snapshot.actors.find((actor) => actor.slot === 'ST');
+      const h1 = snapshot.actors.find((actor) => actor.slot === 'H1');
       const h2 = snapshot.actors.find((actor) => actor.slot === 'H2');
       assert.ok(st);
+      assert.ok(h1);
       assert.ok(h2);
       assert.equal(hasStatus(st, FIRST_TARGET_STATUS_ID), true);
+      assert.equal(hasStatus(h1, FIRST_TARGET_STATUS_ID), true);
       assert.equal(hasStatus(h2, FIRST_TARGET_STATUS_ID), true);
 
-      const firstMarkers = snapshot.mechanics.filter(
-        (mechanic) =>
-          mechanic.kind === 'actorMarker' && mechanic.color === FIRST_TARGET_MARKER_COLOR,
-      );
-      const stMarker = firstMarkers.find((marker) => marker.targetId === st.id);
-      const h2Marker = firstMarkers.find((marker) => marker.targetId === h2.id);
+      const stMarker = getActorMarker(snapshot, st, FIRST_TARGET_MARKER_COLOR);
+      const h1Marker = getActorMarker(snapshot, h1, FIRST_TARGET_MARKER_COLOR);
+      const h2Marker = getActorMarker(snapshot, h2, FIRST_TARGET_MARKER_COLOR);
 
-      assert.equal(stMarker?.label, '3');
-      assert.equal(h2Marker?.label, '1');
+      assert.equal(h1Marker.label, '1');
+      assert.equal(h2Marker.label, '2');
+      assert.equal(stMarker.label, '3');
     },
   );
 });
@@ -402,21 +421,89 @@ test('第一目标双T获得黄色12时，其中一个T会换到黄色3', () => 
       assert.equal(hasStatus(st, FIRST_TARGET_STATUS_ID), true);
       assert.equal(hasStatus(h1, FIRST_TARGET_STATUS_ID), true);
 
-      const firstMarkers = snapshot.mechanics.filter(
-        (mechanic) =>
-          mechanic.kind === 'actorMarker' && mechanic.color === FIRST_TARGET_MARKER_COLOR,
-      );
-      const mtMarker = firstMarkers.find((marker) => marker.targetId === mt.id);
-      const stMarker = firstMarkers.find((marker) => marker.targetId === st.id);
-      const h1Marker = firstMarkers.find((marker) => marker.targetId === h1.id);
-      const yellow3Marker = firstMarkers.find((marker) => marker.label === '3');
+      const mtMarker = getActorMarker(snapshot, mt, FIRST_TARGET_MARKER_COLOR);
+      const stMarker = getActorMarker(snapshot, st, FIRST_TARGET_MARKER_COLOR);
+      const h1Marker = getActorMarker(snapshot, h1, FIRST_TARGET_MARKER_COLOR);
 
-      assert.equal(mtMarker?.label, '1');
-      assert.equal(stMarker?.label, '3');
-      assert.equal(h1Marker?.label, '2');
-      assert.equal(yellow3Marker?.targetId, st.id);
+      assert.equal(h1Marker.label, '1');
+      assert.equal(mtMarker.label, '2');
+      assert.equal(stMarker.label, '3');
     },
   );
+});
+
+test('第二目标只有单T时，T固定获得紫色3标记', () => {
+  withMockedRandom(createInitialAssignmentRandomValues([0, 0, 0, 0, 0.25, 0, 0]), () => {
+    const simulation = createKefkaP3SecondSimulation();
+
+    advanceTo(simulation, ZERO_AT);
+
+    const snapshot = simulation.getSnapshot();
+    const st = getActorBySlot(snapshot, 'ST');
+    const d2 = getActorBySlot(snapshot, 'D2');
+    const d3 = getActorBySlot(snapshot, 'D3');
+    assert.equal(hasStatus(st, SECOND_TARGET_STATUS_ID), true);
+    assert.equal(hasStatus(d2, SECOND_TARGET_STATUS_ID), true);
+    assert.equal(hasStatus(d3, SECOND_TARGET_STATUS_ID), true);
+
+    assert.equal(getActorMarker(snapshot, d2, SECOND_TARGET_MARKER_COLOR).label, '1');
+    assert.equal(getActorMarker(snapshot, d3, SECOND_TARGET_MARKER_COLOR).label, '2');
+    assert.equal(getActorMarker(snapshot, st, SECOND_TARGET_MARKER_COLOR).label, '3');
+  });
+});
+
+test('第二目标双T时，两个T靠后且MT编号小于ST', () => {
+  withMockedRandom(createInitialAssignmentRandomValues([0.25, 0.5, 0, 0, 0.25, 0, 0]), () => {
+    const simulation = createKefkaP3SecondSimulation();
+
+    advanceTo(simulation, ZERO_AT);
+
+    const snapshot = simulation.getSnapshot();
+    const mt = getActorBySlot(snapshot, 'MT');
+    const st = getActorBySlot(snapshot, 'ST');
+    const d2 = getActorBySlot(snapshot, 'D2');
+    assert.equal(hasStatus(mt, SECOND_TARGET_STATUS_ID), true);
+    assert.equal(hasStatus(st, SECOND_TARGET_STATUS_ID), true);
+    assert.equal(hasStatus(d2, SECOND_TARGET_STATUS_ID), true);
+
+    assert.equal(getActorMarker(snapshot, d2, SECOND_TARGET_MARKER_COLOR).label, '1');
+    assert.equal(getActorMarker(snapshot, mt, SECOND_TARGET_MARKER_COLOR).label, '2');
+    assert.equal(getActorMarker(snapshot, st, SECOND_TARGET_MARKER_COLOR).label, '3');
+  });
+});
+
+test('第三目标只有单T时，T固定获得红色2标记', () => {
+  withMockedRandom(createInitialAssignmentRandomValues([0, 0, 0, 0, 0, 0, 0]), () => {
+    const simulation = createKefkaP3SecondSimulation();
+
+    advanceTo(simulation, ZERO_AT);
+
+    const snapshot = simulation.getSnapshot();
+    const mt = getActorBySlot(snapshot, 'MT');
+    const d4 = getActorBySlot(snapshot, 'D4');
+    assert.equal(hasStatus(mt, THIRD_TARGET_STATUS_ID), true);
+    assert.equal(hasStatus(d4, THIRD_TARGET_STATUS_ID), true);
+
+    assert.equal(getActorMarker(snapshot, d4, THIRD_TARGET_MARKER_COLOR).label, '1');
+    assert.equal(getActorMarker(snapshot, mt, THIRD_TARGET_MARKER_COLOR).label, '2');
+  });
+});
+
+test('第三目标双T时，MT获得红色1且ST获得红色2', () => {
+  withMockedRandom(createInitialAssignmentRandomValues([0, 0.25, 0, 0, 0, 0, 0]), () => {
+    const simulation = createKefkaP3SecondSimulation();
+
+    advanceTo(simulation, ZERO_AT);
+
+    const snapshot = simulation.getSnapshot();
+    const mt = getActorBySlot(snapshot, 'MT');
+    const st = getActorBySlot(snapshot, 'ST');
+    assert.equal(hasStatus(mt, THIRD_TARGET_STATUS_ID), true);
+    assert.equal(hasStatus(st, THIRD_TARGET_STATUS_ID), true);
+
+    assert.equal(getActorMarker(snapshot, mt, THIRD_TARGET_MARKER_COLOR).label, '1');
+    assert.equal(getActorMarker(snapshot, st, THIRD_TARGET_MARKER_COLOR).label, '2');
+  });
 });
 
 test('第一次黑洞生成固定源连线并提前显示射线预兆', () => {
